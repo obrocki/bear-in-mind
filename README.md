@@ -148,8 +148,26 @@ until you refreeze it.
 | `Iceberg: Set Token Budget…` | How many tokens equal a fully melted berg. |
 | `Iceberg: Add Tokens Manually…` | Burn a specific amount. |
 | `Iceberg: Count Selection as Prompt Tokens` | Tokenize and burn the selection. |
+| `Iceberg: Name the Bear…` | Pick a name from a list, or type your own. |
 | `Iceberg: Show Usage Stats` | Totals, credits, and whether auto-tracking is on. |
 | `Iceberg: Toggle Meltdown Demo` | Watch the whole melt in a minute. |
+
+## Naming the bear
+
+The bear is called **Nanuq** by default — Inuit for "polar bear". Run
+**Iceberg: Name the Bear…** to change it, or set `iceberg.bearName` directly.
+The picker suggests:
+
+| Arctic | Burn rate | Soft |
+| --- | --- | --- |
+| `Nanuq`, `Nanook` | `Frostbyte` | `Teddy` |
+| `Siku` — Inuktitut for "sea ice" | `Burnie` | `Pudge` |
+| `Isbjørn` — Norwegian, "ice bear" | `Calvin` — as in ice calving | `Biscuit` |
+| `Knut` — the Berlin Zoo bear | `Kelvin` | `Winston` |
+| `Ursa` — from *Ursus maritimus* | `Sublime` — ice straight to vapour | `Bjørn` |
+| `Boreal`, `Aurora` | `Overflow`, `Cache`, `Slush`, `Floe`, `Ember` | `Mr Floof` |
+
+Any string works; the list is a shortcut, not a whitelist.
 
 ## Settings
 
@@ -163,7 +181,7 @@ until you refreeze it.
 | `iceberg.statusBar` | `true` | Show `❄ 62%` in the status bar. |
 | `iceberg.animate` | `true` | Animate. Off = static frame, near-zero CPU. |
 | `iceberg.pixelScale` | `0` | Pixel size. `0` auto-fits the panel. |
-| `iceberg.bearName` | `Nanuq` | Your bear's name. |
+| `iceberg.bearName` | `Nanuq` | Your bear's name. See [Naming the bear](#naming-the-bear). |
 
 ## Troubleshooting
 
@@ -177,6 +195,18 @@ to record token counts (1.130+).
 Note that an unlimited or unmetered Copilot plan makes no difference here —
 Iceberg counts the tokens VS Code records, not what you are billed. The ice melts
 either way. (And Iceberg never limits anything; see the note at the top.)
+
+**Every menu item and toolbar button appears twice.**
+Iceberg is installed twice. The publisher changed from `local` to `obrocki` in
+0.2.1, and VS Code keys an extension on `publisher.name` — so it treated the new
+version as a different extension and kept the old one. Both claim the same view
+and commands, which doubles the menu and splits the token count between two
+meters. From 0.3.0 Iceberg detects this and offers to remove the other copy; on
+older versions, uninstall `local.iceberg-copilot` by hand:
+
+```bash
+code --uninstall-extension local.iceberg-copilot
+```
 
 **It moves, but slower than I expected.**
 VS Code flushes transcripts lazily — usually within a minute. The default poll

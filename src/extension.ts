@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
@@ -11,6 +12,11 @@ export interface IcebergApi {
 }
 
 export function activate(context: vscode.ExtensionContext): IcebergApi {
+  const conflict = findConflictingInstall(context.extension?.id);
+  if (conflict) {
+    return standDown(context, conflict);
+  }
+
   const meter = new TokenMeter(context.globalState);
   context.subscriptions.push(meter);
 
@@ -141,6 +147,8 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         .update('tokenBudget', n, vscode.ConfigurationTarget.Global);
     }),
 
+    vscode.commands.registerCommand('iceberg.nameBear', () => pickBearName(meter.snapshot().bearName)),
+
     vscode.commands.registerCommand('iceberg.reset', () => {
       meter.reset();
       watcher.rebaseline();
@@ -184,6 +192,93 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
 export function deactivate(): void {
   /* disposables handle cleanup */
+}
+
+/**
+ * Finds another installed copy of Iceberg.
+ *
+ * The publisher changed from `local` to `obrocki` at 0.2.1. VS Code keys an
+ * extension on `publisher.name`, so that rename made 0.2.1 a different
+ * extension entirely and the old copy stayed installed alongside it. Both then
+ * contribute the same view, the same seven commands and the same chat
+ * participant, so whichever activates second throws "already registered" —
+ * after its usage watcher has already started, quietly charging a second meter
+ * the user never sees. The visible tell is a doubled view/title menu.
+ */
+function findConflictingInstall(ownId: string | undefined): vscode.Extension<unknown> | undefined {
+  // Without our own id we cannot tell another copy from ourselves, and a false
+  // positive would disable the extension outright. Assume no conflict.
+  if (!ownId) {
+    return undefined;
+  }
+  const mine = ownId.toLowerCase();
+  const installed = vscode.extensions?.all ?? [];
+  return installed.find((other) => {
+    const id = other?.id?.toLowerCase();
+    return !!id && id !== mine && id.split('.')[1] === 'iceberg-copilot';
+  });
+}
+
+/**
+ * Registers nothing and explains why. Better a working old copy and one clear
+ * message than two half-broken copies splitting the token count between them.
+ */
+function standDown(
+  context: vscode.ExtensionContext,
+  conflict: vscode.Extension<unknown>
+): IcebergApi {
+  const other = conflict.id;
+  const emitter = new vscode.EventEmitter<UsageSnapshot>();
+  context.subscriptions.push(emitter);
+
+  const uninstall = `Uninstall ${other}`;
+  void vscode.window
+    .showErrorMessage(
+      `Iceberg is installed twice — as ${context.extension?.id ?? 'this copy'} and as ${other}. ` +
+        'Both claim the same view and commands, so the menus are duplicated and the ' +
+        'token count is split between them. Uninstall the older copy and reload.',
+      uninstall,
+      'Show Extensions'
+    )
+    .then(async (choice) => {
+      if (choice === uninstall) {
+        try {
+          await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', other);
+          const reload = 'Reload Window';
+          const picked = await vscode.window.showInformationMessage(
+            `Removed ${other}. Reload to finish.`,
+            reload
+          );
+          if (picked === reload) {
+            await vscode.commands.executeCommand('workbench.action.reloadWindow');
+          }
+          return;
+        } catch {
+          // Fall through to the manual route below.
+        }
+      }
+      if (choice) {
+        await vscode.commands.executeCommand('workbench.extensions.search', '@installed iceberg');
+      }
+    });
+
+  return {
+    reportUsage: () => undefined,
+    getUsage: () => ({
+      input: 0,
+      output: 0,
+      total: 0,
+      budget: 0,
+      health: 1,
+      requests: 0,
+      credits: 0,
+      meltdownDemo: false,
+      bearName: '',
+      animate: false,
+      pixelScale: 0
+    }),
+    onDidChangeUsage: emitter.event
+  };
 }
 
 /**

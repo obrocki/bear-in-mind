@@ -1,5 +1,22 @@
 # Change Log
 
+## 0.3.0
+
+- Fixed: **duplicated menu items and toolbar buttons.** The publisher changed
+  from `local` to `obrocki` in 0.2.1, and because VS Code keys an extension on
+  `publisher.name`, that made 0.2.1 a *different* extension — the old copy
+  stayed installed alongside it. Both claimed the same view, the same commands
+  and the same chat participant, so every menu entry appeared twice, whichever
+  copy activated second died with "already registered", and its usage watcher
+  kept charging a second meter the user could not see. Iceberg now detects a
+  second copy of itself, registers nothing, and offers to uninstall the other
+  one instead of failing obscurely.
+  **If you installed 0.2.0, uninstall `local.iceberg-copilot`.**
+- New **Iceberg: Name the Bear…** command: a quick pick of suggested names
+  grouped as arctic (`Siku`, `Isbjørn`, `Knut`), burn-rate puns (`Frostbyte`,
+  `Burnie`, `Calvin`) and soft (`Teddy`, `Pudge`), plus free text. The default
+  is still `Nanuq`, Inuit for "polar bear".
+
 ## 0.2.1
 
 - Open-sourced: README with generated screenshots and a melt animation,
