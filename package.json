@@ -2,7 +2,7 @@
   "name": "iceberg-copilot",
   "displayName": "Iceberg — Copilot Token Meter",
   "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token burn adds up. It cannot cap your spend — the bear is relying on your compassion for that.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -96,6 +96,10 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "iceberg.nameBear",
+        "title": "Iceberg: Name the Bear…"
+      },
+      {
         "command": "iceberg.showStats",
         "title": "Iceberg: Show Usage Stats"
       },
@@ -123,6 +127,11 @@
         },
         {
           "command": "iceberg.addTokens",
+          "when": "view == iceberg.habitat",
+          "group": "1_config"
+        },
+        {
+          "command": "iceberg.nameBear",
           "when": "view == iceberg.habitat",
           "group": "1_config"
         },
@@ -184,7 +193,7 @@
         "iceberg.bearName": {
           "type": "string",
           "default": "Nanuq",
-          "description": "Your bear's name."
+          "markdownDescription": "Your bear's name. `Nanuq` is Inuit for \"polar bear\". Run **Iceberg: Name the Bear…** for suggestions — arctic (`Siku`, `Isbjørn`, `Knut`), burn-rate puns (`Frostbyte`, `Burnie`, `Calvin`), or soft (`Teddy`, `Pudge`)."
         }
       }
     }
