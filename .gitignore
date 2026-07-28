@@ -1,0 +1,7 @@
+node_modules/
+dist/
+out/
+*.vsix
+
+# Screenshot scratch space (see docs/CONTRIBUTING notes on regenerating media)
+.shots/

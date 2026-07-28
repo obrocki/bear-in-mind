@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest an idea — a new scene, a new token source, a new behaviour.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: Why?
+      description: What problem does it solve, or what would it make more fun?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Token tracking / accounting
+        - Pixel art / animation
+        - Settings and commands
+        - Other

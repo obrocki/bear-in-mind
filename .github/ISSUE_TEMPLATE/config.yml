@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or idea
+    url: https://github.com/obrocki/iceberg-copilot/discussions
+    about: Ask a question or share what your bear is up to.

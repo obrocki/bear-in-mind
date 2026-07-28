@@ -1,0 +1,67 @@
+name: Bug report
+description: Something is broken, or the iceberg is not melting.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: run **Iceberg: Show Usage Stats** and open the **Iceberg**
+        output channel (View → Output → Iceberg). Both are far more useful than a
+        description of the symptom.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run Iceberg: Refreeze
+        2. Send an Ask prompt in Copilot Chat
+        3. Wait 10 seconds
+        4. The percentage stays at 100%
+    validations:
+      required: true
+
+  - type: textarea
+    id: stats
+    attributes:
+      label: 'Output of "Iceberg: Show Usage Stats"'
+      render: text
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Iceberg output channel
+      description: View → Output → Iceberg. Paste the last few lines.
+      render: text
+
+  - type: input
+    id: vscode
+    attributes:
+      label: VS Code version
+      placeholder: 1.130.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux, Other]
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tracking
+    attributes:
+      label: Checks
+      options:
+        - label: '`iceberg.trackCopilotChat` is `true` in my settings'
+        - label: I am using a VS Code build that records token counts in its chat transcripts (1.130 or newer)

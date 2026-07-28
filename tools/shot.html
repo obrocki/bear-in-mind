@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en" data-compact="true">
+<head>
+<meta charset="UTF-8" />
+<link href="../media/style.css" rel="stylesheet" />
+<title>Iceberg — screenshot page</title>
+<!--
+  Reproduces the webview markup from src/habitatView.ts against the real
+  media/style.css and media/main.js, so screenshots taken here are genuine
+  rather than a mock-up. Query string:
+
+    health=0..1     ice remaining          chrome=0     hide the fake VS Code frame
+    budget=<n>      token budget           hud=0        hide the HUD strip
+    compact=0       editor-tab layout      bear=<name>  bear name
+    pixelScale=<n>  0 = auto-fit
+-->
+<style>
+  :root {
+    --vscode-font-family: "Segoe UI", system-ui, sans-serif;
+    --vscode-editor-font-family: Consolas, "Cascadia Mono", ui-monospace, monospace;
+    --vscode-foreground: #cccccc;
+    --vscode-sideBar-background: #181818;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-button-secondaryBackground: #313131;
+    --vscode-button-secondaryForeground: #cccccc;
+    --vscode-button-secondaryHoverBackground: #3c3c3c;
+    --vscode-focusBorder: #0078d4;
+  }
+  html, body { background: #181818; }
+  body { display: flex; flex-direction: column; }
+  #frame {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border: 1px solid #2b2b2b;
+    background: #181818;
+  }
+  #titlebar {
+    flex: 0 0 auto;
+    font: 600 11px/1 "Segoe UI", system-ui, sans-serif;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    color: #cccccc;
+    padding: 9px 12px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  #titlebar .acts { color: #8a8a8a; font-size: 12px; letter-spacing: 2px; font-weight: 400; }
+  #sectionbar {
+    flex: 0 0 auto;
+    font: 700 11px/1 "Segoe UI", system-ui, sans-serif;
+    color: #cccccc;
+    padding: 6px 12px 6px 8px;
+    border-top: 1px solid #2b2b2b;
+    border-bottom: 1px solid #2b2b2b;
+  }
+  #sectionbar::before { content: "\25BE"; color: #8a8a8a; margin-right: 4px; }
+  #inner { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  #statusbar {
+    flex: 0 0 auto;
+    font: 12px/1 "Segoe UI", system-ui, sans-serif;
+    color: #cccccc;
+    border-top: 1px solid #2b2b2b;
+    padding: 6px 12px;
+  }
+</style>
+</head>
+<body>
+  <div id="frame">
+    <div id="titlebar"><span>Explorer</span><span class="acts">&#8943;</span></div>
+    <div id="sectionbar">Habitat</div>
+    <div id="inner">
+      <div id="stage">
+        <canvas id="scene"></canvas>
+        <div id="melted" class="badge" hidden>THE ICE IS GONE</div>
+      </div>
+      <div id="hud">
+        <div class="row">
+          <span id="bearName" class="name">Nanuq</span>
+          <span id="pct" class="pct">100%</span>
+        </div>
+        <div class="bar" title="Ice remaining"><div id="fill"></div></div>
+        <div class="row sub">
+          <span id="tokens">0 / 5M tokens</span>
+          <span id="split">in 0 &middot; out 0</span>
+        </div>
+        <div class="row actions">
+          <button id="btnBudget" type="button">Budget&hellip;</button>
+          <button id="btnReset" type="button">Refreeze</button>
+        </div>
+      </div>
+    </div>
+    <div id="statusbar"><span id="sb">&#10052; 100%</span></div>
+  </div>
+  <script src="../media/main.js"></script>
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var health = parseFloat(q.get('health') || '1');
+      var budget = parseInt(q.get('budget') || '5000000', 10);
+
+      document.documentElement.setAttribute('data-compact', String(q.get('compact') !== '0'));
+      if (q.get('hud') === '0') document.getElementById('hud').style.display = 'none';
+      if (q.get('chrome') === '0') {
+        document.getElementById('titlebar').style.display = 'none';
+        document.getElementById('sectionbar').style.display = 'none';
+        document.getElementById('statusbar').style.display = 'none';
+        document.getElementById('frame').style.border = 'none';
+      }
+
+      // Roughly the real-world split: agent mode resends context every turn, so
+      // prompt tokens dominate about 10:1.
+      var total = Math.round(budget * (1 - health));
+      var input = Math.round(total * 0.92);
+      window.postMessage({
+        type: 'state',
+        state: {
+          health: health,
+          input: input,
+          output: total - input,
+          total: total,
+          budget: budget,
+          requests: Math.max(1, Math.round((1 - health) * 140)),
+          credits: Math.round((1 - health) * 3200) / 10,
+          meltdownDemo: false,
+          bearName: q.get('bear') || 'Nanuq',
+          animate: true,
+          pixelScale: parseInt(q.get('pixelScale') || '0', 10)
+        }
+      }, '*');
+      document.getElementById('sb').textContent = '\u2744 ' + Math.round(health * 100) + '%';
+    })();
+  </script>
+</body>
+</html>

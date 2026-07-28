@@ -1,0 +1,210 @@
+{
+  "name": "iceberg-copilot",
+  "displayName": "Iceberg — Copilot Token Meter",
+  "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token budget burns down.",
+  "version": "0.2.1",
+  "publisher": "dawidobrocki",
+  "author": {
+    "name": "Dawid Obrocki"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other",
+    "Visualization"
+  ],
+  "keywords": [
+    "copilot",
+    "tokens",
+    "token usage",
+    "usage meter",
+    "pixel art",
+    "polar bear",
+    "visualization",
+    "fun"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/obrocki/iceberg-copilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/obrocki/iceberg-copilot/issues"
+  },
+  "homepage": "https://github.com/obrocki/iceberg-copilot#readme",
+  "galleryBanner": {
+    "color": "#0b1b2e",
+    "theme": "dark"
+  },
+  "icon": "media/icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "iceberg",
+          "title": "Iceberg",
+          "icon": "media/iceberg.svg"
+        }
+      ]
+    },
+    "views": {
+      "iceberg": [
+        {
+          "type": "webview",
+          "id": "iceberg.habitat",
+          "name": "Habitat",
+          "icon": "media/iceberg.svg",
+          "contextualTitle": "Iceberg"
+        }
+      ]
+    },
+    "chatParticipants": [
+      {
+        "id": "iceberg.bear",
+        "name": "iceberg",
+        "fullName": "Polar Bear",
+        "description": "Ask the bear about your token budget (every request you send it is counted).",
+        "isSticky": false
+      }
+    ],
+    "commands": [
+      {
+        "command": "iceberg.open",
+        "title": "Iceberg: Open Habitat in Editor",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "iceberg.addTokens",
+        "title": "Iceberg: Add Tokens Manually…"
+      },
+      {
+        "command": "iceberg.countSelection",
+        "title": "Iceberg: Count Selection as Prompt Tokens"
+      },
+      {
+        "command": "iceberg.setBudget",
+        "title": "Iceberg: Set Token Budget…"
+      },
+      {
+        "command": "iceberg.reset",
+        "title": "Iceberg: Refreeze (Reset Usage)",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "iceberg.showStats",
+        "title": "Iceberg: Show Usage Stats"
+      },
+      {
+        "command": "iceberg.toggleMeltdownDemo",
+        "title": "Iceberg: Toggle Meltdown Demo"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "iceberg.open",
+          "when": "view == iceberg.habitat",
+          "group": "navigation@1"
+        },
+        {
+          "command": "iceberg.reset",
+          "when": "view == iceberg.habitat",
+          "group": "navigation@2"
+        },
+        {
+          "command": "iceberg.setBudget",
+          "when": "view == iceberg.habitat",
+          "group": "1_config"
+        },
+        {
+          "command": "iceberg.addTokens",
+          "when": "view == iceberg.habitat",
+          "group": "1_config"
+        },
+        {
+          "command": "iceberg.toggleMeltdownDemo",
+          "when": "view == iceberg.habitat",
+          "group": "9_demo"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Iceberg",
+      "properties": {
+        "iceberg.tokenBudget": {
+          "type": "number",
+          "default": 5000000,
+          "minimum": 1000,
+          "description": "Total token budget. The iceberg is at full size at 0 tokens used and fully melted at this many tokens. Agent-mode sessions resend context every turn, so real usage climbs into the millions quickly."
+        },
+        "iceberg.trackCopilotChat": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically meter regular Copilot Chat usage by reading the exact per-request token counts VS Code records in its chat transcripts."
+        },
+        "iceberg.chatPollIntervalMs": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "How often (ms) to check the chat transcripts for new token counts."
+        },
+        "iceberg.countInputTokens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Count input (prompt) tokens against the budget."
+        },
+        "iceberg.countOutputTokens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Count output (completion) tokens against the budget."
+        },
+        "iceberg.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show remaining ice in the status bar."
+        },
+        "iceberg.animate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Animate the scene. Turn off to save CPU (the scene still renders a static frame)."
+        },
+        "iceberg.pixelScale": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Pixel size multiplier. 0 = auto-fit to the panel."
+        },
+        "iceberg.bearName": {
+          "type": "string",
+          "default": "Nanuq",
+          "description": "Your bear's name."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "typecheck": "tsc --noEmit",
+    "vsix": "npm run package && vsce package --no-dependencies",
+    "media": "node tools/make-screenshots.js && node tools/make-gif.js",
+    "media:shots": "node tools/make-screenshots.js",
+    "media:gif": "node tools/make-gif.js",
+    "media:icon": "node tools/make-icon.js"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2"
+  }
+}
