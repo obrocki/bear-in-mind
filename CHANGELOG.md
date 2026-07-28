@@ -29,6 +29,10 @@
 - Fixed: an unclosed code fence in the README rendered most of the page as one
   code block on GitHub. `npm run check:docs` now catches that class of bug, and
   CI runs it.
+- Fixed: the README relied on raw HTML — a `<table>` of screenshots, centred
+  `<div>`s, a `<details>` block — which GitHub honours but sanitising markdown
+  renderers drop, so the screenshots below the install section vanished. It is
+  now plain markdown throughout, and `check:docs` rejects raw HTML.
 
 ## 0.2.0
 

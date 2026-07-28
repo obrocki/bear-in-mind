@@ -11,7 +11,7 @@ cd iceberg-copilot
 npm install
 ```
 
-Press <kbd>F5</kbd> to launch an Extension Development Host, then open the 🧊
+Press `F5` to launch an Extension Development Host, then open the 🧊
 icon in the activity bar.
 
 | Command | What it does |
@@ -19,11 +19,11 @@ icon in the activity bar.
 | `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
 | `npm run watch` | Same, but rebuilds on change. |
 | `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
-| `npm run check:docs` | Balanced code fences and working relative links in every `.md`. |
+| `npm run check:docs` | Balanced code fences, working relative links, and no raw HTML in any `.md`. |
 | `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
 
 `npm run vsix` is also the default VS Code build task
-(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>), and it is exactly what CI runs —
+(`Ctrl+Shift+B`), and it is exactly what CI runs —
 see [Packaging and releases](#packaging-and-releases).
 
 There is no test runner wired up. `npm run typecheck` plus a manual pass in the

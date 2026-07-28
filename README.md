@@ -1,6 +1,4 @@
-<div align="center">
-
-<img src="docs/media/hero.png" alt="A pixel-art iceberg at night with a polar bear standing on it, under an aurora" width="100%" />
+![A pixel-art iceberg at night with a polar bear standing on it, under an aurora](docs/media/hero.png)
 
 # 🧊 Iceberg — Copilot Token Meter
 
@@ -11,8 +9,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code ^1.95](https://img.shields.io/badge/VS%20Code-%5E1.95-007ACC.svg?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-
-</div>
 
 ---
 
@@ -29,11 +25,9 @@ less to stand on.
 > That is the whole product. If your plan is unmetered, the counter still climbs
 > and the ice still melts; the bear does not know or care about your billing tier.
 
-<div align="center">
-  <img src="docs/media/melt.gif" alt="Animated iceberg melting from full size down to nothing as tokens are consumed, then refreezing" width="620" />
-  <br />
-  <sub>The full melt, and a refreeze. Roughly 5 million tokens compressed into eight seconds.</sub>
-</div>
+![Animated iceberg melting from full size down to nothing as tokens are consumed, then refreezing](docs/media/melt.gif)
+
+*The full melt, and a refreeze. Roughly 5 million tokens compressed into eight seconds.*
 
 ## The melt
 
@@ -71,21 +65,14 @@ npm run vsix
 code --install-extension iceberg-copilot-*.vsix
 ```
 
-Or press <kbd>F5</kbd> in the repo to launch an Extension Development Host.
+Or press `F5` in the repo to launch an Extension Development Host.
 
 Then open the 🧊 icon in the activity bar. For a larger view, run
 **Iceberg: Open Habitat in Editor**.
 
-<table>
-<tr>
-<td width="34%"><img src="docs/media/panel-full.png" alt="Sidebar panel at 100% ice" /></td>
-<td><img src="docs/media/editor-view.png" alt="The habitat open in an editor tab at 38% ice" /></td>
-</tr>
-<tr>
-<td align="center"><sub>The sidebar view.</sub></td>
-<td align="center"><sub><b>Iceberg: Open Habitat in Editor</b> for the wide view.</sub></td>
-</tr>
-</table>
+| The sidebar view | **Iceberg: Open Habitat in Editor** for the wide view |
+| --- | --- |
+| ![Sidebar panel at 100% ice](docs/media/panel-full.png) | ![The habitat open in an editor tab at 38% ice](docs/media/editor-view.png) |
 
 ## How tokens get counted
 
@@ -105,10 +92,7 @@ reported. No estimating, no tokenizer guesswork. This is the mechanism because
 there is no VS Code API that lets one extension observe another's language-model
 traffic — if you know of one, please open an issue.
 
-<details>
-<summary><b>Details worth knowing</b></summary>
-
-<br />
+**Details worth knowing**
 
 - **Only growth is charged.** Counters are cumulative per request and get
   rewritten as an agent turn works through its tool calls — one real request
@@ -123,8 +107,6 @@ traffic — if you know of one, please open an issue.
 - **Nothing leaves your machine.** No network access; prompt and response text is
   never read. See [SECURITY.md](SECURITY.md).
 - Turn it all off with `"iceberg.trackCopilotChat": false`.
-
-</details>
 
 ### Other ways to burn ice
 
@@ -229,7 +211,7 @@ exists in the bundle, and that every asset the manifest points at was packaged.
 iceberg-copilot-0.2.1.vsix  29.5 kB · 0.2.1 · obrocki.iceberg-copilot
 ```
 
-Inside VS Code it is the default build task — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>,
+Inside VS Code it is the default build task — `Ctrl+Shift+B`,
 or **Tasks: Run Build Task** → **Build VSIX**. Run
 `node tools/build-vsix.js --help` for the flags (`--pre-release`, `--version`,
 `--label`, `--out-dir`, …).

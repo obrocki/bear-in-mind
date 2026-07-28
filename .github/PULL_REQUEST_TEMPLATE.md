@@ -10,7 +10,7 @@
 
 - [ ] `npm run typecheck` passes
 - [ ] `npm run package` succeeds
-- [ ] Loaded in an Extension Development Host (<kbd>F5</kbd>) and checked the behaviour by hand
+- [ ] Loaded in an Extension Development Host (`F5`) and checked the behaviour by hand
 
 <!-- If you touched src/chatWatcher.ts, say how you checked the accounting.
      That file is the easiest place in the project to introduce a subtle
