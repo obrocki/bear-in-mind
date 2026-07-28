@@ -49,7 +49,7 @@ jobs:
       # artifact here — it lets a reviewer install the branch and try it.
       - name: Upload the VSIX for review
         if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.build.outputs.vsix_name }}
           path: build/*.vsix

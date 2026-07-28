@@ -99,7 +99,7 @@ jobs:
         run: node tools/build-vsix.js --out-dir build --github $ARGS
 
       - name: Upload the VSIX
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.build.outputs.vsix_name }}
           path: build/*.vsix
