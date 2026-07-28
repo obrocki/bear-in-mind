@@ -202,10 +202,10 @@
     "media:icon": "node tools/make-icon.js"
   },
   "devDependencies": {
-    "@types/node": "^22.10.0",
+    "@types/node": "^26.1.1",
     "@types/vscode": "^1.95.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.24.0",
-    "typescript": "^5.7.2"
+    "esbuild": "^0.28.1",
+    "typescript": "^7.0.2"
   }
 }
