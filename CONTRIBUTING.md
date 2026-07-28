@@ -19,6 +19,7 @@ icon in the activity bar.
 | `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
 | `npm run watch` | Same, but rebuilds on change. |
 | `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
+| `npm run check:docs` | Balanced code fences and working relative links in every `.md`. |
 | `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
 
 `npm run vsix` is also the default VS Code build task

@@ -194,6 +194,7 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit",
+    "check:docs": "node tools/check-docs.js",
     "vsix": "node tools/build-vsix.js",
     "media": "node tools/make-screenshots.js && node tools/make-gif.js",
     "media:shots": "node tools/make-screenshots.js",

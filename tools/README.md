@@ -32,6 +32,7 @@ npm run media:icon    # media/icon.png
 | File | Purpose |
 | --- | --- |
 | `build-vsix.js` | Builds and then inspects the distributable `.vsix`. |
+| `check-docs.js` | Catches unclosed code fences and dead relative links in the markdown. |
 | `shot.html` | The webview markup from `src/habitatView.ts`, wired to the real CSS and renderer, with the state driven by a query string. |
 | `grid.html` | Four `shot.html` frames side by side for the melt-progression image. |
 | `make-screenshots.js` | Launches headless Chromium/Edge, drives it over the DevTools protocol, writes the PNGs. |

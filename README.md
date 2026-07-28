@@ -55,7 +55,7 @@ with your remaining budget. So does everything else in the scene.
 Grab the `.vsix` from the [latest release](https://github.com/obrocki/iceberg-copilot/releases)
 and install it:
 
-````bash
+```bash
 code --install-extension iceberg-copilot-*.vsix
 ```
 
@@ -269,4 +269,3 @@ accounting has to handle.
 ## License
 
 [MIT](LICENSE) © Dawid Obrocki
-````

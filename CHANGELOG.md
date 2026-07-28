@@ -26,6 +26,9 @@
   narrowing the sidebar clipped the HUD instead of reflowing it.
 - Fixed: the Marketplace publish step in the release workflow could never run,
   because a step's `if:` cannot see a secret bound in that same step's `env:`.
+- Fixed: an unclosed code fence in the README rendered most of the page as one
+  code block on GitHub. `npm run check:docs` now catches that class of bug, and
+  CI runs it.
 
 ## 0.2.0
 
