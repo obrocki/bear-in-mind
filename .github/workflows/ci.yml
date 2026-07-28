@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -30,19 +34,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      # One command — the same one contributors run locally. It typechecks,
+      # bundles, packages, then reopens the .vsix and checks what actually
+      # shipped, so a bad .vscodeignore fails here rather than on a user's
+      # machine.
+      - name: Build and verify the VSIX
+        id: build
+        shell: bash
+        env:
+          SUMMARY: ${{ matrix.os == 'ubuntu-latest' && '--github' || '' }}
+        run: node tools/build-vsix.js --out-dir build --label "${GITHUB_SHA::7}" $SUMMARY
 
-      - name: Bundle
-        run: npm run package
-
-      - name: Package VSIX
-        run: npx vsce package --no-dependencies --out iceberg-copilot.vsix
-
-      - name: Upload VSIX
-        if: matrix.os == 'ubuntu-latest'
+      # Merged code is packaged by build-vsix.yml, so only pull requests need an
+      # artifact here — it lets a reviewer install the branch and try it.
+      - name: Upload the VSIX for review
+        if: matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: iceberg-copilot-vsix
-          path: iceberg-copilot.vsix
+          name: ${{ steps.build.outputs.vsix_name }}
+          path: build/*.vsix
           if-no-files-found: error
+          retention-days: 14

@@ -5,3 +5,7 @@ out/
 
 # Screenshot scratch space (see docs/CONTRIBUTING notes on regenerating media)
 .shots/
+
+# VSIX output directory used by `npm run vsix` and the workflows
+build/
+

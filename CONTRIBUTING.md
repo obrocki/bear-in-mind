@@ -19,7 +19,11 @@ icon in the activity bar.
 | `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
 | `npm run watch` | Same, but rebuilds on change. |
 | `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
-| `npm run vsix` | Production bundle + `.vsix` package. |
+| `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
+
+`npm run vsix` is also the default VS Code build task
+(<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>), and it is exactly what CI runs —
+see [Packaging and releases](#packaging-and-releases).
 
 There is no test runner wired up. `npm run typecheck` plus a manual pass in the
 Extension Development Host is the current bar. If you add a test setup, that
@@ -108,6 +112,32 @@ stills that include the HUD, and once in a Node `vm` against a Canvas2D shim for
 the animated GIF. Neither needs VS Code running. If you change the art, please
 regenerate the images in the same PR so the README does not drift. See
 [`tools/README.md`](tools/README.md).
+
+## Packaging and releases
+
+`tools/build-vsix.js` is the single build path — locally, in CI, and at release
+time. Nothing runs `vsce` directly, so a build can't behave differently depending
+on where it happened.
+
+After packaging it reopens the archive and reads its central directory, because
+`vsce` will happily produce a `.vsix` that is missing the bundle. It fails the
+build if a required file is absent, if sources, source maps or `node_modules`
+leaked in, if a contributed command doesn't appear anywhere in the bundle, or if
+the manifest points at an asset that wasn't packaged.
+
+```bash
+node tools/build-vsix.js --help
+```
+
+| Workflow | Trigger | What it produces |
+| --- | --- | --- |
+| `ci.yml` | Push to `main`, pull requests | Build + verify on Linux, Windows and macOS. PRs also get an installable `.vsix` attached to the run. |
+| `build-vsix.yml` | Merge to `main`, or manually | A `.vsix` artifact, plus a refresh of the rolling `dev` pre-release. The manual run can stamp a version or mark the build as a pre-release without committing anything. |
+| `release.yml` | Pushing a `v*` tag | Verifies the tag matches `package.json`, attaches the `.vsix` to a GitHub release, and publishes to the Marketplace if `VSCE_PAT` is set. |
+
+To cut a release: bump the version in `package.json`, run
+`npm install --package-lock-only` so the lockfile follows (`npm ci` fails if it
+doesn't), update `CHANGELOG.md`, then tag `vX.Y.Z`.
 
 ## Pull requests
 

@@ -64,7 +64,9 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
           `- Requests counted: \`${s.requests}\`` +
             (s.credits > 0 ? ` · Credits: \`${s.credits.toFixed(1)}\`` : ''),
         '',
-        `${s.bearName} ${moodLine(s.health)}`
+        `${s.bearName} ${moodLine(s.health)}`,
+        '',
+        '_Iceberg only shows the burn — it cannot cap it. The bear is relying on your compassion._'
       ].join('\n')
     );
     status.backgroundColor =

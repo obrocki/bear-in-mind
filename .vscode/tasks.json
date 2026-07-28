@@ -15,6 +15,22 @@
       "group": "build",
       "problemMatcher": "$esbuild-watch",
       "label": "npm: watch"
+    },
+    {
+      "type": "npm",
+      "script": "vsix",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [],
+      "label": "Build VSIX",
+      "detail": "Typecheck, bundle, package and verify the installable .vsix",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
     }
   ]
 }

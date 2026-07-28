@@ -130,6 +130,15 @@ body {
   padding-top: 1px;
 }
 
+/* The extension has no way to block a request or lower a bill. Saying so where
+   the numbers are is the only honest place to put it. */
+.note {
+  margin: 1px 0 0;
+  font: 10px/1.45 var(--vscode-font-family, system-ui, sans-serif);
+  opacity: 0.6;
+  text-wrap: pretty;
+}
+
 button {
   flex: 1 1 auto;
   padding: 3px 6px;
@@ -164,4 +173,9 @@ html[data-compact='false'] .sub {
 
 html[data-compact='false'] .actions {
   max-width: 320px;
+}
+
+html[data-compact='false'] .note {
+  font-size: 11px;
+  max-width: 46em;
 }

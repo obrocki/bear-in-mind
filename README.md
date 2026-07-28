@@ -7,6 +7,7 @@
 **A polar bear lives in your sidebar. Every token you burn melts its home.**
 
 [![CI](https://github.com/obrocki/iceberg-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/obrocki/iceberg-copilot/actions/workflows/ci.yml)
+[![Build VSIX](https://github.com/obrocki/iceberg-copilot/actions/workflows/build-vsix.yml/badge.svg)](https://github.com/obrocki/iceberg-copilot/actions/workflows/build-vsix.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code ^1.95](https://img.shields.io/badge/VS%20Code-%5E1.95-007ACC.svg?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -19,6 +20,14 @@ Iceberg turns your Copilot token consumption into something you can actually
 feel. It watches how many tokens you burn, and shrinks a hand-drawn arctic scene
 to match. No dashboard, no numbers to interpret — just a bear with progressively
 less to stand on.
+
+> [!NOTE]
+> **Iceberg has no enforcement mechanism.** It cannot cap your spend, throttle a
+> request, block a prompt, or change your bill in any way. It only makes the
+> burn visible. The entire mechanism is compassion for the polar bear — you see
+> its home shrinking, and you think twice about the next 40k-token agent run.
+> That is the whole product. If your plan is unmetered, the counter still climbs
+> and the ice still melts; the bear does not know or care about your billing tier.
 
 <div align="center">
   <img src="docs/media/melt.gif" alt="Animated iceberg melting from full size down to nothing as tokens are consumed, then refreezing" width="620" />
@@ -46,9 +55,13 @@ with your remaining budget. So does everything else in the scene.
 Grab the `.vsix` from the [latest release](https://github.com/obrocki/iceberg-copilot/releases)
 and install it:
 
-```bash
+````bash
 code --install-extension iceberg-copilot-*.vsix
 ```
+
+Every merge to `main` also publishes a fresh build to the rolling
+[`dev` pre-release](https://github.com/obrocki/iceberg-copilot/releases/tag/dev)
+if you want the newest ice.
 
 Or build it yourself:
 
@@ -128,7 +141,7 @@ traffic — if you know of one, please open an issue.
 Reporting from another extension:
 
 ```ts
-const iceberg = vscode.extensions.getExtension('dawidobrocki.iceberg-copilot');
+const iceberg = vscode.extensions.getExtension('obrocki.iceberg-copilot');
 const api = await iceberg?.activate();
 
 api?.reportUsage({ input: 1843, output: 512 });
@@ -179,6 +192,10 @@ silent channel means the watcher is not seeing new counters; check that
 `iceberg.trackCopilotChat` is `true` and that your VS Code build is recent enough
 to record token counts (1.130+).
 
+Note that an unlimited or unmetered Copilot plan makes no difference here —
+Iceberg counts the tokens VS Code records, not what you are billed. The ice melts
+either way. (And Iceberg never limits anything; see the note at the top.)
+
 **It moves, but slower than I expected.**
 VS Code flushes transcripts lazily — usually within a minute. The default poll
 interval is 4 seconds on top of that.
@@ -187,6 +204,48 @@ interval is 4 seconds on top of that.
 It shouldn't; existing history is baselined. If it did, run **Iceberg: Refreeze**
 and please [open an issue](https://github.com/obrocki/iceberg-copilot/issues) —
 that is a bug worth knowing about.
+
+## Building the extension
+
+One command does everything, and it is the same one CI runs:
+
+```bash
+npm run vsix
+```
+
+It typechecks, bundles with esbuild, packages with `vsce`, and then **reopens the
+archive and checks what actually shipped** — because a `.vsix` with a missing
+`dist/extension.js` still packages "successfully" and only fails once someone
+installs it. It verifies that every required file is present, that no sources,
+source maps or `node_modules` leaked in, that every contributed command really
+exists in the bundle, and that every asset the manifest points at was packaged.
+
+```
+▸ typecheck  tsc --noEmit · 788 ms
+▸ bundle     esbuild --production · 124 ms
+▸ package    vsce package · 1541 ms
+▸ verify     11 entries · required files present · nothing leaked
+
+iceberg-copilot-0.2.1.vsix  29.5 kB · 0.2.1 · obrocki.iceberg-copilot
+```
+
+Inside VS Code it is the default build task — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>,
+or **Tasks: Run Build Task** → **Build VSIX**. Run
+`node tools/build-vsix.js --help` for the flags (`--pre-release`, `--version`,
+`--label`, `--out-dir`, …).
+
+### On GitHub
+
+| Workflow | Trigger | Result |
+| --- | --- | --- |
+| **Build VSIX** | Every merge to `main` | A `.vsix` artifact on the run, and the rolling [`dev` pre-release](https://github.com/obrocki/iceberg-copilot/releases/tag/dev) refreshed to match. |
+| **Build VSIX** | Actions tab → *Run workflow* | Same, on demand. Optionally stamp a version (`0.3.0`) or mark it as a Marketplace pre-release, without committing a version bump. |
+| **CI** | Every pull request | Builds and verifies on Linux, Windows and macOS, and attaches a `.vsix` to the run so a reviewer can install the branch. |
+| **Release** | Pushing a `v*` tag | Checks the tag matches `package.json`, attaches the `.vsix` to a GitHub release, and publishes to the Marketplace if a `VSCE_PAT` secret exists. |
+
+Builds that aren't tagged carry the commit in their file name —
+`iceberg-copilot-0.2.1+3f2a1c9.vsix` — so two builds of the same version are
+still tellable apart.
 
 ## Notes on the rendering
 
@@ -210,3 +269,4 @@ accounting has to handle.
 ## License
 
 [MIT](LICENSE) © Dawid Obrocki
+````

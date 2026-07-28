@@ -1,0 +1,152 @@
+name: Build VSIX
+
+# Produces an installable .vsix two ways:
+#
+#   * automatically, every time something lands on main (i.e. when a PR merges)
+#   * on demand, from the Actions tab, optionally stamped with a version
+#
+# Main builds are also published to a rolling "dev" pre-release so anyone can
+# download the latest build without a GitHub account or an Actions login.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp on the build (x.y.z). Leave blank to use package.json.'
+        type: string
+        required: false
+        default: ''
+      pre_release:
+        description: 'Mark it as a Marketplace pre-release build'
+        type: boolean
+        default: false
+      publish_dev_release:
+        description: 'Publish it to the rolling "dev" GitHub release'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.editorconfig'
+      - '.gitattributes'
+      - 'LICENSE'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-vsix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # only for the rolling dev release
+    outputs:
+      vsix_name: ${{ steps.build.outputs.vsix_name }}
+      version: ${{ steps.build.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Work out the packaging arguments
+        id: args
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          PRE_RELEASE: ${{ inputs.pre_release }}
+        run: |
+          args=""
+
+          if [ -n "$VERSION" ]; then
+            # Validated here as well as in the build script, because this value
+            # ends up on a command line.
+            if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              echo "::error::version must be major.minor.patch, got '$VERSION'"
+              exit 1
+            fi
+            args="--version $VERSION"
+          else
+            # Untagged builds carry the commit in the file name so two builds of
+            # the same version are still tellable apart.
+            args="--label ${GITHUB_SHA::7}"
+          fi
+
+          if [ "$PRE_RELEASE" = "true" ]; then
+            args="$args --pre-release"
+          fi
+
+          echo "value=$args" >> "$GITHUB_OUTPUT"
+          echo "Packaging with: $args"
+
+      - name: Build and verify the VSIX
+        id: build
+        shell: bash
+        env:
+          ARGS: ${{ steps.args.outputs.value }}
+        run: node tools/build-vsix.js --out-dir build --github $ARGS
+
+      - name: Upload the VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.vsix_name }}
+          path: build/*.vsix
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Refresh the rolling dev release
+        if: ${{ github.event_name == 'push' || inputs.publish_dev_release }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VSIX: ${{ steps.build.outputs.vsix_path }}
+          VSIX_NAME: ${{ steps.build.outputs.vsix_name }}
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          cat > notes.md <<'EOF'
+          The latest build of `main`, refreshed automatically on every merge.
+
+          **This is not a stable release.** The version number is whatever
+          `package.json` currently says; the commit it was built from is in the
+          file name. For a real release, see the tagged releases on this page.
+          EOF
+
+          {
+            echo ""
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Version | \`$VERSION\` |"
+            echo "| Commit | [\`${GITHUB_SHA::7}\`]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA) |"
+            echo "| Built | $(date -u '+%Y-%m-%d %H:%M UTC') |"
+            echo ""
+            echo '```bash'
+            echo "code --install-extension $VSIX_NAME"
+            echo '```'
+          } >> notes.md
+
+          if gh release view dev >/dev/null 2>&1; then
+            gh release delete dev --yes --cleanup-tag
+            # Tag deletion is not instant on GitHub's side, and the tag is about
+            # to be recreated at a different commit.
+            sleep 5
+          fi
+
+          gh release create dev "$VSIX" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Development build ($VERSION)" \
+            --notes-file notes.md
+
+          echo "Published to the [\`dev\` release]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/dev)." >> "$GITHUB_STEP_SUMMARY"

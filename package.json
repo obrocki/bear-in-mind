@@ -1,9 +1,9 @@
 {
   "name": "iceberg-copilot",
   "displayName": "Iceberg — Copilot Token Meter",
-  "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token budget burns down.",
+  "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token burn adds up. It cannot cap your spend — the bear is relying on your compassion for that.",
   "version": "0.2.1",
-  "publisher": "dawidobrocki",
+  "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
   },
@@ -194,7 +194,7 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit",
-    "vsix": "npm run package && vsce package --no-dependencies",
+    "vsix": "node tools/build-vsix.js",
     "media": "node tools/make-screenshots.js && node tools/make-gif.js",
     "media:shots": "node tools/make-screenshots.js",
     "media:gif": "node tools/make-gif.js",

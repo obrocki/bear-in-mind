@@ -5,13 +5,27 @@
 - Open-sourced: README with generated screenshots and a melt animation,
   contributing guide, security policy, code of conduct, issue and PR templates,
   CI and release workflows, and Dependabot.
+- **The extension now says out loud that it has no enforcement mechanism.** It
+  cannot cap spend, throttle a request or change a bill — it only makes the burn
+  visible, and relies on your compassion for the bear to do the rest. Stated in
+  the panel, the status bar tooltip, the Marketplace description and the README.
+- `npm run vsix` (or **Build VSIX** in the VS Code task list) now typechecks,
+  bundles, packages *and reopens the archive to check what shipped* — required
+  files present, no sources or source maps leaked, every contributed command
+  actually present in the bundle, every referenced asset packaged.
+- New **Build VSIX** workflow: every merge to `main` produces an installable
+  `.vsix`, published to a rolling `dev` pre-release, and it can be run on demand
+  from the Actions tab with an optional version stamp. Pull requests get a
+  reviewable `.vsix` attached to their CI run.
 - `tools/` now regenerates every image in `docs/media` from the real renderer
   (`npm run media`), so the screenshots cannot drift from the extension.
 - **Extension ID changed** from `local.iceberg-copilot` to
-  `dawidobrocki.iceberg-copilot`. If you installed 0.2.0, uninstall it before
+  `obrocki.iceberg-copilot`. If you installed 0.2.0, uninstall it before
   installing this one, or you will have two bears.
 - Fixed: the scene could not shrink below its last rendered resolution, so
   narrowing the sidebar clipped the HUD instead of reflowing it.
+- Fixed: the Marketplace publish step in the release workflow could never run,
+  because a step's `if:` cannot see a secret bound in that same step's `env:`.
 
 ## 0.2.0
 

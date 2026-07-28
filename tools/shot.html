@@ -12,7 +12,7 @@
     health=0..1     ice remaining          chrome=0     hide the fake VS Code frame
     budget=<n>      token budget           hud=0        hide the HUD strip
     compact=0       editor-tab layout      bear=<name>  bear name
-    pixelScale=<n>  0 = auto-fit
+    pixelScale=<n>  0 = auto-fit           note=0       hide the compassion note
 -->
 <style>
   :root {
@@ -89,6 +89,7 @@
           <button id="btnBudget" type="button">Budget&hellip;</button>
           <button id="btnReset" type="button">Refreeze</button>
         </div>
+        <p class="note">Iceberg can&rsquo;t cap or reduce your spend &mdash; it only makes it visible. The bear is relying on your compassion for that.</p>
       </div>
     </div>
     <div id="statusbar"><span id="sb">&#10052; 100%</span></div>
@@ -102,6 +103,7 @@
 
       document.documentElement.setAttribute('data-compact', String(q.get('compact') !== '0'));
       if (q.get('hud') === '0') document.getElementById('hud').style.display = 'none';
+      if (q.get('note') === '0') document.querySelector('.note').style.display = 'none';
       if (q.get('chrome') === '0') {
         document.getElementById('titlebar').style.display = 'none';
         document.getElementById('sectionbar').style.display = 'none';
