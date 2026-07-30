@@ -236,22 +236,30 @@ function sharesAny(ours: Set<string>, theirs: Set<string>): boolean {
 }
 
 /**
- * Finds another installed copy of Iceberg.
+ * Finds another installed copy of this extension.
  *
- * The publisher changed from `local` to `obrocki` at 0.2.1. VS Code keys an
- * extension on `publisher.name`, so that rename made 0.2.1 a different
- * extension entirely and the old copy stayed installed alongside it. Both then
- * contribute the same view, the same commands and the same chat participant, so
- * whichever activates second throws "already registered" — after its usage
- * watcher has already started, quietly charging a second meter the user never
- * sees. The visible tell is a doubled view/title menu.
+ * VS Code keys an extension on `publisher.name`, so changing either half
+ * produces a *different* extension rather than an upgrade, and the old copy
+ * stays installed. Both then contribute the same view, the same commands and
+ * the same chat participant, so whichever activates second throws "already
+ * registered" — after its usage watcher has already started, quietly charging a
+ * second meter the user never sees. The visible tell is a doubled view/title
+ * menu.
+ *
+ * This has happened twice: publisher `local` to `obrocki` at 0.2.1, and name
+ * `iceberg-copilot` to `bear-in-mind` at 0.4.0.
  *
  * Matching is on contributed ids rather than on the extension name, because the
  * name is exactly what changes when this happens: an earlier version of this
- * guard looked for a literal `iceberg-copilot`, which would have gone blind the
- * next time the extension was renamed — the one case it exists to catch. Two
- * copies collide when they claim the same registrations, so that is what we
- * look for.
+ * guard looked for a literal `iceberg-copilot`, which went blind the moment the
+ * extension was renamed — the one case it exists to catch. Two copies collide
+ * when they claim the same registrations, so that is what we look for.
+ *
+ * This is also why the `iceberg.*` view, command and setting ids were left
+ * alone during the 0.4.0 rename. Had they been renamed too, the old and new
+ * copies would share nothing, this guard would stay silent, and the duplicate
+ * menus would be back. Keeping them stable also preserves user settings and
+ * keybindings across the rename.
  */
 function findConflictingInstall(
   self: vscode.Extension<unknown> | undefined
