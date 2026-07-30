@@ -6,7 +6,7 @@ The latest released version is the only one that receives fixes.
 
 ## What this extension touches
 
-Iceberg is a visualisation, but it does read files, so it is worth being
+Bear in Mind is a visualisation, but it does read files, so it is worth being
 explicit about what it does and does not do:
 
 - **It reads VS Code's own chat transcripts.** To meter Copilot Chat usage it

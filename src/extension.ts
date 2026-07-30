@@ -63,7 +63,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     status.text = `$(snowflake) ${pct}%`;
     status.tooltip = new vscode.MarkdownString(
       [
-        `**Iceberg** — ${pct}% ice remaining`,
+        `**Bear in Mind** — ${pct}% ice remaining`,
         '',
         `- Used: \`${fmt(s.total)}\` / \`${fmt(s.budget)}\` tokens`,
         `- Input: \`${fmt(s.input)}\` · Output: \`${fmt(s.output)}\``,
@@ -309,7 +309,7 @@ function standDown(
   const uninstall = `Uninstall ${other}`;
   void vscode.window
     .showErrorMessage(
-      `Iceberg is installed twice — as ${context.extension?.id ?? 'this copy'} and as ${other}. ` +
+      `Bear in Mind is installed twice — as ${context.extension?.id ?? 'this copy'} and as ${other}. ` +
         'Both claim the same view and commands, so the menus are duplicated and the ' +
         'token count is split between them. Uninstall the older copy and reload.',
       uninstall,

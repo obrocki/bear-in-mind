@@ -6,6 +6,11 @@
   `github.com/obrocki/bear-in-mind` (the old URL redirects) and the extension id
   changed from `obrocki.iceberg-copilot` to `obrocki.bear-in-mind`. The name is
   the product: there is no enforcement here, only a bear you might bear in mind.
+  Everywhere the extension referred to *itself* now says Bear in Mind — the
+  status bar tooltip, the panel's "can't cap your spend" note, the
+  duplicate-install warning, and the docs. Screenshots were regenerated to
+  match. Things that name the *iceberg on screen* keep their names: the
+  `Iceberg:` commands, the Habitat view, the `Iceberg` output channel.
 - **Your settings and keybindings are unaffected.** The `iceberg.*` setting,
   command and view ids were deliberately *not* renamed. Two reasons: renaming
   them would silently reset everyone's configuration, and the duplicate-install

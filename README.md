@@ -88,7 +88,7 @@ VS Code records the exact per-request counters (`promptTokens`,
 <user-data>/User/workspaceStorage/<id>/chatSessions/*.jsonl
 ```
 
-Iceberg tails those append-only logs and charges the numbers Copilot itself
+Bear in Mind tails those append-only logs and charges the numbers Copilot itself
 reported. No estimating, no tokenizer guesswork. This is the mechanism because
 there is no VS Code API that lets one extension observe another's language-model
 traffic — if you know of one, please open an issue.
@@ -124,8 +124,8 @@ traffic — if you know of one, please open an issue.
 Reporting from another extension:
 
 ```ts
-const iceberg = vscode.extensions.getExtension('obrocki.bear-in-mind');
-const api = await iceberg?.activate();
+const bear = vscode.extensions.getExtension('obrocki.bear-in-mind');
+const api = await bear?.activate();
 
 api?.reportUsage({ input: 1843, output: 512 });
 api?.onDidChangeUsage((s) => console.log(s.health)); // 1 = pristine, 0 = melted
