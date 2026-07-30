@@ -12,7 +12,7 @@ export interface IcebergApi {
 }
 
 export function activate(context: vscode.ExtensionContext): IcebergApi {
-  const conflict = findConflictingInstall(context.extension?.id);
+  const conflict = findConflictingInstall(context.extension);
   if (conflict) {
     return standDown(context, conflict);
   }
@@ -194,28 +194,95 @@ export function deactivate(): void {
   /* disposables handle cleanup */
 }
 
+/** The view and command ids an extension claims, read from its manifest. */
+interface ContributionPoints {
+  views: Set<string>;
+  commands: Set<string>;
+}
+
+function contributionsOf(extension: vscode.Extension<unknown> | undefined): ContributionPoints {
+  const contributes = extension?.packageJSON?.contributes;
+  const views = new Set<string>();
+  // `contributes.views` maps a container id to an array of view descriptors.
+  for (const container of Object.values(contributes?.views ?? {})) {
+    if (!Array.isArray(container)) {
+      continue;
+    }
+    for (const view of container) {
+      if (typeof view?.id === 'string') {
+        views.add(view.id);
+      }
+    }
+  }
+  const commands = new Set<string>();
+  const declared = contributes?.commands;
+  if (Array.isArray(declared)) {
+    for (const command of declared) {
+      if (typeof command?.command === 'string') {
+        commands.add(command.command);
+      }
+    }
+  }
+  return { views, commands };
+}
+
+function sharesAny(ours: Set<string>, theirs: Set<string>): boolean {
+  for (const value of ours) {
+    if (theirs.has(value)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Finds another installed copy of Iceberg.
  *
  * The publisher changed from `local` to `obrocki` at 0.2.1. VS Code keys an
  * extension on `publisher.name`, so that rename made 0.2.1 a different
  * extension entirely and the old copy stayed installed alongside it. Both then
- * contribute the same view, the same seven commands and the same chat
- * participant, so whichever activates second throws "already registered" —
- * after its usage watcher has already started, quietly charging a second meter
- * the user never sees. The visible tell is a doubled view/title menu.
+ * contribute the same view, the same commands and the same chat participant, so
+ * whichever activates second throws "already registered" — after its usage
+ * watcher has already started, quietly charging a second meter the user never
+ * sees. The visible tell is a doubled view/title menu.
+ *
+ * Matching is on contributed ids rather than on the extension name, because the
+ * name is exactly what changes when this happens: an earlier version of this
+ * guard looked for a literal `iceberg-copilot`, which would have gone blind the
+ * next time the extension was renamed — the one case it exists to catch. Two
+ * copies collide when they claim the same registrations, so that is what we
+ * look for.
  */
-function findConflictingInstall(ownId: string | undefined): vscode.Extension<unknown> | undefined {
-  // Without our own id we cannot tell another copy from ourselves, and a false
-  // positive would disable the extension outright. Assume no conflict.
-  if (!ownId) {
+function findConflictingInstall(
+  self: vscode.Extension<unknown> | undefined
+): vscode.Extension<unknown> | undefined {
+  // Without our own identity we cannot tell another copy from ourselves, and a
+  // false positive would disable the extension outright. Assume no conflict.
+  if (!self?.id) {
     return undefined;
   }
-  const mine = ownId.toLowerCase();
+  const ours = contributionsOf(self);
+  const mine = self.id.toLowerCase();
   const installed = vscode.extensions?.all ?? [];
+  if (ours.views.size === 0 && ours.commands.size === 0) {
+    // Our own manifest is unreadable, so fall back to the extension name — but
+    // taken from our own id rather than written in, so a rename cannot blind it.
+    const ourName = mine.split('.')[1];
+    if (!ourName) {
+      return undefined;
+    }
+    return installed.find((o) => {
+      const id = o?.id?.toLowerCase();
+      return !!id && id !== mine && id.split('.')[1] === ourName;
+    });
+  }
   return installed.find((other) => {
     const id = other?.id?.toLowerCase();
-    return !!id && id !== mine && id.split('.')[1] === 'iceberg-copilot';
+    if (!id || id === mine) {
+      return false;
+    }
+    const theirs = contributionsOf(other);
+    return sharesAny(ours.views, theirs.views) || sharesAny(ours.commands, theirs.commands);
   });
 }
 

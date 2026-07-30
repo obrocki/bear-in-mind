@@ -1,5 +1,18 @@
 # Change Log
 
+## 0.3.1
+
+- Fixed: the duplicate-install guard added in 0.3.0 matched on the literal
+  extension name `iceberg-copilot`, which made it blind to the one situation it
+  exists to catch — a rename. Worse, it failed asymmetrically: a renamed copy
+  would stand down, but the *older* copy would activate happily and keep its
+  usage watcher running, which is the half that quietly charges a second meter.
+  Conflicts are now detected by comparing contributed view and command ids
+  against the other installed extensions, which is the condition that actually
+  breaks, so any future rename stays safe. If the manifest cannot be read, it
+  falls back to the extension name taken from our own id rather than a
+  hardcoded one.
+
 ## 0.3.0
 
 - Fixed: **duplicated menu items and toolbar buttons.** The publisher changed
