@@ -1,5 +1,23 @@
 # Change Log
 
+## 0.4.0
+
+- **Renamed to Bear in Mind.** The repo moved to
+  `github.com/obrocki/bear-in-mind` (the old URL redirects) and the extension id
+  changed from `obrocki.iceberg-copilot` to `obrocki.bear-in-mind`. The name is
+  the product: there is no enforcement here, only a bear you might bear in mind.
+- **Your settings and keybindings are unaffected.** The `iceberg.*` setting,
+  command and view ids were deliberately *not* renamed. Two reasons: renaming
+  them would silently reset everyone's configuration, and the duplicate-install
+  guard finds a stale copy by matching contributed ids — so had they changed,
+  the old and new copies would share nothing, the guard would stay quiet, and
+  the doubled menus would be back.
+- **You may need to remove the old copy.** Because VS Code keys an extension on
+  `publisher.name`, this installs alongside `obrocki.iceberg-copilot` rather
+  than upgrading it. The guard added in 0.3.0 detects that and offers to
+  uninstall the old one; if you would rather do it yourself:
+  `code --uninstall-extension obrocki.iceberg-copilot`
+
 ## 0.3.1
 
 - Fixed: the duplicate-install guard added in 0.3.0 matched on the literal

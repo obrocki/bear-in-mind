@@ -1,29 +1,30 @@
 ![A pixel-art iceberg at night with a polar bear standing on it, under an aurora](docs/media/hero.png)
 
-# 🧊 Iceberg — Copilot Token Meter
+# 🐻‍❄️ Bear in Mind — Copilot Token Meter
 
 **A polar bear lives in your sidebar. Every token you burn melts its home.**
 
-[![CI](https://github.com/obrocki/iceberg-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/obrocki/iceberg-copilot/actions/workflows/ci.yml)
-[![Build VSIX](https://github.com/obrocki/iceberg-copilot/actions/workflows/build-vsix.yml/badge.svg)](https://github.com/obrocki/iceberg-copilot/actions/workflows/build-vsix.yml)
+[![CI](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml/badge.svg)](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml)
+[![Build VSIX](https://github.com/obrocki/bear-in-mind/actions/workflows/build-vsix.yml/badge.svg)](https://github.com/obrocki/bear-in-mind/actions/workflows/build-vsix.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![VS Code ^1.95](https://img.shields.io/badge/VS%20Code-%5E1.95-007ACC.svg?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
-Iceberg turns your Copilot token consumption into something you can actually
+Bear in Mind turns your Copilot token consumption into something you can actually
 feel. It watches how many tokens you burn, and shrinks a hand-drawn arctic scene
 to match. No dashboard, no numbers to interpret — just a bear with progressively
 less to stand on.
 
 > [!NOTE]
-> **Iceberg has no enforcement mechanism.** It cannot cap your spend, throttle a
-> request, block a prompt, or change your bill in any way. It only makes the
-> burn visible. The entire mechanism is compassion for the polar bear — you see
-> its home shrinking, and you think twice about the next 40k-token agent run.
-> That is the whole product. If your plan is unmetered, the counter still climbs
-> and the ice still melts; the bear does not know or care about your billing tier.
+> **Bear in Mind has no enforcement mechanism.** It cannot cap your spend,
+> throttle a request, block a prompt, or change your bill in any way. It only
+> makes the burn visible. The entire mechanism is compassion for the polar bear —
+> you see its home shrinking, and you think twice about the next 40k-token agent
+> run. That is the whole product, and it is why it is called what it is. If your
+> plan is unmetered, the counter still climbs and the ice still melts; the bear
+> does not know or care about your billing tier.
 
 ![Animated iceberg melting from full size down to nothing as tokens are consumed, then refreezing](docs/media/melt.gif)
 
@@ -46,15 +47,15 @@ with your remaining budget. So does everything else in the scene.
 
 ## Install
 
-Grab the `.vsix` from the [latest release](https://github.com/obrocki/iceberg-copilot/releases)
+Grab the `.vsix` from the [latest release](https://github.com/obrocki/bear-in-mind/releases)
 and install it:
 
 ```bash
-code --install-extension iceberg-copilot-*.vsix
+code --install-extension bear-in-mind-*.vsix
 ```
 
 Every merge to `main` also publishes a fresh build to the rolling
-[`dev` pre-release](https://github.com/obrocki/iceberg-copilot/releases/tag/dev)
+[`dev` pre-release](https://github.com/obrocki/bear-in-mind/releases/tag/dev)
 if you want the newest ice.
 
 Or build it yourself:
@@ -62,7 +63,7 @@ Or build it yourself:
 ```bash
 npm install
 npm run vsix
-code --install-extension iceberg-copilot-*.vsix
+code --install-extension bear-in-mind-*.vsix
 ```
 
 Or press `F5` in the repo to launch an Extension Development Host.
@@ -123,7 +124,7 @@ traffic — if you know of one, please open an issue.
 Reporting from another extension:
 
 ```ts
-const iceberg = vscode.extensions.getExtension('obrocki.iceberg-copilot');
+const iceberg = vscode.extensions.getExtension('obrocki.bear-in-mind');
 const api = await iceberg?.activate();
 
 api?.reportUsage({ input: 1843, output: 512 });
@@ -193,20 +194,27 @@ silent channel means the watcher is not seeing new counters; check that
 to record token counts (1.130+).
 
 Note that an unlimited or unmetered Copilot plan makes no difference here —
-Iceberg counts the tokens VS Code records, not what you are billed. The ice melts
-either way. (And Iceberg never limits anything; see the note at the top.)
+Bear in Mind counts the tokens VS Code records, not what you are billed. The ice
+melts either way. (And it never limits anything; see the note at the top.)
 
 **Every menu item and toolbar button appears twice.**
-Iceberg is installed twice. The publisher changed from `local` to `obrocki` in
-0.2.1, and VS Code keys an extension on `publisher.name` — so it treated the new
-version as a different extension and kept the old one. Both claim the same view
-and commands, which doubles the menu and splits the token count between two
-meters. From 0.3.0 Iceberg detects this and offers to remove the other copy; on
-older versions, uninstall `local.iceberg-copilot` by hand:
+It is installed twice. VS Code keys an extension on `publisher.name`, so any
+change to either half creates a *second* extension rather than upgrading the
+first — and the old copy stays. Both then claim the same view and commands,
+which doubles the menu and splits the token count between two meters. This has
+happened twice: the publisher changed from `local` to `obrocki` in 0.2.1, and
+the extension was renamed from `iceberg-copilot` to `bear-in-mind` in 0.4.0.
+
+From 0.3.0 onward it detects a second copy and offers to remove it. On older
+versions, uninstall the stale copy by hand:
 
 ```bash
 code --uninstall-extension local.iceberg-copilot
+code --uninstall-extension obrocki.iceberg-copilot
 ```
+
+Your settings and keybindings carry over untouched — the `iceberg.*` setting and
+command ids deliberately did not change in the rename.
 
 **It moves, but slower than I expected.**
 VS Code flushes transcripts lazily — usually within a minute. The default poll
@@ -214,7 +222,7 @@ interval is 4 seconds on top of that.
 
 **It melted the moment I installed it.**
 It shouldn't; existing history is baselined. If it did, run **Iceberg: Refreeze**
-and please [open an issue](https://github.com/obrocki/iceberg-copilot/issues) —
+and please [open an issue](https://github.com/obrocki/bear-in-mind/issues) —
 that is a bug worth knowing about.
 
 ## Building the extension
@@ -238,7 +246,7 @@ exists in the bundle, and that every asset the manifest points at was packaged.
 ▸ package    vsce package · 1541 ms
 ▸ verify     11 entries · required files present · nothing leaked
 
-iceberg-copilot-0.2.1.vsix  29.5 kB · 0.2.1 · obrocki.iceberg-copilot
+bear-in-mind-0.4.0.vsix  33.7 kB · 0.4.0 · obrocki.bear-in-mind
 ```
 
 Inside VS Code it is the default build task — `Ctrl+Shift+B`,
@@ -250,13 +258,13 @@ or **Tasks: Run Build Task** → **Build VSIX**. Run
 
 | Workflow | Trigger | Result |
 | --- | --- | --- |
-| **Build VSIX** | Every merge to `main` | A `.vsix` artifact on the run, and the rolling [`dev` pre-release](https://github.com/obrocki/iceberg-copilot/releases/tag/dev) refreshed to match. |
+| **Build VSIX** | Every merge to `main` | A `.vsix` artifact on the run, and the rolling [`dev` pre-release](https://github.com/obrocki/bear-in-mind/releases/tag/dev) refreshed to match. |
 | **Build VSIX** | Actions tab → *Run workflow* | Same, on demand. Optionally stamp a version (`0.3.0`) or mark it as a Marketplace pre-release, without committing a version bump. |
 | **CI** | Every pull request | Builds and verifies on Linux, Windows and macOS, and attaches a `.vsix` to the run so a reviewer can install the branch. |
 | **Release** | Pushing a `v*` tag | Checks the tag matches `package.json`, attaches the `.vsix` to a GitHub release, and publishes to the Marketplace if a `VSCE_PAT` secret exists. |
 
 Builds that aren't tagged carry the commit in their file name —
-`iceberg-copilot-0.2.1+3f2a1c9.vsix` — so two builds of the same version are
+`bear-in-mind-0.4.0+3f2a1c9.vsix` — so two builds of the same version are
 still tellable apart.
 
 ## Notes on the rendering

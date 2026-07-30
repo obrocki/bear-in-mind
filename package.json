@@ -1,8 +1,8 @@
 {
-  "name": "iceberg-copilot",
-  "displayName": "Iceberg — Copilot Token Meter",
+  "name": "bear-in-mind",
+  "displayName": "Bear in Mind — Copilot Token Meter",
   "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token burn adds up. It cannot cap your spend — the bear is relying on your compassion for that.",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -27,12 +27,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/obrocki/iceberg-copilot.git"
+    "url": "https://github.com/obrocki/bear-in-mind.git"
   },
   "bugs": {
-    "url": "https://github.com/obrocki/iceberg-copilot/issues"
+    "url": "https://github.com/obrocki/bear-in-mind/issues"
   },
-  "homepage": "https://github.com/obrocki/iceberg-copilot#readme",
+  "homepage": "https://github.com/obrocki/bear-in-mind#readme",
   "galleryBanner": {
     "color": "#0b1b2e",
     "theme": "dark"

@@ -14,7 +14,7 @@
  *   --out-dir <dir>     Directory for the .vsix (default: repo root)
  *   --out <file>        Exact output path (overrides --out-dir and --label)
  *   --label <text>      Suffix the file name, e.g. --label 3f2a1c9 gives
- *                       iceberg-copilot-0.2.1+3f2a1c9.vsix
+ *                       bear-in-mind-0.4.0+3f2a1c9.vsix
  *   --version <x.y.z>   Package as this version without touching package.json
  *   --pre-release       Flag the build as a Marketplace pre-release
  *   --skip-typecheck    Don't run tsc

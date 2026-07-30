@@ -6,8 +6,8 @@ accountant, and about 400 lines of glue.
 ## Getting set up
 
 ```bash
-git clone https://github.com/obrocki/iceberg-copilot.git
-cd iceberg-copilot
+git clone https://github.com/obrocki/bear-in-mind.git
+cd bear-in-mind
 npm install
 ```
 
