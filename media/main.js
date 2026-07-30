@@ -1,5 +1,5 @@
 // @ts-check
-/* Iceberg — pixel-art renderer.
+/* Bear in Mind — pixel-art renderer.
  * Everything is drawn at a small internal resolution (roughly 200px wide) and
  * blown up with nearest-neighbour scaling, so every pixel stays a hard square.
  */

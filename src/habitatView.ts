@@ -86,7 +86,7 @@ class HabitatHost implements vscode.Disposable {
       <button id="btnBudget" type="button" title="Change the token budget">Budget…</button>
       <button id="btnReset" type="button" title="Reset usage and refreeze the iceberg">Refreeze</button>
     </div>
-    <p class="note">Iceberg can’t cap or reduce your spend — it only makes it visible. The bear is relying on your compassion for that.</p>
+    <p class="note">Bear in Mind can’t cap or reduce your spend — it only makes it visible. The bear is relying on your compassion for that.</p>
   </div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>
