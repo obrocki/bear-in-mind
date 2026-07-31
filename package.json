@@ -48,7 +48,7 @@
         {
           "id": "iceberg",
           "title": "Iceberg",
-          "icon": "media/iceberg.svg"
+          "icon": "media/bear.svg"
         }
       ]
     },
@@ -58,7 +58,7 @@
           "type": "webview",
           "id": "iceberg.habitat",
           "name": "Habitat",
-          "icon": "media/iceberg.svg",
+          "icon": "media/bear.svg",
           "contextualTitle": "Iceberg"
         }
       ]
@@ -208,7 +208,8 @@
     "media": "node tools/make-screenshots.js && node tools/make-gif.js",
     "media:shots": "node tools/make-screenshots.js",
     "media:gif": "node tools/make-gif.js",
-    "media:icon": "node tools/make-icon.js"
+    "media:icon": "node tools/make-icon.js",
+    "media:activity-icon": "node tools/make-activity-icon.js"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

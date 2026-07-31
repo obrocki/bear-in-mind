@@ -411,7 +411,7 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
         return {};
       }
     );
-    participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'iceberg.svg');
+    participant.iconPath = vscode.Uri.joinPath(context.extensionUri, 'media', 'bear.svg');
     context.subscriptions.push(participant);
   } catch {
     // Chat isn't available in this VS Code build — the rest still works.

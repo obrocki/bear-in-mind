@@ -184,7 +184,7 @@ const REQUIRED = [
   'extension/media/main.js',
   'extension/media/style.css',
   'extension/media/icon.png',
-  'extension/media/iceberg.svg',
+  'extension/media/bear.svg',
   'extension/readme.md',
   'extension/changelog.md',
   'extension/LICENSE.txt'

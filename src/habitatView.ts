@@ -141,7 +141,7 @@ export function openHabitatPanel(extensionUri: vscode.Uri, meter: TokenMeter): v
       localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'media')]
     }
   );
-  panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'iceberg.svg');
+  panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'bear.svg');
   const host = new HabitatHost(panel.webview, extensionUri, meter, false);
   panel.onDidDispose(() => {
     host.dispose();
