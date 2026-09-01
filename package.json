@@ -212,10 +212,10 @@
     "media:activity-icon": "node tools/make-activity-icon.js"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "@types/vscode": "^1.95.0",
+    "@types/node": "^26.4.0",
+    "@types/vscode": "^1.134.0",
     "@vscode/vsce": "^3.2.1",
-    "esbuild": "^0.28.1",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }
 }
