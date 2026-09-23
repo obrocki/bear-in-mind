@@ -77,6 +77,23 @@ count-selection. Consumption is measured, not entered. Re-baselining is automati
   webview markup by hand, so a HUD change left `main.js` attaching a listener to
   an absent button, which threw before the first frame. `hero.png` had quietly
   dropped to 1.9 kB. HUD controls are now all optional.
+- The harness's element shim had no `dataset`, so the source label's
+  `dataset.live` assignment threw before the first frame once telemetry started
+  reporting.
+- A series folded out of the eviction cache entirely (beyond `MAX_FOLDED`) lost
+  its high-water mark, so a later export for the same key started from zero and
+  was added again on top of what had already been charged. A compact per-series
+  total now survives the drop.
+- A rotated or truncated feed reset the read offset but left the persisted
+  token baseline pointing at the old stream's totals, so the new (smaller)
+  cumulative counters read as negative growth and were charged as zero until
+  they grew past the old lifetime total. The baseline is now realigned the
+  same way a changed feed path already was.
+- A single JSONL record larger than the read window had no newline to advance
+  past, so the reader retried the same window forever instead of skipping it.
+- The meter could keep reporting OpenTelemetry as authoritative after the feed
+  went idle past the staleness window, because nothing fired a change event
+  for that time-based transition; the HUD and status bar now hear about it.
 
 ## 0.4.0
 

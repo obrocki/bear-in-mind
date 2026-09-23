@@ -314,9 +314,17 @@ export class OtelWatcher implements vscode.Disposable {
     if (stat.size === this.state.size && this.state.offset >= stat.size) {
       return;
     }
-    // A shrunken file means it was rotated or cleared; start again from the top.
+    // A shrunken file means it was rotated or cleared, most likely by a new
+    // process starting a fresh cumulative counter from zero. The in-memory
+    // rollup for this run starts empty either way, but the persisted
+    // input/output baseline still belongs to the old stream — left in place,
+    // the new (small) cumulative totals would read as negative growth and be
+    // clamped to zero, silently swallowing real usage until it grew past the
+    // old lifetime total. Realign the baseline the same way a changed feed
+    // path does: treat it as history to adopt, not usage already charged.
     if (stat.size < this.state.offset) {
-      this.state.offset = 0;
+      this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
+      this.persist(true);
     }
 
     const from = this.state.offset;
@@ -345,9 +353,29 @@ export class OtelWatcher implements vscode.Disposable {
     // The tail may be a partial line, so only ever advance past the last break.
     const lastBreak = text.lastIndexOf('\n');
     if (lastBreak < 0) {
-      // Nothing complete to consume. Leaving `size` alone is deliberate: recording
-      // it here would make the next poll believe the file was unchanged and the
-      // half-written line would never be read, taking every later record with it.
+      if (available > length) {
+        // The window is full and there is more file on disk beyond it, so
+        // this is not a tail still being written — a single record is bigger
+        // than MAX_READ_BYTES (captureContent can produce these). Retrying
+        // the same window forever would wedge the reader on it permanently;
+        // scan forward for its terminating newline and discard it instead.
+        const end = this.findRecordEnd(file, from + length, stat.size);
+        if (end === undefined) {
+          // Terminator not written yet; the record may still be growing.
+          return;
+        }
+        this.note(
+          'a telemetry record larger than the read window was skipped — captureContent ' +
+            'attributes can produce records like this.'
+        );
+        this.state.offset = end;
+        this.state.size = stat.size;
+        this.persist();
+      }
+      // Otherwise nothing complete to consume. Leaving `size` alone is
+      // deliberate: recording it here would make the next poll believe the
+      // file was unchanged and the half-written line would never be read,
+      // taking every later record with it.
       return;
     }
     for (const line of text.slice(0, lastBreak).split('\n')) {
@@ -356,6 +384,36 @@ export class OtelWatcher implements vscode.Disposable {
     this.state.offset = from + Buffer.byteLength(text.slice(0, lastBreak + 1), 'utf8');
     this.state.size = stat.size;
     this.persist();
+  }
+
+  /**
+   * Scans forward from `from`, in the same bounded windows `consumeFeed` reads
+   * with, for the newline that ends an oversized record. Returns the offset
+   * just past it, or `undefined` if the file ends before one is found.
+   */
+  private findRecordEnd(file: string, from: number, size: number): number | undefined {
+    let pos = from;
+    let fd: number;
+    try {
+      fd = fs.openSync(file, 'r');
+    } catch {
+      return undefined;
+    }
+    try {
+      while (pos < size) {
+        const length = Math.min(size - pos, MAX_READ_BYTES);
+        const buf = Buffer.alloc(length);
+        fs.readSync(fd, buf, 0, length, pos);
+        const idx = buf.indexOf(10 /* \n */);
+        if (idx >= 0) {
+          return pos + idx + 1;
+        }
+        pos += length;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    return undefined;
   }
 
   /**

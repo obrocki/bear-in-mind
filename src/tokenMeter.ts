@@ -329,8 +329,17 @@ export class TokenMeter implements vscode.Disposable {
    * the next request back to the transcripts.
    */
   noteOtelAlive(alive: boolean): void {
+    const before = this.source;
     if (alive) {
       this.otelLastSeenMs = Date.now();
+    }
+    // `source` is computed from elapsed time, so an idle feed can cross the
+    // staleness threshold between calls with no accompanying `observe`. The
+    // HUD and status bar only listen on `onDidChange`, so without this they
+    // would keep reporting OpenTelemetry long after the meter itself handed
+    // back to the transcripts.
+    if (this.source !== before) {
+      this._onDidChange.fire(this.snapshot());
     }
   }
 

@@ -116,6 +116,7 @@ function createScene(root, viewW, viewH) {
     style: {},
     textContent: '',
     hidden: false,
+    dataset: {},
     addEventListener() {},
     getBoundingClientRect: () => ({ width: viewW, height: viewH })
   });

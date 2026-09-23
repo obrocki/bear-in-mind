@@ -245,6 +245,14 @@ export class OtelRollup {
    * `total()` applies its filter to the live series but not to a bare number.
    */
   private readonly folded = new Map<string, Series>();
+  /**
+   * Compact high-water marks for series folded out of `folded` under
+   * `MAX_FOLDED`. Just the banked totals, not the full series (histogram
+   * buckets and all), so this can be kept around cheaply and indefinitely —
+   * dropping it outright would let a later export for the same key start
+   * from zero and have its full cumulative value added again by `total()`.
+   */
+  private readonly retiredTotals = new Map<string, { value: number; count: number }>();
   private readonly events: LogEvent[] = [];
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
@@ -362,13 +370,19 @@ export class OtelRollup {
         if (this.series.size >= MAX_SERIES) {
           this.evictOldest();
         }
+        // A key folded out under MAX_FOLDED still has its high-water mark
+        // banked in `retiredTotals`; resume from that instead of zero so its
+        // history is not counted a second time once the live value grows
+        // past it.
+        const highWater = this.retiredTotals.get(key);
+        this.retiredTotals.delete(key);
         s = {
           metric,
           attributes,
           last: 0,
-          retired: 0,
+          retired: highWater?.value ?? 0,
           lastCount: 0,
-          retiredCount: 0,
+          retiredCount: highWater?.count ?? 0,
           updatedAtMs: atMs
         };
       }
@@ -428,10 +442,18 @@ export class OtelRollup {
     this.series.delete(oldestKey);
 
     if (this.folded.size > MAX_FOLDED) {
-      // Losing the oldest sliver of history is the lesser evil: the alternative
-      // is merging it somewhere it can be double-counted later.
+      // Losing full histogram detail is the lesser evil, but the banked
+      // total must survive: keeping it in `retiredTotals` (a plain number
+      // pair, not the whole series) is cheap enough to do indefinitely and
+      // is what stops a reappearing series from being counted twice.
       const first = this.folded.keys().next();
       if (!first.done) {
+        const dropped = this.folded.get(first.value)!;
+        const existing = this.retiredTotals.get(first.value);
+        this.retiredTotals.set(first.value, {
+          value: (existing?.value ?? 0) + dropped.retired + dropped.last,
+          count: (existing?.count ?? 0) + dropped.retiredCount + dropped.lastCount
+        });
         this.folded.delete(first.value);
       }
     }
