@@ -602,6 +602,16 @@
       );
       return;
     }
+      if (feed.jsonlPath && !feed.sqliteActive && feed.records.metrics === 0) {
+        show(
+          'Connected, waiting for the first record',
+          [
+            'Copilot Chat is exporting to the feed but has not written anything yet. Send a chat request — telemetry is flushed on an interval, so give it a few seconds after that.'
+          ],
+          undefined
+        );
+        return;
+      }
     if (feed.records.malformed > 0 || feed.records.unknown > 0) {
       show(
         'Some telemetry could not be read',

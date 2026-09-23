@@ -236,6 +236,11 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   const exporterType = (config.get<string>('exporterType', '') || '').trim();
   const collectorInUse = !!endpoint && exporterType !== 'file';
 
+  // `dbSpanExporter` only exists in newer Copilot Chat builds. Offering the
+  // trace store where the setting is unregistered would promise exact timings
+  // and context-window headroom that can never arrive, so check before offering.
+  const traceStoreAvailable = config.inspect('dbSpanExporter')?.defaultValue !== undefined;
+
   const traceStore = {
     label: 'Local trace store',
     detail: 'Cost and speed, with exact session timings. Runs alongside any collector you already use.',
@@ -256,11 +261,16 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
     id: 'both' as const
   };
 
-  const picked = await vscode.window.showQuickPick([traceStore, both, fileFeed], {
-    title: 'Connect Copilot telemetry to Bear in Mind',
-    placeHolder: collectorInUse
+  const choices = traceStoreAvailable ? [traceStore, both, fileFeed] : [fileFeed];
+  const placeHolder = !traceStoreAvailable
+    ? 'This Copilot Chat has no local trace store, so the file feed is the only source'
+    : collectorInUse
       ? `An OTLP endpoint is configured (${endpoint}) — only the trace store leaves it intact`
-      : 'Everything stays on this machine; nothing is sent anywhere'
+      : 'Everything stays on this machine; nothing is sent anywhere';
+
+  const picked = await vscode.window.showQuickPick(choices, {
+    title: 'Connect Copilot telemetry to Bear in Mind',
+    placeHolder
   });
   if (!picked) {
     return;

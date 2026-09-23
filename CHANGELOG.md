@@ -47,6 +47,9 @@ count-selection. Consumption is measured, not entered. Re-baselining is automati
 
 ### Fixed
 
+- Only offer the local trace store when Copilot Chat actually registers it.
+  `dbSpanExporter` does not exist in every build, and offering it there promised
+  exact timings that could never arrive.
 - Connecting the file feed produced nothing: Copilot's exporter uses
   `createWriteStream`, which does not create parent directories, so every record
   was dropped while VS Code reported monitoring as enabled. Settings are now
