@@ -97,6 +97,9 @@ export class TokenMeter implements vscode.Disposable {
   private demoTimer: NodeJS.Timeout | undefined;
   private demo = false;
   private otelLastSeenMs = 0;
+  /** Telemetry delta held back at promotion until its fate is known. */
+  private pending: Ledger = { input: 0, output: 0, requests: 0 };
+  private transcriptsSincePromotion = 0;
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -289,6 +292,7 @@ export class TokenMeter implements vscode.Disposable {
     // transcripts have already charged this exact traffic. Reading `source`
     // after refreshing `otelLastSeenMs` would charge it a second time.
     const active = this.source;
+    const promoting = from === 'otel' && active !== 'otel';
 
     let opened = false;
     if (from === 'otel') {
@@ -311,14 +315,53 @@ export class TokenMeter implements vscode.Disposable {
     if (c > 0) {
       this.state.credits += c;
     }
-    if (from === active && (i > 0 || o > 0)) {
-      this.state.auto.input += i;
-      this.state.auto.output += o;
-      this.state.auto.requests += requestsFrom(countAsRequest);
+
+    if (promoting) {
+      // Not charged yet — the transcripts usually charge this same traffic
+      // first. But "usually" is not "always": if they never do, dropping it
+      // would lose the usage for good. Hold it until the next telemetry delta
+      // shows whether the transcripts covered it.
+      this.pending.input += i;
+      this.pending.output += o;
+      this.pending.requests += requestsFrom(countAsRequest);
+      this.transcriptsSincePromotion = 0;
+    } else if (from === 'transcripts') {
+      this.transcriptsSincePromotion += i + o;
+      if (from === active && (i > 0 || o > 0)) {
+        this.charge(i, o, requestsFrom(countAsRequest));
+      }
+    } else if (from === active && (i > 0 || o > 0)) {
+      this.settlePending();
+      this.charge(i, o, requestsFrom(countAsRequest));
     }
 
     this.persist();
     this._onDidChange.fire(this.snapshot());
+  }
+
+  private charge(input: number, output: number, requests: number): void {
+    this.state.auto.input += input;
+    this.state.auto.output += output;
+    this.state.auto.requests += requests;
+  }
+
+  /**
+   * Resolves the delta held back at promotion.
+   *
+   * If the transcripts charged something in the meantime they covered the same
+   * traffic, so the held delta is dropped. If they charged nothing, nobody did,
+   * and it is charged now rather than lost for good.
+   */
+  private settlePending(): void {
+    const { input, output, requests } = this.pending;
+    if (input === 0 && output === 0) {
+      return;
+    }
+    if (this.transcriptsSincePromotion === 0) {
+      this.charge(input, output, requests);
+    }
+    this.pending = { input: 0, output: 0, requests: 0 };
+    this.transcriptsSincePromotion = 0;
   }
 
   /**

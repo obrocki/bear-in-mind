@@ -85,7 +85,12 @@ function loadSqlite(): SqliteModule | undefined {
  * alongside one. Both are therefore optional and detected independently.
  */
 export class OtelWatcher implements vscode.Disposable {
-  readonly rollup = new OtelRollup();
+  /** Replaced outright when the feed path changes; see `consumeFeed`. */
+  private _rollup = new OtelRollup();
+
+  get rollup(): OtelRollup {
+    return this._rollup;
+  }
 
   private readonly _onDidScan = new vscode.EventEmitter<void>();
   /** Fires after every poll, whether or not anything changed. */
@@ -291,6 +296,11 @@ export class OtelWatcher implements vscode.Disposable {
     // different stream altogether.
     if (this.state.path !== file) {
       this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
+      // The rollup has to go too. It still holds the previous feed's series,
+      // events and record counts, so keeping it would blend two unrelated
+      // streams into one dashboard and charge the new one against the old one's
+      // totals.
+      this._rollup = new OtelRollup();
       this.persist(true);
     }
 
