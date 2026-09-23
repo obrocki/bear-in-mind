@@ -165,7 +165,16 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get source(): UsageSource {
-    if (!this.preferOtel || this.otelLastSeenMs === 0) {
+    if (!this.preferOtel) {
+      return 'transcripts';
+    }
+    // With the transcript watcher switched off there is no second source to
+    // fall back to, so telemetry has to charge from its very first delta —
+    // otherwise that delta, and one after every idle spell, is simply lost.
+    if (!this.config.get<boolean>('trackCopilotChat', true)) {
+      return 'otel';
+    }
+    if (this.otelLastSeenMs === 0) {
       return 'transcripts';
     }
     return Date.now() - this.otelLastSeenMs <= OTEL_STALE_MS ? 'otel' : 'transcripts';

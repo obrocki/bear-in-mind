@@ -236,6 +236,74 @@ describe('cumulative metrics', () => {
     assert.equal(byModel[0].input, 4200 * 50);
   });
 
+  it('rebases a series that reappears after eviction instead of adding to it', () => {
+    // Regression: an evicted series was folded away, and a later export for the
+    // same key created a fresh series from zero. The incoming value is
+    // cumulative and already contains the folded history, so total() counted
+    // that history twice.
+    const rollup = new OtelRollup();
+    const point = (session, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                { attributes: { 'gen_ai.token.type': 'input' }, endTime: [1, 0], value: { sum, count: 1 } }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    rollup.ingest(point('victim', 500));
+    // Force the victim out by filling the map well past MAX_SERIES.
+    for (let i = 0; i < 4200; i++) {
+      rollup.ingest(point('filler' + i, 1));
+    }
+    const afterEviction = rollup.tokenTotals().input;
+
+    // The victim exports again, cumulatively: 500 already burned plus 300 more.
+    rollup.ingest(point('victim', 800));
+    const afterReturn = rollup.tokenTotals().input;
+
+    assert.equal(afterReturn - afterEviction, 300, 'only the growth should be added');
+  });
+
+  it('keeps pre-restart samples in quantile estimates', () => {
+    const rollup = new OtelRollup();
+    const histogram = (sum, count, counts) => ({
+      resource: { _rawAttributes: [['session.id', 's1']] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: 'copilot_chat.tool.call.duration' },
+              dataPoints: [
+                {
+                  attributes: {},
+                  endTime: [1, 0],
+                  value: { sum, count, buckets: { boundaries: [0, 50, 100, 200], counts } }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    // Ten slow samples, then the exporter restarts with one fast sample.
+    rollup.ingest(histogram(2000, 10, [0, 0, 0, 10, 0]));
+    rollup.ingest(histogram(10, 1, [0, 1, 0, 0, 0]));
+
+    const median = rollup.quantile('copilot_chat.tool.call.duration', 0.5);
+    // With the pre-restart buckets banked, the median still sits in the slow
+    // bucket. Dropping them would move it into the 0–50 bucket.
+    assert.ok(median > 100, `expected the slow bucket to survive the restart, got ${median}`);
+  });
+
   it('filters totals by attribute', () => {
     const rollup = loaded();
     assert.equal(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }), 3);

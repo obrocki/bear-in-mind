@@ -170,6 +170,8 @@ interface Series {
   max?: number;
   boundaries?: number[];
   counts?: number[];
+  /** Bucket counts banked from finished runs, so quantiles keep their history. */
+  retiredCounts?: number[];
   updatedAtMs: number;
 }
 
@@ -181,6 +183,8 @@ export interface TokenBucket {
 
 /** Keep memory bounded when a long-lived window accumulates many series. */
 const MAX_SERIES = 4000;
+/** Evicted series kept aside so a reappearing one can be rebased, not re-added. */
+const MAX_FOLDED = 4000;
 const MAX_EVENTS = 2000;
 const MAX_BUCKETS = 240;
 
@@ -301,18 +305,28 @@ export class OtelRollup {
     const key = `${sessionId}\u0000${metric}\u0000${attrKey(attributes)}`;
     let s = this.series.get(key);
     if (!s) {
-      if (this.series.size >= MAX_SERIES) {
-        this.evictOldest();
+      // A series that was evicted and is now exporting again must resume its
+      // banked history, not start beside it: the incoming value is cumulative
+      // and already contains everything that was folded away, so leaving the
+      // folded copy in place would count that history twice.
+      const restored = this.folded.get(key);
+      if (restored) {
+        this.folded.delete(key);
+        s = restored;
+      } else {
+        if (this.series.size >= MAX_SERIES) {
+          this.evictOldest();
+        }
+        s = {
+          metric,
+          attributes,
+          last: 0,
+          retired: 0,
+          lastCount: 0,
+          retiredCount: 0,
+          updatedAtMs: atMs
+        };
       }
-      s = {
-        metric,
-        attributes,
-        last: 0,
-        retired: 0,
-        lastCount: 0,
-        retiredCount: 0,
-        updatedAtMs: atMs
-      };
       this.series.set(key, s);
     }
 
@@ -324,6 +338,10 @@ export class OtelRollup {
       if (sum < s.last) {
         s.retired += s.last;
         s.retiredCount += s.lastCount;
+        // Bank the finished run's buckets too. Without this a restart would
+        // erase every pre-restart sample from the quantile estimates while
+        // `mean()` went on counting them.
+        s.retiredCounts = addCounts(s.retiredCounts, s.counts);
       }
       s.last = sum;
       s.lastCount = count;
@@ -357,25 +375,21 @@ export class OtelRollup {
     if (!oldestKey) {
       return;
     }
-    const s = this.series.get(oldestKey)!;
-    // Drop `session.id` from the key so repeated evictions of the same series
-    // from different windows merge, but keep the attributes so filtered queries
-    // still see the right slice.
-    const foldKey = `${s.metric}\u0000${attrKey(s.attributes)}`;
-    const existing = this.folded.get(foldKey);
-    if (existing) {
-      existing.retired += s.retired + s.last;
-      existing.retiredCount += s.retiredCount + s.lastCount;
-    } else {
-      this.folded.set(foldKey, {
-        ...s,
-        retired: s.retired + s.last,
-        retiredCount: s.retiredCount + s.lastCount,
-        last: 0,
-        lastCount: 0
-      });
-    }
+    // Keep the full key, session id included. Folding several sessions together
+    // would make a reappearing series impossible to rebase, and dropping the
+    // attributes would let an evicted input-token series be counted in the
+    // output-token total.
+    this.folded.set(oldestKey, this.series.get(oldestKey)!);
     this.series.delete(oldestKey);
+
+    if (this.folded.size > MAX_FOLDED) {
+      // Losing the oldest sliver of history is the lesser evil: the alternative
+      // is merging it somewhere it can be double-counted later.
+      const first = this.folded.keys().next();
+      if (!first.done) {
+        this.folded.delete(first.value);
+      }
+    }
   }
 
   /** Live and folded series together. Every query must read both. */
@@ -440,8 +454,11 @@ export class OtelRollup {
         continue;
       }
       for (let i = 0; i < s.counts.length; i++) {
-        merged[i] += s.counts[i];
-        total += s.counts[i];
+        // Include buckets banked from earlier runs, or a restart would drop
+        // every pre-restart sample out of the estimate.
+        const n = s.counts[i] + (s.retiredCounts?.[i] ?? 0);
+        merged[i] += n;
+        total += n;
       }
     }
     if (!boundaries || total === 0) {
@@ -548,8 +565,21 @@ export class OtelRollup {
   }
 }
 
-function matches(attributes: Record<string, unknown>, where?: Record<string, string>): boolean {
-  if (!where) {
+/** Element-wise addition of two bucket-count arrays, either of which may be absent. */
+function addCounts(into: number[] | undefined, add: number[] | undefined): number[] | undefined {
+  if (!add) {
+    return into;
+  }
+  if (!into || into.length !== add.length) {
+    return add.slice();
+  }
+  for (let i = 0; i < add.length; i++) {
+    into[i] += add[i];
+  }
+  return into;
+}
+
+function matches(attributes: Record<string, unknown>, where?: Record<string, string>): boolean {  if (!where) {
     return true;
   }
   for (const [k, v] of Object.entries(where)) {

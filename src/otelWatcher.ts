@@ -9,6 +9,8 @@ const STATE_KEY = 'iceberg.otelWatch.v1';
 
 /** Transcripts can be enormous; the OTel feed should never stall the host either. */
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
+/** Per-poll read window, so a large backlog is caught up over several passes. */
+const MAX_READ_BYTES = 8 * 1024 * 1024;
 /** How often the feed path and SQLite location are re-resolved. */
 const PATH_REFRESH_MS = 30_000;
 /** Spans older than this are ignored, matching the store's own 7-day retention. */
@@ -21,6 +23,8 @@ export interface OtelUsageDelta {
 }
 
 interface PersistedState {
+  /** Which feed the offsets below belong to. */
+  path: string;
   /** Bytes of the feed already consumed. */
   offset: number;
   size: number;
@@ -103,6 +107,7 @@ export class OtelWatcher implements vscode.Disposable {
   ) {
     const stored = context.globalState.get<Partial<PersistedState>>(STATE_KEY);
     this.state = {
+      path: stored?.path ?? '',
       offset: Math.max(0, stored?.offset ?? 0),
       size: Math.max(0, stored?.size ?? 0),
       input: Math.max(0, stored?.input ?? 0),
@@ -135,14 +140,17 @@ export class OtelWatcher implements vscode.Disposable {
   }
 
   /**
-   * True while a configured source is still there to read.
+   * True while a metrics feed is actually present to read.
    *
-   * Distinct from `live`: the rollup keeps its totals after a feed is removed,
-   * so this also checks a source is actually present before telling the meter
-   * that telemetry is still the better authority.
+   * Deliberately narrow. The rollup keeps its totals after a feed is removed,
+   * and the SQLite store carries no token counts at all, so neither is evidence
+   * that telemetry can still meter. Treating either as "alive" would keep
+   * telemetry authoritative for ever and silently suppress the transcript
+   * watcher that was supposed to take over.
    */
   get producing(): boolean {
-    return this.live && (!!this.resolveFeedPath() || this.spans.available);
+    const feed = this.resolveFeedPath();
+    return !!feed && fileExists(feed) && this.rollup.stats.metrics > 0;
   }
 
   get observedTokens(): number {
@@ -276,16 +284,34 @@ export class OtelWatcher implements vscode.Disposable {
     if (!file) {
       return;
     }
+
+    // The offsets describe one specific file. If the configured path changes,
+    // reusing them would skip a same-sized file entirely, or read a larger one
+    // from the wrong position — and the seeded token baseline would belong to a
+    // different stream altogether.
+    if (this.state.path !== file) {
+      this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
+      this.persist(true);
+    }
+
     let stat: fs.Stats;
     try {
       stat = fs.statSync(file);
     } catch {
       return;
     }
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) {
+    if (!stat.isFile()) {
       return;
     }
-    if (stat.size === this.state.size && this.state.offset > 0) {
+    if (stat.size > MAX_FILE_BYTES) {
+      this.note(
+        `the telemetry feed has grown past ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB and is no longer ` +
+          'being read. Delete or rotate it, or point iceberg.otel.feedPath somewhere fresh.'
+      );
+      return;
+    }
+    // Nothing new, and the tail is not a half-written line we still owe a read.
+    if (stat.size === this.state.size && this.state.offset >= stat.size) {
       return;
     }
     // A shrunken file means it was rotated or cleared; start again from the top.
@@ -294,11 +320,16 @@ export class OtelWatcher implements vscode.Disposable {
     }
 
     const from = this.state.offset;
+    // Read in bounded windows: the file is append-only and nothing trims it, so
+    // a large backlog would otherwise be resident three times over — buffer,
+    // string, and the array of split lines.
+    const available = Math.max(0, stat.size - from);
+    const length = Math.min(available, MAX_READ_BYTES);
+
     let chunk: Buffer;
     try {
       const fd = fs.openSync(file, 'r');
       try {
-        const length = Math.max(0, stat.size - from);
         chunk = Buffer.alloc(length);
         if (length > 0) {
           fs.readSync(fd, chunk, 0, length, from);
@@ -314,7 +345,9 @@ export class OtelWatcher implements vscode.Disposable {
     // The tail may be a partial line, so only ever advance past the last break.
     const lastBreak = text.lastIndexOf('\n');
     if (lastBreak < 0) {
-      this.state.size = stat.size;
+      // Nothing complete to consume. Leaving `size` alone is deliberate: recording
+      // it here would make the next poll believe the file was unchanged and the
+      // half-written line would never be read, taking every later record with it.
       return;
     }
     for (const line of text.slice(0, lastBreak).split('\n')) {
@@ -479,21 +512,13 @@ export class OtelWatcher implements vscode.Disposable {
       return;
     }
 
-    // The cumulative total going backwards means the feed itself restarted —
-    // the file was rotated, cleared, or pointed somewhere new. Re-baselining
-    // silently is the only correct response: charging the difference would be
-    // negative, and charging the new total again would bill it twice. This is
-    // why there is no manual refreeze; it fixes itself.
-    if (totals.input < this.state.input || totals.output < this.state.output) {
-      this.note('telemetry feed restarted; re-baselining rather than re-charging.');
-      this.state.input = totals.input;
-      this.state.output = totals.output;
-      this.persist(true);
-      return;
-    }
-
-    const dIn = totals.input - this.state.input;
-    const dOut = totals.output - this.state.output;
+    // The rollup banks a counter's peak when it drops, so its totals are
+    // monotonic by construction — a feed or process restart shows up as the old
+    // peak plus the new run rather than as a decrease. There is therefore no
+    // re-baselining to do here; the guard below only exists because a corrupt
+    // or truncated record could still produce a smaller figure.
+    const dIn = Math.max(0, totals.input - this.state.input);
+    const dOut = Math.max(0, totals.output - this.state.output);
     if (dIn === 0 && dOut === 0) {
       return;
     }
@@ -506,7 +531,7 @@ export class OtelWatcher implements vscode.Disposable {
 
   /** Forgets what it has charged and re-adopts the current feed as history. */
   rebaseline(): void {
-    this.state = { offset: 0, size: 0, input: 0, output: 0, seeded: false };
+    this.state = { path: this.feedPath ?? '', offset: 0, size: 0, input: 0, output: 0, seeded: false };
     this.persist(true);
     this.scan();
   }

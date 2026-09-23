@@ -324,6 +324,13 @@
         list.append(item);
       }
       node.append(list);
+      // The split and the sparkline come from the telemetry rollup, which also
+      // holds whatever was already in the feed when Bear in Mind first read it.
+      // The headline is the charged ledger, which never includes that. Saying so
+      // is cheaper than pretending the two cover the same window.
+      node.append(
+        el('p', 'viz-caption', 'Split across everything telemetry has observed, including history adopted on first run.')
+      );
     }
 
     node.append(driftNote(cost.drift, cost.source));
