@@ -374,14 +374,22 @@ function scaleSeconds(value: number | undefined): number | undefined {
   return value === undefined ? undefined : value * 1000;
 }
 
-/** Tokens burned per minute of actual agent work, not wall-clock. */
+/**
+ * Tokens burned per minute of actual agent work, not wall-clock.
+ *
+ * Both halves must describe the same window. The meter's total is a lifetime
+ * figure while the span digest only retains seven days, so pairing them would
+ * report years of old burn as the throughput of this week's sessions. When the
+ * span window has no token total of its own there is nothing honest to divide,
+ * so the figure is omitted.
+ */
 function tokenThroughput(input: SummaryInput, durationsMs: number[]): number {
   const busyMs = durationsMs.reduce((a, b) => a + b, 0);
-  if (busyMs <= 0) {
+  const windowTokens = input.spans.inputTokens + input.spans.outputTokens;
+  if (busyMs <= 0 || windowTokens <= 0) {
     return 0;
   }
-  const tokens = input.totals.input + input.totals.output;
-  return tokens / (busyMs / 60_000);
+  return windowTokens / (busyMs / 60_000);
 }
 
 export function buildQuality(input: SummaryInput): QualitySection {

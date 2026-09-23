@@ -15,6 +15,8 @@ const MAX_READ_BYTES = 8 * 1024 * 1024;
 const PATH_REFRESH_MS = 30_000;
 /** Spans older than this are ignored, matching the store's own 7-day retention. */
 const SPAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** How recently the feed must have been written to count as still running. */
+const FEED_FRESH_MS = 15 * 60 * 1000;
 
 export interface OtelUsageDelta {
   input: number;
@@ -140,17 +142,34 @@ export class OtelWatcher implements vscode.Disposable {
   }
 
   /**
-   * True while a metrics feed is actually present to read.
+   * True while the feed is being written to *now* and has metered tokens.
    *
-   * Deliberately narrow. The rollup keeps its totals after a feed is removed,
-   * and the SQLite store carries no token counts at all, so neither is evidence
-   * that telemetry can still meter. Treating either as "alive" would keep
-   * telemetry authoritative for ever and silently suppress the transcript
-   * watcher that was supposed to take over.
+   * `stats.metrics > 0` alone is not evidence of anything: it is cumulative and
+   * stays true for ever, so a feed that stopped — or one carrying only
+   * non-token metrics — would keep telemetry authoritative and silently
+   * suppress the transcript watcher. Freshness comes from the file's own
+   * modification time, which is the exporter's heartbeat.
    */
   get producing(): boolean {
     const feed = this.resolveFeedPath();
-    return !!feed && fileExists(feed) && this.rollup.stats.metrics > 0;
+    if (!feed) {
+      return false;
+    }
+    let mtimeMs: number;
+    try {
+      const stat = fs.statSync(feed);
+      if (!stat.isFile()) {
+        return false;
+      }
+      mtimeMs = stat.mtimeMs;
+    } catch {
+      return false;
+    }
+    if (Date.now() - mtimeMs > FEED_FRESH_MS) {
+      return false;
+    }
+    const totals = this.rollup.tokenTotals();
+    return totals.input + totals.output > 0;
   }
 
   get observedTokens(): number {

@@ -165,6 +165,12 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get source(): UsageSource {
+    // Turning the reader off must hand the meter back immediately. Without this
+    // a recent reading would keep telemetry authoritative for the rest of the
+    // staleness window, leaving nothing able to charge.
+    if (!this.config.get<boolean>('otel.enabled', true)) {
+      return 'transcripts';
+    }
     if (!this.preferOtel) {
       return 'transcripts';
     }

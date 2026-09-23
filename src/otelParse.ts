@@ -120,20 +120,57 @@ export function resourceAttributes(record: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * Attributes that carry prompt, response or tool content when `captureContent`
+ * is enabled upstream.
+ *
+ * Bear in Mind promises never to read these, so they are dropped at the parser
+ * boundary rather than anywhere later — keeping them on the `LogEvent` would put
+ * prompts and file contents in memory and expose them through `recentEvents()`,
+ * which is exactly the guarantee SECURITY.md makes.
+ */
+const CONTENT_ATTRIBUTES = new Set([
+  'gen_ai.input.messages',
+  'gen_ai.output.messages',
+  'gen_ai.system_instructions',
+  'gen_ai.tool.definitions',
+  'gen_ai.tool.call.arguments',
+  'gen_ai.tool.call.result'
+]);
+
+/** Nothing this parser needs is a long string; anything that big is content. */
+const MAX_ATTRIBUTE_CHARS = 512;
+
+function scrub(attributes: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(attributes)) {
+    if (CONTENT_ATTRIBUTES.has(key)) {
+      continue;
+    }
+    // Belt and braces: a future content attribute under a name we do not know
+    // yet should still not be retained.
+    if (typeof value === 'string' && value.length > MAX_ATTRIBUTE_CHARS) {
+      continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
 export function toLogEvent(record: unknown): LogEvent | undefined {
   const r = record as Record<string, unknown>;
-  const attributes = (r.attributes && typeof r.attributes === 'object' ? r.attributes : {}) as Record<
+  const raw = (r.attributes && typeof r.attributes === 'object' ? r.attributes : {}) as Record<
     string,
     unknown
   >;
   const body = r._body ?? r.body;
-  const named = attributes['event.name'];
+  const named = raw['event.name'];
   const name = typeof named === 'string' ? named : typeof body === 'string' ? body : '';
   if (!name) {
     return undefined;
   }
   const timeMs = hrToMs(r._hrTime ?? r.hrTime ?? r._hrTimeObserved);
-  return { name, timeMs, attributes };
+  return { name, timeMs, attributes: scrub(raw) };
 }
 
 /** Stable key for an attribute set, so the same series lands in the same slot. */

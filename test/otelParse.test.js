@@ -359,6 +359,47 @@ describe('cumulative metrics', () => {
 });
 
 describe('log events', () => {
+  it('never retains prompt or response content', () => {
+    // SECURITY.md promises these are never read. captureContent puts them in
+    // the feed, so they have to be dropped at the parser boundary rather than
+    // kept on the event and merely not displayed.
+    const event = toLogEvent({
+      attributes: {
+        'event.name': 'gen_ai.client.inference.operation.details',
+        'gen_ai.usage.input_tokens': 1500,
+        'gen_ai.input.messages': '[{"role":"user","content":"my secret prompt"}]',
+        'gen_ai.output.messages': '[{"role":"assistant","content":"the answer"}]',
+        'gen_ai.system_instructions': 'you are a helpful assistant',
+        'gen_ai.tool.definitions': '[{"type":"function"}]',
+        'gen_ai.tool.call.arguments': '{"filePath":"/src/secrets.ts"}',
+        'gen_ai.tool.call.result': 'const apiKey = "sk-live-123"'
+      }
+    });
+    assert.equal(event.attributes['gen_ai.usage.input_tokens'], 1500);
+    for (const key of [
+      'gen_ai.input.messages',
+      'gen_ai.output.messages',
+      'gen_ai.system_instructions',
+      'gen_ai.tool.definitions',
+      'gen_ai.tool.call.arguments',
+      'gen_ai.tool.call.result'
+    ]) {
+      assert.ok(!(key in event.attributes), `${key} must not be retained`);
+    }
+    assert.ok(
+      !JSON.stringify(event).includes('sk-live-123'),
+      'no content value should survive anywhere on the event'
+    );
+  });
+
+  it('drops oversized string attributes it does not recognise', () => {
+    const event = toLogEvent({
+      attributes: { 'event.name': 'x', 'some.future.content': 'a'.repeat(5000), keep: 'short' }
+    });
+    assert.equal(event.attributes.keep, 'short');
+    assert.ok(!('some.future.content' in event.attributes));
+  });
+
   it('names an event from its attribute, falling back to the body', () => {
     assert.equal(toLogEvent({ attributes: { 'event.name': 'a' }, _body: 'b' }).name, 'a');
     assert.equal(toLogEvent({ attributes: {}, _body: 'b' }).name, 'b');

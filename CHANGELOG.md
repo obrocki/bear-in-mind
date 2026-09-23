@@ -47,9 +47,17 @@ count-selection. Consumption is measured, not entered. Re-baselining is automati
 
 ### Fixed
 
+- Log-record attributes were retained wholesale, so with `captureContent` on,
+  prompts, responses and tool results sat in memory and were reachable through
+  the event buffer — contradicting the guarantee that they are never read. They
+  are now dropped at the parser boundary, with a test that fails if any survives.
+- `producing` treated a cumulative "have we ever seen metrics" flag as proof the
+  feed was still running, so telemetry could stay authoritative after it stopped
+  and suppress transcript charges. It now uses the feed's modification time.
+- Throughput divided a lifetime token total by a seven-day span window.
+- Turning `iceberg.otel.enabled` off left telemetry authoritative for the rest
+  of the staleness window, so nothing could charge.
 - Only offer the local trace store when Copilot Chat actually registers it.
-  `dbSpanExporter` does not exist in every build, and offering it there promised
-  exact timings that could never arrive.
 - Connecting the file feed produced nothing: Copilot's exporter uses
   `createWriteStream`, which does not create parent directories, so every record
   was dropped while VS Code reported monitoring as enabled. Settings are now
