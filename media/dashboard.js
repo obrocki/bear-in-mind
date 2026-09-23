@@ -16,6 +16,20 @@
 
   const SVG = 'http://www.w3.org/2000/svg';
 
+  /** Single source of truth for colour: everything comes from dashboard.css. */
+  const palette = (function () {
+    const style = getComputedStyle(document.documentElement);
+    const read = (name, fallback) => (style.getPropertyValue(name) || '').trim() || fallback;
+    return {
+      cost: read('--cost', '#9fd8ff'),
+      costFrom: read('--cost-from', '#6fc3ff'),
+      costTo: read('--cost-to', '#d7f2ff'),
+      speed: read('--speed', '#7fe3b4'),
+      quality: read('--quality', '#ffcf7a'),
+      warn: read('--warn', '#ff8a6b')
+    };
+  })();
+
   // ------------------------------------------------------------ formatting ---
 
   function tokens(n) {
@@ -135,12 +149,23 @@
   /**
    * Stacked area of input and output tokens per export interval. The series is
    * already bucketed by the extension, so this only has to scale it.
+   *
+   * The fill uses the same two-stop ice gradient as the melt bar in the habitat
+   * HUD, so the burn graph and the berg read as the same material.
    */
-  function sparkline(series, colour) {
+  function sparkline(series) {
     const W = 300;
     const H = 56;
     const node = svg(W, H);
     if (!series.length) return node;
+
+    const gradId = 'ice-' + Math.random().toString(36).slice(2, 9);
+    const defs = document.createElementNS(SVG, 'defs');
+    const grad = shape('linearGradient', { id: gradId, x1: '0', y1: '0', x2: '0', y2: '1' });
+    grad.append(shape('stop', { offset: '0', 'stop-color': palette.costTo, 'stop-opacity': '0.38' }));
+    grad.append(shape('stop', { offset: '1', 'stop-color': palette.costFrom, 'stop-opacity': '0.04' }));
+    defs.append(grad);
+    node.append(defs);
 
     const peak = series.reduce((max, b) => Math.max(max, b.input + b.output), 0) || 1;
     const step = series.length > 1 ? W / (series.length - 1) : W;
@@ -157,20 +182,16 @@
 
     const totalPath = line((b) => b.input + b.output);
     node.append(
-      shape('path', {
-        d: totalPath + ' L' + W + ' ' + H + ' L0 ' + H + ' Z',
-        fill: colour,
-        'fill-opacity': '0.16'
-      })
+      shape('path', { d: totalPath + ' L' + W + ' ' + H + ' L0 ' + H + ' Z', fill: 'url(#' + gradId + ')' })
     );
     node.append(
-      shape('path', { d: totalPath, fill: 'none', stroke: colour, 'stroke-width': '1.5' })
+      shape('path', { d: totalPath, fill: 'none', stroke: palette.costTo, 'stroke-width': '1.5' })
     );
     node.append(
       shape('path', {
         d: line((b) => b.output),
         fill: 'none',
-        stroke: colour,
+        stroke: palette.cost,
         'stroke-width': '1',
         'stroke-opacity': '0.5',
         'stroke-dasharray': '3 2'
@@ -204,42 +225,53 @@
   }
 
   /** Accept versus reject, as one proportional bar. */
-  function splitBar(accepted, rejected) {
+  function splitBar(good, bad) {
     const W = 300;
     const H = 10;
     const node = svg(W, H);
-    const total = accepted + rejected;
+    const total = good + bad;
     if (total === 0) return node;
-    const acceptedW = (accepted / total) * W;
-    node.append(shape('rect', { x: 0, y: 0, width: acceptedW, height: H, fill: '#4ade80', 'fill-opacity': '0.8' }));
+    const goodW = (good / total) * W;
+    node.append(shape('rect', { x: 0, y: 0, width: goodW, height: H, fill: palette.speed, 'fill-opacity': '0.85' }));
     node.append(
-      shape('rect', {
-        x: acceptedW,
-        y: 0,
-        width: W - acceptedW,
-        height: H,
-        fill: '#fb7185',
-        'fill-opacity': '0.65'
-      })
+      shape('rect', { x: goodW, y: 0, width: W - goodW, height: H, fill: palette.warn, 'fill-opacity': '0.7' })
     );
     return node;
   }
 
   // --------------------------------------------------------------- sections --
 
-  function section(key, numeral, title, measures) {
+  function section(key, title, measures) {
     const node = el('section', 'section');
     node.dataset.key = key;
-    const head = el('div', 'section-head');
-    head.append(el('span', 'numeral', numeral));
-    head.append(el('h2', null, title));
-    node.append(head);
+    node.append(el('h2', null, title));
     node.append(el('p', 'hypothesis', measures));
     return node;
   }
 
+  /**
+   * Says what the ice percentage actually measures.
+   *
+   * It is the context window when telemetry reports one and the cumulative
+   * budget otherwise, and the two mean very different things — so the label has
+   * to follow the basis rather than always claiming "budget".
+   */
+  function headroom(cost) {
+    if (cost.basis === 'context' && cost.context) {
+      return (
+        percent(cost.health) +
+        ' of the context window free · ' +
+        tokens(cost.context.used) +
+        ' / ' +
+        tokens(cost.context.limit) +
+        (cost.context.model ? ' on ' + cost.context.model : '')
+      );
+    }
+    return percent(cost.health) + ' of the ' + tokens(cost.budget) + '-token iceberg remains';
+  }
+
   function renderCost(cost) {
-    const node = section('cost', '01', 'Cost', 'Tokens');
+    const node = section('cost', 'Cost', 'Tokens');
 
     if (!cost.available) {
       node.append(
@@ -254,10 +286,8 @@
       headline(
         tokens(cost.totalTokens),
         'tokens',
-        percent(cost.health) +
-          ' of the ' +
-          tokens(cost.budget) +
-          '-token iceberg remains · ' +
+        headroom(cost) +
+          ' · ' +
           (cost.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts')
       )
     );
@@ -274,14 +304,14 @@
 
     if (cost.series.length > 1) {
       const viz = el('div', 'viz');
-      viz.append(sparkline(cost.series, '#38d0ee'));
+      viz.append(sparkline(cost.series));
       viz.append(el('p', 'viz-caption', 'Tokens per export interval. Dashed line is output only.'));
       node.append(viz);
     }
 
     if (cost.byModel.length) {
       const list = el('ul', 'breakdown');
-      list.style.color = '#38d0ee';
+      list.style.color = palette.cost;
       for (const model of cost.byModel.slice(0, 5)) {
         const item = el('li');
         item.append(el('span', 'name', model.model));
@@ -331,7 +361,7 @@
   }
 
   function renderSpeed(speed) {
-    const node = section('speed', '02', 'Speed', 'Session duration');
+    const node = section('speed', 'Speed', 'Session duration');
 
     if (!speed.available) {
       node.append(
@@ -388,7 +418,7 @@
         speed.slowestTools.map((t) => ({ label: t.name + ' ×' + t.calls, value: t.medianMs })),
         duration
       );
-      list.style.color = '#4ade80';
+      list.style.color = palette.speed;
       viz.append(list);
       viz.append(el('p', 'viz-caption', 'Slowest tools by median execution time.'));
       node.append(viz);
@@ -407,7 +437,7 @@
   }
 
   function renderQuality(quality) {
-    const node = section('quality', '03', 'Quality', 'PR + IDE signals');
+    const node = section('quality', 'Quality', 'PR + IDE signals');
 
     if (!quality.available) {
       node.append(
@@ -436,7 +466,7 @@
     if (quality.editsAccepted + quality.editsRejected > 0) {
       const viz = el('div', 'viz');
       viz.append(splitBar(quality.editsAccepted, quality.editsRejected));
-      viz.append(el('p', 'viz-caption', 'Green accepted, red rejected.'));
+      viz.append(el('p', 'viz-caption', 'Accepted against rejected.'));
       node.append(viz);
     }
 

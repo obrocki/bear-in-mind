@@ -174,6 +174,68 @@ describe('cumulative metrics', () => {
     assert.equal(rollup.tokenTotals().input, 1700);
   });
 
+  it('keeps evicted series separated by their attributes', () => {
+    // Regression: folding evicted series under the metric name alone added the
+    // evicted input tokens to the output query as well, and vice versa, so both
+    // sides of tokenTotals() were inflated by the other's evictions.
+    const rollup = new OtelRollup();
+    const point = (session, type, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                { attributes: { 'gen_ai.token.type': type }, endTime: [1, 0], value: { sum, count: 1 } }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+    // Comfortably past MAX_SERIES (4000) so eviction is forced.
+    for (let i = 0; i < 2100; i++) {
+      rollup.ingest(point('s' + i, 'input', 100));
+      rollup.ingest(point('s' + i, 'output', 10));
+    }
+    const totals = rollup.tokenTotals();
+    assert.equal(totals.input, 2100 * 100);
+    assert.equal(totals.output, 2100 * 10);
+  });
+
+  it('keeps folded series visible to every query, not just total()', () => {
+    const rollup = new OtelRollup();
+    const point = (session, model, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                {
+                  attributes: { 'gen_ai.token.type': 'input', 'gen_ai.request.model': model },
+                  endTime: [1, 0],
+                  value: { sum, count: 1 }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+    for (let i = 0; i < 4200; i++) {
+      rollup.ingest(point('s' + i, 'gpt-4o', 50));
+    }
+    const byModel = rollup.tokensByModel();
+    assert.equal(byModel.length, 1);
+    // tokensByModel() used to ignore folded series entirely, so it disagreed
+    // with total() on the same data.
+    assert.equal(byModel[0].input, rollup.total(TOKEN_USAGE, { 'gen_ai.token.type': 'input' }));
+    assert.equal(byModel[0].input, 4200 * 50);
+  });
+
   it('filters totals by attribute', () => {
     const rollup = loaded();
     assert.equal(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }), 3);

@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
@@ -50,8 +52,14 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   // The ice tracks how full the model's context window is whenever telemetry
   // reports it, and falls back to cumulative burn against the budget when it
-  // does not. Pushing it on every poll keeps the scene live.
-  context.subscriptions.push(otel.onDidScan(() => meter.setContext(otel.spanDigest.context)));
+  // does not. Pushing it on every poll keeps the scene live, and keeps
+  // telemetry authoritative through idle spells when no tokens are moving.
+  context.subscriptions.push(
+    otel.onDidScan(() => {
+      meter.setContext(otel.spanDigest.context);
+      meter.noteOtelAlive(otel.producing);
+    })
+  );
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -78,6 +86,8 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       health: usage.health,
       totals: { input: usage.input, output: usage.output, credits: usage.credits },
       source: usage.source,
+      basis: usage.basis,
+      context: usage.context,
       drift: usage.drift
     });
   };
@@ -165,7 +175,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
     vscode.commands.registerCommand('iceberg.nameBear', () => pickBearName(meter.snapshot().bearName)),
 
-    vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel)),
+    vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output)),
 
     vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output)),
 
@@ -220,7 +230,7 @@ export function deactivate(): void {
  *   collector would silently stop. It is also the only source that carries the
  *   log records the quality section is built from.
  */
-async function connectTelemetry(otel: OtelWatcher): Promise<void> {
+async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel): Promise<void> {
   const config = vscode.workspace.getConfiguration(OTEL_SECTION);
   const endpoint = (config.get<string>('otlpEndpoint', '') || '').trim();
   const exporterType = (config.get<string>('exporterType', '') || '').trim();
@@ -267,19 +277,67 @@ async function connectTelemetry(otel: OtelWatcher): Promise<void> {
     }
   }
 
-  const target = vscode.ConfigurationTarget.Global;
-  await config.update('enabled', true, target);
+  const wanted: Array<[string, unknown]> = [['enabled', true]];
   if (picked.id === 'sqlite' || picked.id === 'both') {
-    await config.update('dbSpanExporter', true, target);
+    wanted.push(['dbSpanExporter', true]);
   }
   if (picked.id === 'file' || picked.id === 'both') {
-    await config.update('outfile', otel.defaultFeedPath(), target);
-    await config.update('exporterType', 'file', target);
+    const feed = otel.defaultFeedPath();
+    // Copilot Chat's file exporter opens a write stream without creating the
+    // directory first, so pointing it at a folder that does not exist yet means
+    // nothing is ever written and the feed stays silently empty.
+    try {
+      fs.mkdirSync(path.dirname(feed), { recursive: true });
+    } catch (err) {
+      output.appendLine(`[iceberg] could not create the feed directory: ${String(err)}`);
+    }
+    wanted.push(['outfile', feed], ['exporterType', 'file']);
+  }
+
+  const applied: string[] = [];
+  const failed: string[] = [];
+  for (const [key, value] of wanted) {
+    // A setting this build of Copilot Chat does not register cannot be written —
+    // `update` rejects. Writing them one at a time, and checking first, means one
+    // unknown key cannot abort the rest of the setup.
+    const known = config.inspect(key);
+    if (!known || known.defaultValue === undefined) {
+      failed.push(key);
+      output.appendLine(`[iceberg] ${OTEL_SECTION}.${key} is not a setting in this VS Code build; skipped.`);
+      continue;
+    }
+    try {
+      await config.update(key, value, vscode.ConfigurationTarget.Global);
+      applied.push(key);
+    } catch (err) {
+      failed.push(key);
+      output.appendLine(`[iceberg] could not set ${OTEL_SECTION}.${key}: ${String(err)}`);
+    }
+  }
+
+  otel.reconfigure();
+
+  if (applied.length === 0) {
+    const show = 'Show Log';
+    const choice = await vscode.window.showErrorMessage(
+      'Could not turn on Copilot telemetry — none of the settings could be written. ' +
+        'This usually means the installed Copilot Chat is older than the telemetry feature.',
+      show
+    );
+    if (choice === show) {
+      output.show(true);
+    }
+    return;
   }
 
   const reload = 'Reload Window';
+  const note =
+    failed.length > 0
+      ? ` (${failed.join(', ')} could not be set — see the Iceberg output channel)`
+      : '';
   const choice = await vscode.window.showInformationMessage(
-    'Copilot telemetry connected. Reload so Copilot Chat picks up the change, then send a chat request to populate the dashboard.',
+    `Copilot telemetry connected${note}. Reload so Copilot Chat picks up the change, then send a chat ` +
+      'request to populate the dashboard.',
     reload
   );
   if (choice === reload) {

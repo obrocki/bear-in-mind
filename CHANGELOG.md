@@ -26,11 +26,43 @@
   makes the drift readout on the dashboard possible: it shows what each source
   saw over the window in which both were watching, and says plainly whether
   they agree.
-- **New: a cost, speed and quality dashboard.** Three sections — **01 Cost** in
-  tokens, **02 Speed** in session duration, **03 Quality** from PR and IDE
-  signals. Open it with **Iceberg: Open Token Dashboard**, or from the new
-  sidebar view. Sections with no data say so and name the signal that is
-  missing, rather than showing a confident zero.
+- **New: a cost, speed and quality dashboard.** Three sections — **Cost** in
+  tokens, **Speed** in session duration, **Quality** from PR and IDE signals.
+  Open it with **Iceberg: Open Token Dashboard**, or from the new sidebar view.
+  Sections with no data say so and name the signal that is missing, rather than
+  showing a confident zero. Its palette is taken from the scene above it — the
+  ice, the aurora and the low sun — so the numbers and the berg read as one
+  product.
+- **Fixed: connecting the file feed produced nothing.** Copilot Chat's file
+  exporter opens its write stream with `createWriteStream`, which does not
+  create parent directories, so pointing it at a folder that did not exist yet
+  meant every record was silently dropped — while VS Code cheerfully reported
+  monitoring as enabled. The connect command now creates the directory first.
+  It also writes each setting individually and checks it is registered, so one
+  key an older Copilot Chat does not know about can no longer abort the rest of
+  the setup, and it reports what it actually managed to change.
+- **Fixed: a handover double-charged the traffic that triggered it.** `observe`
+  refreshed the telemetry timestamp *before* reading which source was
+  authoritative, so the delta that promoted telemetry was charged on top of the
+  transcript delta for the same request — and again after every idle spell
+  longer than the staleness window. Authority is now decided from the state as
+  it stood before the delta arrived, and the feed being alive keeps telemetry
+  authoritative through idle spells.
+- **Fixed: the first drift report accused two agreeing sources of disagreeing.**
+  Opening the comparison window zeroed both counters and then immediately
+  recorded the telemetry delta, whose transcript counterpart had been recorded
+  before the window existed — reporting 100% disagreement. The delta that opens
+  the window is no longer counted on either side.
+- **Fixed: evicted metric series leaked across filtered queries.** Series
+  dropped under the memory cap were folded under their metric name alone, so an
+  evicted input-token series was added to the output-token total as well, and
+  `tokensByModel` ignored them entirely. Folded series now keep their attributes
+  and are visible to every query.
+- **Fixed: the cost headline could contradict itself.** It took its total from
+  the telemetry rollup but its percentage from the meter, which have different
+  baselines by design, and it labelled a context-window percentage as budget
+  remaining. Both now come from the same ledger, and the label follows what is
+  actually being measured.
 - **Quality includes what you actually did.** Thumbs up and down
   (`copilot_chat.user.feedback.count`) get their own block with a positive rate,
   alongside `copilot_chat.user.action.count` — how many responses were applied,

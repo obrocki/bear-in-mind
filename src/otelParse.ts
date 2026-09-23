@@ -195,8 +195,14 @@ export class OtelRollup {
   readonly stats: FeedStats = emptyStats();
 
   private readonly series = new Map<string, Series>();
-  /** Totals from series evicted under the cap. Never decreases. */
-  private readonly folded = new Map<string, number>();
+  /**
+   * Series evicted under the cap, collapsed and kept out of the live map.
+   *
+   * They keep their attributes: folding by metric name alone would add an
+   * evicted input-token series to the output-token query as well, because
+   * `total()` applies its filter to the live series but not to a bare number.
+   */
+  private readonly folded = new Map<string, Series>();
   private readonly events: LogEvent[] = [];
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
@@ -352,16 +358,38 @@ export class OtelRollup {
       return;
     }
     const s = this.series.get(oldestKey)!;
-    this.folded.set(s.metric, (this.folded.get(s.metric) ?? 0) + s.retired + s.last);
+    // Drop `session.id` from the key so repeated evictions of the same series
+    // from different windows merge, but keep the attributes so filtered queries
+    // still see the right slice.
+    const foldKey = `${s.metric}\u0000${attrKey(s.attributes)}`;
+    const existing = this.folded.get(foldKey);
+    if (existing) {
+      existing.retired += s.retired + s.last;
+      existing.retiredCount += s.retiredCount + s.lastCount;
+    } else {
+      this.folded.set(foldKey, {
+        ...s,
+        retired: s.retired + s.last,
+        retiredCount: s.retiredCount + s.lastCount,
+        last: 0,
+        lastCount: 0
+      });
+    }
     this.series.delete(oldestKey);
+  }
+
+  /** Live and folded series together. Every query must read both. */
+  private *allSeries(): Generator<Series> {
+    yield* this.series.values();
+    yield* this.folded.values();
   }
 
   // ------------------------------------------------------------- queries ----
 
   /** Total of a metric across every series, optionally filtered by attributes. */
   total(metric: string, where?: Record<string, string>): number {
-    let sum = this.folded.get(metric) ?? 0;
-    for (const s of this.series.values()) {
+    let sum = 0;
+    for (const s of this.allSeries()) {
       if (s.metric !== metric || !matches(s.attributes, where)) {
         continue;
       }
@@ -373,7 +401,7 @@ export class OtelRollup {
   /** Number of recorded measurements, i.e. a histogram's cumulative `count`. */
   observations(metric: string, where?: Record<string, string>): number {
     let count = 0;
-    for (const s of this.series.values()) {
+    for (const s of this.allSeries()) {
       if (s.metric !== metric || !matches(s.attributes, where)) {
         continue;
       }
@@ -399,7 +427,7 @@ export class OtelRollup {
     const merged: number[] = [];
     let total = 0;
 
-    for (const s of this.series.values()) {
+    for (const s of this.allSeries()) {
       if (s.metric !== metric || !matches(s.attributes, where) || !s.counts || !s.boundaries) {
         continue;
       }
@@ -438,7 +466,7 @@ export class OtelRollup {
   /** Distinct values of one attribute across a metric's series. */
   groupBy(metric: string, attribute: string): Map<string, number> {
     const out = new Map<string, number>();
-    for (const s of this.series.values()) {
+    for (const s of this.allSeries()) {
       if (s.metric !== metric) {
         continue;
       }
@@ -475,7 +503,7 @@ export class OtelRollup {
 
   tokensByModel(): Array<{ model: string; input: number; output: number; total: number }> {
     const byModel = new Map<string, { input: number; output: number }>();
-    for (const s of this.series.values()) {
+    for (const s of this.allSeries()) {
       if (s.metric !== TOKEN_USAGE) {
         continue;
       }

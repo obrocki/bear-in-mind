@@ -142,6 +142,9 @@ export interface CostSection {
   credits: number;
   budget: number;
   health: number;
+  /** What `health` measures, so the UI never mislabels it. */
+  basis: 'context' | 'budget';
+  context?: ContextWindow;
   burnPerHour: number;
   byModel: Array<{ model: string; input: number; output: number; total: number; share: number }>;
   series: TokenBucket[];
@@ -217,6 +220,9 @@ export interface SummaryInput {
   /** Totals currently charged to the meter. */
   totals: { input: number; output: number; credits: number };
   source: 'otel' | 'transcripts';
+  /** What `health` measures. */
+  basis: 'context' | 'budget';
+  context?: ContextWindow;
   drift: DriftReport;
 }
 
@@ -259,19 +265,20 @@ function prefer(exact: number | undefined, estimate: number | undefined): Measur
 // ----------------------------------------------------------------- sections --
 
 export function buildCost(input: SummaryInput): CostSection {
-  const { rollup, spans, totals } = input;
-  const otelTokens = rollup.tokenTotals();
-  const usingOtel = input.source === 'otel';
+  const { spans, totals } = input;
 
-  const inputTokens = usingOtel && otelTokens.input > 0 ? otelTokens.input : totals.input;
-  const outputTokens = usingOtel && otelTokens.output > 0 ? otelTokens.output : totals.output;
+  // Both figures must come from the same ledger. Taking the total from the
+  // rollup while `health` comes from the meter produces a headline that
+  // contradicts itself — the rollup adopts pre-existing telemetry as history
+  // without charging it, and it cannot see manually reported usage at all.
+  const inputTokens = totals.input;
+  const outputTokens = totals.output;
 
-  const byModelRaw = rollup.tokensByModel();
+  const byModelRaw = input.rollup.tokensByModel();
   const modelTotal = byModelRaw.reduce((a, m) => a + m.total, 0) || 1;
   const byModel = byModelRaw.map((m) => ({ ...m, share: m.total / modelTotal }));
 
-  const series = rollup.tokenSeries();
-  const burnPerHour = burnRate(series);
+  const series = input.rollup.tokenSeries();
 
   return {
     available: inputTokens + outputTokens > 0,
@@ -283,7 +290,9 @@ export function buildCost(input: SummaryInput): CostSection {
     credits: totals.credits,
     budget: input.budget,
     health: input.health,
-    burnPerHour,
+    basis: input.basis,
+    context: input.context,
+    burnPerHour: burnRate(series),
     byModel,
     series,
     source: input.source,

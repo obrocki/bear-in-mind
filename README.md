@@ -66,13 +66,13 @@ ambiguous.
 
 The iceberg answers *how much room is left*. The dashboard answers *why*.
 
-![The dashboard: three columns headed 01 Cost, 02 Speed and 03 Quality, showing token totals by model, session latency percentiles, and edit acceptance with thumbs up and down](docs/media/dashboard.png)
+![The dashboard: three columns headed Cost, Speed and Quality, showing token totals by model, session latency percentiles, and edit acceptance with thumbs up and down](docs/media/dashboard.png)
 
-| | Section | Measures | Shows |
-| --- | --- | --- | --- |
-| `01` | **Cost** | Tokens | Input, output, cache-read and reasoning tokens split by model, premium credits, burn rate, and burn over time. |
-| `02` | **Speed** | Session duration | Median and 95th-percentile session length, model call latency, time to first token, turns per session, slowest tools. |
-| `03` | **Quality** | PR + IDE signals | Edit accept/reject, lines added and removed, how much generated code survives, pull requests, tool success rate, thumbs up/down, and what you did with responses. |
+| Section | Measures | Shows |
+| --- | --- | --- |
+| **Cost** | Tokens | Input, output, cache-read and reasoning tokens split by model, premium credits, burn rate, and burn over time. |
+| **Speed** | Session duration | Median and 95th-percentile session length, model call latency, time to first token, turns per session, slowest tools. |
+| **Quality** | PR + IDE signals | Edit accept/reject, lines added and removed, how much generated code survives, pull requests, tool success rate, thumbs up/down, and what you did with responses. |
 
 Open it with **Iceberg: Open Token Dashboard**, or from the *Cost, Speed,
 Quality* view in the sidebar. Any section without data says so and names the

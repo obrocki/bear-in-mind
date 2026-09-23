@@ -1,19 +1,40 @@
 /* Bear in Mind — cost / speed / quality dashboard.
    Deliberately its own stylesheet: the habitat HUD is a thin strip under a
-   canvas, this is a document. Shared variables would only couple them. */
+   canvas, this is a document.
+
+   Every colour here is lifted from the scene in media/main.js, so the dashboard
+   reads as the same world as the iceberg above it rather than as a separate
+   product. The accents are the three light sources in the polar night: the ice
+   itself, the aurora, and the low sun that shows up as the berg warms. */
 
 :root {
   color-scheme: dark;
-  --ink: #e6edf3;
-  --muted: #8b949e;
-  --faint: #6e7681;
-  --rule: rgba(255, 255, 255, 0.09);
-  --ground: #0d1117;
-  --raised: rgba(255, 255, 255, 0.025);
-  --cost: #38d0ee;
-  --speed: #4ade80;
-  --quality: #f5c451;
-  --warn: #fb7185;
+
+  /* SEA_COLD / SKY_COLD, the water and the night sky behind the berg. */
+  --ground: #05101f;
+  --ground-top: #071a35;
+  --raised: rgba(143, 208, 232, 0.045);
+  --rule: rgba(143, 208, 232, 0.15);
+
+  /* snow, and the ice ramp read down into shadow. */
+  --ink: #e4f3ff;
+  --muted: #8fb3cf;
+  --faint: #6389a8;
+
+  /* 01 — the ice: ICE_COLD, and the same gradient as the HUD's melt bar. */
+  --cost: #9fd8ff;
+  --cost-from: #6fc3ff;
+  --cost-to: #d7f2ff;
+
+  /* 02 — the aurora's leading band, rgb(140,255,200) in drawAurora. */
+  --speed: #7fe3b4;
+
+  /* 03 — the low sun, and the warm accent the HUD switches to as ice is lost. */
+  --quality: #ffcf7a;
+
+  /* The melt-critical accent, for anything rejected or failing. */
+  --warn: #ff8a6b;
+
   --mono: var(--vscode-editor-font-family, ui-monospace, 'Cascadia Mono', monospace);
   --sans: var(--vscode-font-family, system-ui, sans-serif);
 }
@@ -27,7 +48,6 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--ground);
   color: var(--ink);
   font-family: var(--sans);
 }
@@ -36,6 +56,11 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 20px 24px 26px;
+  /* Echoes the sky gradient over the berg: lighter at the horizon, darker
+     as it goes down into the water. */
+  background:
+    linear-gradient(180deg, var(--ground-top) 0%, var(--ground) 46%) no-repeat,
+    var(--ground);
 }
 
 /* ------------------------------------------------------------------- grid --- */
@@ -61,20 +86,8 @@ body {
   padding-right: 0;
 }
 
-.section-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 2px;
-}
-
-.numeral {
-  font: 700 clamp(20px, 2.4vw, 28px) / 1 var(--mono);
-  letter-spacing: -1px;
-}
-
 .section h2 {
-  margin: 0;
+  margin: 0 0 2px;
   font: 700 clamp(13px, 1.4vw, 17px) / 1.2 var(--sans);
   letter-spacing: 0.3px;
   text-transform: uppercase;
@@ -85,15 +98,17 @@ body {
   font: 400 12px/1.3 var(--mono);
 }
 
-.section[data-key='cost'] .numeral,
+/* The section's colour is now the only thing distinguishing it, so it carries
+   both the heading and the measure underneath rather than just an accent. */
+.section[data-key='cost'] h2,
 .section[data-key='cost'] .hypothesis {
   color: var(--cost);
 }
-.section[data-key='speed'] .numeral,
+.section[data-key='speed'] h2,
 .section[data-key='speed'] .hypothesis {
   color: var(--speed);
 }
-.section[data-key='quality'] .numeral,
+.section[data-key='quality'] h2,
 .section[data-key='quality'] .hypothesis {
   color: var(--quality);
 }
@@ -222,7 +237,7 @@ body {
 .breakdown .track {
   grid-column: 1 / -1;
   height: 3px;
-  background: rgba(255, 255, 255, 0.07);
+  background: rgba(143, 208, 232, 0.12);
   overflow: hidden;
 }
 
@@ -332,7 +347,7 @@ body {
 .banner code {
   font: 400 11px/1.4 var(--mono);
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(143, 208, 232, 0.1);
   padding: 1px 4px;
 }
 

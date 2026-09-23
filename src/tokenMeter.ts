@@ -268,20 +268,31 @@ export class TokenMeter implements vscode.Disposable {
       return;
     }
 
+    // Authority is decided from the state as it stood *before* this delta.
+    // Letting an arriving delta promote its own source is what double-charges a
+    // handover: telemetry lags the transcripts by an export interval, so the
+    // transcripts have already charged this exact traffic. Reading `source`
+    // after refreshing `otelLastSeenMs` would charge it a second time.
+    const active = this.source;
+
+    let opened = false;
     if (from === 'otel') {
-      this.otelLastSeenMs = Date.now();
       if (!this.state.overlapping) {
-        // First OTel data. From here both watchers run side by side, so start
-        // the comparison from a shared zero rather than from history.
+        // First telemetry data. From here both watchers run side by side, so
+        // start the comparison from a shared zero rather than from history.
         this.state.overlapping = true;
         this.state.observed = { otel: 0, transcripts: 0 };
+        opened = true;
       }
+      this.otelLastSeenMs = Date.now();
     }
-    if (this.state.overlapping) {
+    // The delta that opens the window describes traffic the transcripts
+    // recorded before the window existed. Counting it would report a 100%
+    // disagreement between two sources that in fact agreed exactly.
+    if (this.state.overlapping && !opened) {
       this.state.observed[from] += i + o;
     }
 
-    const active = this.source;
     if (c > 0) {
       this.state.credits += c;
     }
@@ -293,6 +304,19 @@ export class TokenMeter implements vscode.Disposable {
 
     this.persist();
     this._onDidChange.fire(this.snapshot());
+  }
+
+  /**
+   * Keeps telemetry authoritative while its feed is alive.
+   *
+   * `observe` only fires when tokens actually move, so without this an idle
+   * spell longer than `OTEL_STALE_MS` would quietly demote telemetry and hand
+   * the next request back to the transcripts.
+   */
+  noteOtelAlive(alive: boolean): void {
+    if (alive) {
+      this.otelLastSeenMs = Date.now();
+    }
   }
 
   /**

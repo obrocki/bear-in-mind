@@ -134,6 +134,17 @@ export class OtelWatcher implements vscode.Disposable {
     return totals.input + totals.output > 0;
   }
 
+  /**
+   * True while a configured source is still there to read.
+   *
+   * Distinct from `live`: the rollup keeps its totals after a feed is removed,
+   * so this also checks a source is actually present before telling the meter
+   * that telemetry is still the better authority.
+   */
+  get producing(): boolean {
+    return this.live && (!!this.resolveFeedPath() || this.spans.available);
+  }
+
   get observedTokens(): number {
     const totals = this.rollup.tokenTotals();
     return totals.input + totals.output;
