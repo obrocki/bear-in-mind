@@ -87,6 +87,39 @@ describe('ingestion', () => {
     assert.equal(unknown, 0);
   });
 
+  it('records freshness only from token-usage metrics', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest({
+      resource: {},
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: 'copilot_chat.edit.acceptance' },
+              dataPoints: [{ endTime: [1, 0], value: 1 }]
+            }
+          ]
+        }
+      ]
+    });
+    assert.equal(rollup.stats.lastTokenUsageAtMs, 0);
+
+    rollup.ingest({
+      resource: {},
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [{ endTime: [2, 0], value: { sum: 1, count: 1 } }]
+            }
+          ]
+        }
+      ]
+    });
+    assert.equal(rollup.stats.lastTokenUsageAtMs, 2000);
+  });
+
   it('counts unreadable lines instead of silently dropping them', () => {
     const rollup = new OtelRollup();
     rollup.ingestLine('{"broken": ');

@@ -61,10 +61,11 @@ export interface FeedStats {
   unknown: number;
   malformed: number;
   lastRecordAtMs: number;
+  lastTokenUsageAtMs: number;
 }
 
 export function emptyStats(): FeedStats {
-  return { metrics: 0, logs: 0, spans: 0, unknown: 0, malformed: 0, lastRecordAtMs: 0 };
+  return { metrics: 0, logs: 0, spans: 0, unknown: 0, malformed: 0, lastRecordAtMs: 0, lastTokenUsageAtMs: 0 };
 }
 
 // ------------------------------------------------------------------ parsing --
@@ -304,6 +305,7 @@ export class OtelRollup {
     const sessionId = resource['session.id'] ?? '';
     const scopes = (record as { scopeMetrics?: unknown[] }).scopeMetrics ?? [];
     let newestMs = 0;
+    let newestTokenUsageMs = 0;
 
     for (const scope of scopes) {
       const metrics = (scope as { metrics?: unknown[] })?.metrics ?? [];
@@ -321,6 +323,9 @@ export class OtelRollup {
           const attributes = p.attributes && typeof p.attributes === 'object' ? p.attributes : {};
           const endMs = hrToMs(p.endTime);
           newestMs = Math.max(newestMs, endMs);
+          if (name === TOKEN_USAGE) {
+            newestTokenUsageMs = Math.max(newestTokenUsageMs, endMs);
+          }
           this.absorbPoint(sessionId, name, attributes, p.value, endMs);
         }
       }
@@ -328,6 +333,9 @@ export class OtelRollup {
 
     if (newestMs > 0) {
       this.stats.lastRecordAtMs = Math.max(this.stats.lastRecordAtMs, newestMs);
+    }
+    if (newestTokenUsageMs > 0) {
+      this.stats.lastTokenUsageAtMs = Math.max(this.stats.lastTokenUsageAtMs, newestTokenUsageMs);
     }
     this.recordTokenBucket(newestMs || Date.now());
   }

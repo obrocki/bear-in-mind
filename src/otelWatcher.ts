@@ -15,7 +15,7 @@ const MAX_READ_BYTES = 8 * 1024 * 1024;
 const PATH_REFRESH_MS = 30_000;
 /** Spans older than this are ignored, matching the store's own 7-day retention. */
 const SPAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** How recently the feed must have been written to count as still running. */
+/** How recently the feed must have exported token usage to count as live. */
 const FEED_FRESH_MS = 15 * 60 * 1000;
 
 export interface OtelUsageDelta {
@@ -142,34 +142,15 @@ export class OtelWatcher implements vscode.Disposable {
   }
 
   /**
-   * True while the feed is being written to *now* and has metered tokens.
+   * True while the feed is exporting token usage *now*.
    *
-   * `stats.metrics > 0` alone is not evidence of anything: it is cumulative and
-   * stays true for ever, so a feed that stopped — or one carrying only
-   * non-token metrics — would keep telemetry authoritative and silently
-   * suppress the transcript watcher. Freshness comes from the file's own
-   * modification time, which is the exporter's heartbeat.
+   * General feed activity is not evidence that the feed can meter: a writer can
+   * export logs or non-token metrics forever after token usage has stopped. Only
+   * the timestamp on a token-usage metric can keep telemetry authoritative.
    */
   get producing(): boolean {
-    const feed = this.resolveFeedPath();
-    if (!feed) {
-      return false;
-    }
-    let mtimeMs: number;
-    try {
-      const stat = fs.statSync(feed);
-      if (!stat.isFile()) {
-        return false;
-      }
-      mtimeMs = stat.mtimeMs;
-    } catch {
-      return false;
-    }
-    if (Date.now() - mtimeMs > FEED_FRESH_MS) {
-      return false;
-    }
-    const totals = this.rollup.tokenTotals();
-    return totals.input + totals.output > 0;
+    const lastTokenUsageAtMs = this.rollup.stats.lastTokenUsageAtMs;
+    return lastTokenUsageAtMs > 0 && Date.now() - lastTokenUsageAtMs <= FEED_FRESH_MS;
   }
 
   get observedTokens(): number {
