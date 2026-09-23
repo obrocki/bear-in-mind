@@ -183,6 +183,8 @@ const REQUIRED = [
   'extension/dist/extension.js',
   'extension/media/main.js',
   'extension/media/style.css',
+  'extension/media/dashboard.js',
+  'extension/media/dashboard.css',
   'extension/media/icon.png',
   'extension/media/bear.svg',
   'extension/readme.md',

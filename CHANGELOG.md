@@ -1,5 +1,75 @@
 # Change Log
 
+## Unreleased
+
+- **The ice now measures the context window.** It used to be cumulative lifetime
+  tokens divided by a number you typed into `iceberg.tokenBudget`, which was the
+  one arbitrary figure left in the product. `copilot_chat.request.max_prompt_tokens`
+  rides on every `chat` span, so the berg can track something real instead: how
+  much of the model's context window the current session is using. It needs no
+  configuring, it climbs through an agent turn as context accumulates, and it
+  refreezes by itself when a session ends or the context is summarised. Cumulative
+  burn against the budget remains the fallback until the trace store is connected,
+  and the panel always says which of the two you are looking at.
+- **Bear in Mind now meters from OpenTelemetry.** Copilot Chat can emit traces,
+  metrics and events following the
+  [GenAI semantic conventions](https://github.com/microsoft/vscode-copilot-chat/blob/main/docs/monitoring/agent_monitoring.md),
+  which is a documented, supported interface — unlike the private chat
+  transcript format the meter has been reverse-engineering. When telemetry is
+  reporting it holds the meter, and the chat transcripts fall back to being the
+  safety net for when it is not. Run **Iceberg: Connect Copilot Telemetry…** to
+  set it up.
+- **The two sources are reconciled, not added.** They observe the same traffic,
+  so summing them would double every number. They share one ledger and only
+  whichever is authoritative charges it; handing over mid-flight carries the
+  balance, so the ice never jumps. Both keep running either way, which is what
+  makes the drift readout on the dashboard possible: it shows what each source
+  saw over the window in which both were watching, and says plainly whether
+  they agree.
+- **New: a cost, speed and quality dashboard.** Three sections — **01 Cost** in
+  tokens, **02 Speed** in session duration, **03 Quality** from PR and IDE
+  signals. Open it with **Iceberg: Open Token Dashboard**, or from the new
+  sidebar view. Sections with no data say so and name the signal that is
+  missing, rather than showing a confident zero.
+- **Quality includes what you actually did.** Thumbs up and down
+  (`copilot_chat.user.feedback.count`) get their own block with a positive rate,
+  alongside `copilot_chat.user.action.count` — how many responses were applied,
+  inserted, copied or followed up. Votes are the explicit signal and engagement
+  is the implicit one; copying or applying an answer costs something, so both are
+  shown rather than collapsed into a single score.
+- **Two telemetry sources, because neither is sufficient alone.** The local
+  trace store (`agent-traces.db`) carries real spans with exact session timings
+  and the context-window limit, and runs happily beside an OTLP collector you
+  already use. The JSON-lines file feed carries the metrics and log records the
+  quality section is built from, but *replaces* your exporter — setting
+  `outfile` forces `exporterType` to `file` upstream. The connect command
+  explains the trade-off and asks before replacing anything.
+- **Removed the manual accounting controls.** Telemetry reports consumption
+  exactly and automatically, so **Budget…**, **Refreeze**, **Add Tokens
+  Manually…** and **Count Selection as Prompt Tokens** no longer earn their
+  place. The buttons are gone from the habitat panel and the commands are gone
+  from the palette. `iceberg.tokenBudget` remains as a setting because the
+  fallback melt needs a denominator, but it is no longer something to enter.
+- **Refreezing is automatic now.** A cumulative counter going backwards means
+  the feed restarted, so the meter re-baselines itself rather than charging a
+  negative delta or billing the same tokens twice. That was the only thing the
+  manual refreeze was really for.
+- **Spans in the file feed are skipped on purpose.** Since OpenTelemetry JS SDK
+  v2 the span implementation keeps its state in private class fields, which
+  `JSON.stringify` cannot see, so every span in the file feed serialises to
+  `{}`. Verified against `@opentelemetry/sdk-trace-node` 2.11.0. That is why
+  exact timings and context headroom need the SQLite store, and why the dashboard
+  counts skipped spans instead of pretending they were not there.
+- **Fixed: the screenshot harness was rendering blank scenes.** `tools/shot.html`
+  reproduces the webview markup by hand, so the HUD changes left `main.js`
+  calling `addEventListener` on a button that was not there — which threw before
+  the first frame and produced an empty canvas. The renderer now treats every
+  HUD control as optional, and the harness was brought back in step.
+- **There are tests now.** `npm test` covers the parsing and aggregation against
+  a fixture produced by driving the real OpenTelemetry SDK through exporters
+  that replicate Copilot Chat's own, so the record shapes under test are the
+  shapes the extension will actually meet.
+
 ## 0.4.0
 
 - **New activity bar icon.** The sidebar icon is now the bear's face with a

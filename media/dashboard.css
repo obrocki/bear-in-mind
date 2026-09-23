@@ -1,0 +1,417 @@
+/* Bear in Mind — cost / speed / quality dashboard.
+   Deliberately its own stylesheet: the habitat HUD is a thin strip under a
+   canvas, this is a document. Shared variables would only couple them. */
+
+:root {
+  color-scheme: dark;
+  --ink: #e6edf3;
+  --muted: #8b949e;
+  --faint: #6e7681;
+  --rule: rgba(255, 255, 255, 0.09);
+  --ground: #0d1117;
+  --raised: rgba(255, 255, 255, 0.025);
+  --cost: #38d0ee;
+  --speed: #4ade80;
+  --quality: #f5c451;
+  --warn: #fb7185;
+  --mono: var(--vscode-editor-font-family, ui-monospace, 'Cascadia Mono', monospace);
+  --sans: var(--vscode-font-family, system-ui, sans-serif);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+}
+
+body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 24px 26px;
+}
+
+/* ------------------------------------------------------------------- grid --- */
+
+.sections {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+}
+
+.section {
+  padding: 0 22px;
+  border-left: 1px solid var(--rule);
+  min-width: 0;
+}
+
+.section:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.section:last-child {
+  padding-right: 0;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.numeral {
+  font: 700 clamp(20px, 2.4vw, 28px) / 1 var(--mono);
+  letter-spacing: -1px;
+}
+
+.section h2 {
+  margin: 0;
+  font: 700 clamp(13px, 1.4vw, 17px) / 1.2 var(--sans);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.hypothesis {
+  margin: 0 0 16px;
+  font: 400 12px/1.3 var(--mono);
+}
+
+.section[data-key='cost'] .numeral,
+.section[data-key='cost'] .hypothesis {
+  color: var(--cost);
+}
+.section[data-key='speed'] .numeral,
+.section[data-key='speed'] .hypothesis {
+  color: var(--speed);
+}
+.section[data-key='quality'] .numeral,
+.section[data-key='quality'] .hypothesis {
+  color: var(--quality);
+}
+
+/* ------------------------------------------------------------------ figures - */
+
+.headline {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 3px;
+}
+
+.headline .value {
+  font: 700 clamp(22px, 2.9vw, 34px) / 1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.5px;
+}
+
+.headline .unit {
+  font: 400 11px/1 var(--mono);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.headline-note {
+  margin: 0 0 14px;
+  font: 400 11px/1.4 var(--mono);
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 0 0 16px;
+}
+
+.stat {
+  min-width: 0;
+}
+
+.stat dt {
+  margin: 0 0 2px;
+  font: 400 10px/1.3 var(--mono);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat dd {
+  margin: 0;
+  font: 700 14px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat dd .qualifier {
+  font-weight: 400;
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.4px;
+}
+
+/* An estimate read off histogram buckets, not measured from a span. */
+.stat[data-estimate='true'] dd::after {
+  content: '≈';
+  margin-left: 4px;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.viz {
+  margin: 0 0 16px;
+}
+
+.viz svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.viz-caption {
+  margin: 5px 0 0;
+  font: 400 10px/1.4 var(--mono);
+  color: var(--faint);
+}
+
+/* ----------------------------------------------------------------- listings - */
+
+.breakdown {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.breakdown li {
+  display: grid;
+  /* minmax(0, …) rather than 1fr: a grid track's implicit min-content floor
+     otherwise stops long model and tool names from ellipsing, and the row
+     pushes the whole column wider than the panel. */
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  font: 400 11px/1.3 var(--mono);
+}
+
+.breakdown .name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.breakdown .amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.breakdown .track {
+  grid-column: 1 / -1;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.breakdown .track span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+/* -------------------------------------------------------------- empty state - */
+
+.empty {
+  border: 1px dashed var(--rule);
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.empty p {
+  margin: 0 0 8px;
+  font: 400 11px/1.55 var(--sans);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.empty p:last-child {
+  margin-bottom: 0;
+}
+
+.missing {
+  margin: 0;
+  font: 400 10px/1.5 var(--mono);
+  color: var(--faint);
+}
+
+/* ---------------------------------------------------------------- feedback - */
+
+.feedback {
+  margin-bottom: 4px;
+}
+
+.votes {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.vote {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.vote .glyph {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.vote .tally {
+  font: 700 17px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.vote.up {
+  color: var(--speed);
+}
+
+.vote.down {
+  color: var(--warn);
+}
+
+.vote-rate {
+  margin-left: auto;
+  font: 400 10px/1.3 var(--mono);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* ----------------------------------------------------------------- banner --- */
+
+.banner {
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--cost);
+  background: var(--raised);
+  padding: 14px 16px;
+  margin: 0 0 22px;
+}
+
+.banner h3 {
+  margin: 0 0 6px;
+  font: 700 12px/1.3 var(--sans);
+}
+
+.banner p {
+  margin: 0 0 10px;
+  font: 400 11.5px/1.6 var(--sans);
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+.banner p:last-child {
+  margin-bottom: 0;
+}
+
+.banner code {
+  font: 400 11px/1.4 var(--mono);
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+}
+
+.banner[data-tone='warn'] {
+  border-left-color: var(--warn);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+button {
+  padding: 5px 11px;
+  font: 400 11px/1.5 var(--mono);
+  color: var(--vscode-button-foreground, #fff);
+  background: var(--vscode-button-background, #1f6feb);
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--vscode-button-hoverBackground, #388bfd);
+}
+
+button.secondary {
+  color: var(--vscode-button-secondaryForeground, #c9d1d9);
+  background: var(--vscode-button-secondaryBackground, #21262d);
+}
+
+button.secondary:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #30363d);
+}
+
+button:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #4d9cff);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ footer -- */
+
+footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+footer .provenance {
+  margin: 0;
+  font: 400 10px/1.6 var(--mono);
+  color: var(--faint);
+}
+
+/* ----------------------------------------------------------------- narrow --- */
+
+@media (max-width: 860px) {
+  body {
+    padding: 14px 14px 20px;
+  }
+
+  .sections {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .section {
+    padding: 18px 0 0;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+  }
+
+  .section:first-child {
+    padding-top: 0;
+    border-top: none;
+  }
+
+  .section:last-child {
+    padding-right: 0;
+  }
+}

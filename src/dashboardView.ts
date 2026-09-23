@@ -1,15 +1,18 @@
 import * as vscode from 'vscode';
-import type { TokenMeter, UsageSnapshot } from './tokenMeter';
+import type { DashboardSnapshot } from './otelSummary';
 
-/** Shared HTML/plumbing for both the sidebar view and the editor-tab panel. */
-class HabitatHost implements vscode.Disposable {
+/** Produces the current snapshot on demand, so the host owns no state. */
+export type SnapshotSource = () => DashboardSnapshot;
+
+/** Shared plumbing for the dashboard, in an editor tab or in the sidebar. */
+class DashboardHost implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
     private readonly webview: vscode.Webview,
     private readonly extensionUri: vscode.Uri,
-    meter: TokenMeter,
-    private readonly compact: boolean
+    private readonly snapshot: SnapshotSource,
+    onChange: vscode.Event<unknown>
   ) {
     webview.options = {
       enableScripts: true,
@@ -18,25 +21,27 @@ class HabitatHost implements vscode.Disposable {
     webview.html = this.html();
 
     this.disposables.push(
-      meter.onDidChange((s) => this.push(s)),
+      onChange(() => this.push()),
       webview.onDidReceiveMessage((msg: { type?: string }) => {
         switch (msg?.type) {
           case 'ready':
-            this.push(meter.snapshot());
+            this.push();
             break;
-          case 'dashboard':
-            void vscode.commands.executeCommand('iceberg.openDashboard');
+          case 'connect':
+            void vscode.commands.executeCommand('iceberg.connectTelemetry');
+            break;
+          case 'diagnostics':
+            void vscode.commands.executeCommand('iceberg.telemetryDiagnostics');
             break;
           default:
             break;
         }
       })
     );
-    this.push(meter.snapshot());
   }
 
-  push(state: UsageSnapshot): void {
-    void this.webview.postMessage({ type: 'state', state });
+  push(): void {
+    void this.webview.postMessage({ type: 'snapshot', snapshot: this.snapshot() });
   }
 
   private uri(...parts: string[]): vscode.Uri {
@@ -45,8 +50,8 @@ class HabitatHost implements vscode.Disposable {
 
   private html(): string {
     const nonce = makeNonce();
-    const script = this.uri('media', 'main.js');
-    const style = this.uri('media', 'style.css');
+    const script = this.uri('media', 'dashboard.js');
+    const style = this.uri('media', 'dashboard.css');
     const csp = [
       `default-src 'none'`,
       `img-src ${this.webview.cspSource} data:`,
@@ -56,38 +61,21 @@ class HabitatHost implements vscode.Disposable {
     ].join('; ');
 
     return `<!DOCTYPE html>
-<html lang="en" data-compact="${this.compact}">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link href="${style}" rel="stylesheet" />
-<title>Iceberg</title>
+<title>Copilot cost, speed and quality</title>
 </head>
 <body>
-  <div id="stage">
-    <canvas id="scene"></canvas>
-    <div id="melted" class="badge" hidden>THE ICE IS GONE</div>
-  </div>
-  <div id="hud">
-    <div class="row">
-      <span id="bearName" class="name">Nanuq</span>
-      <span id="pct" class="pct">100%</span>
-    </div>
-    <div class="bar" title="Ice remaining"><div id="fill"></div></div>
-    <div class="row sub">
-      <span id="basis">budget remaining</span>
-      <span id="split">in 0 · out 0</span>
-    </div>
-    <div class="row sub">
-      <span id="tokens">0 / 1M tokens</span>
-    </div>
-    <div class="row sub">
-      <span id="source" class="source" title="Where the numbers come from">—</span>
-      <button id="btnDashboard" type="button" title="Open the cost, speed and quality dashboard">Dashboard →</button>
-    </div>
-    <p class="note">Bear in Mind can’t cap or reduce your spend — it only makes it visible. The bear is relying on your compassion for that.</p>
-  </div>
+  <div id="banner"></div>
+  <div class="sections" id="sections"></div>
+  <footer>
+    <p class="provenance" id="provenance"></p>
+  </footer>
+
   <script nonce="${nonce}" src="${script}"></script>
 </body>
 </html>`;
@@ -98,18 +86,18 @@ class HabitatHost implements vscode.Disposable {
   }
 }
 
-export class IcebergViewProvider implements vscode.WebviewViewProvider {
-  static readonly viewType = 'iceberg.habitat';
-  private host: HabitatHost | undefined;
+export class DashboardViewProvider implements vscode.WebviewViewProvider {
+  static readonly viewType = 'iceberg.dashboard';
+  private host: DashboardHost | undefined;
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly meter: TokenMeter
+    private readonly snapshot: SnapshotSource,
+    private readonly onChange: vscode.Event<unknown>
   ) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
-    view.webview.options = { enableScripts: true };
-    const host = new HabitatHost(view.webview, this.extensionUri, this.meter, true);
+    const host = new DashboardHost(view.webview, this.extensionUri, this.snapshot, this.onChange);
     this.host = host;
     view.onDidDispose(() => {
       host.dispose();
@@ -126,15 +114,19 @@ export class IcebergViewProvider implements vscode.WebviewViewProvider {
 
 let panel: vscode.WebviewPanel | undefined;
 
-export function openHabitatPanel(extensionUri: vscode.Uri, meter: TokenMeter): void {
+export function openDashboardPanel(
+  extensionUri: vscode.Uri,
+  snapshot: SnapshotSource,
+  onChange: vscode.Event<unknown>
+): void {
   if (panel) {
     panel.reveal(panel.viewColumn ?? vscode.ViewColumn.Active);
     return;
   }
   panel = vscode.window.createWebviewPanel(
-    'iceberg.habitatPanel',
-    'Iceberg',
-    { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
+    'iceberg.dashboardPanel',
+    'Copilot: Cost, Speed, Quality',
+    { viewColumn: vscode.ViewColumn.Active },
     {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -142,7 +134,7 @@ export function openHabitatPanel(extensionUri: vscode.Uri, meter: TokenMeter): v
     }
   );
   panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'bear.svg');
-  const host = new HabitatHost(panel.webview, extensionUri, meter, false);
+  const host = new DashboardHost(panel.webview, extensionUri, snapshot, onChange);
   panel.onDidDispose(() => {
     host.dispose();
     panel = undefined;

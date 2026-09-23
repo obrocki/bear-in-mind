@@ -130,6 +130,17 @@ body {
   padding-top: 1px;
 }
 
+/* Where the numbers came from. Dim until OpenTelemetry is actually feeding the
+   meter, so the difference is visible without being loud about it. */
+.source {
+  opacity: 0.75;
+}
+
+.source[data-live='true'] {
+  color: var(--ice-accent, #9fd8ff);
+  opacity: 1;
+}
+
 /* The extension has no way to block a request or lower a bill. Saying so where
    the numbers are is the only honest place to put it. */
 .note {
@@ -148,6 +159,11 @@ button {
   border: 1px solid transparent;
   border-radius: 2px;
   cursor: pointer;
+}
+
+/* A button sitting inline with a stat should hug its label, not fill the row. */
+.sub button {
+  flex: 0 0 auto;
 }
 
 button:hover {

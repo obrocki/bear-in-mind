@@ -12,10 +12,11 @@
 
 ---
 
-Bear in Mind turns your Copilot token consumption into something you can actually
-feel. It watches how many tokens you burn, and shrinks a hand-drawn arctic scene
-to match. No dashboard, no numbers to interpret — just a bear with progressively
-less to stand on.
+Bear in Mind turns Copilot's token consumption into something you can feel. It
+watches what you burn and shrinks a hand-drawn arctic scene to match. Nothing to
+configure and nothing to enter — just a bear with progressively less to stand on.
+When you want the actual numbers, there is
+[a dashboard](#the-dashboard) for cost, speed and quality.
 
 > [!NOTE]
 > **Bear in Mind has no enforcement mechanism.** It cannot cap your spend,
@@ -33,7 +34,7 @@ less to stand on.
 ## The melt
 
 The iceberg's width, height, and the strip of ice the bear can walk on all scale
-with your remaining budget. So does everything else in the scene.
+with how much room you have left. So does everything else in the scene.
 
 ![Four panels showing the iceberg at 100%, 60%, 28% and 0% ice](docs/media/melt-progression.png)
 
@@ -45,83 +46,163 @@ with your remaining budget. So does everything else in the scene.
 | **15–1%** | Scorched sky. A floe barely wider than the bear. It stops roaming and starts shivering. |
 | **0%** | `THE ICE IS GONE`. |
 
+### What the ice measures
+
+Whichever of these the telemetry can tell it:
+
+- **Context window headroom** — how much of the model's context window the
+  current session is using, from `copilot_chat.request.max_prompt_tokens` against
+  the prompt size. This is the default whenever it is available. It needs no
+  configuring, it climbs through an agent turn as context accumulates, and it
+  refreezes on its own when a session ends or the context is summarised.
+- **Cumulative burn against `iceberg.tokenBudget`** — the fallback, used until
+  the [trace store](#connecting-the-telemetry) is connected. Lifetime tokens
+  against a fixed 5M default.
+
+The panel always says which one you are looking at, so a bare percentage is never
+ambiguous.
+
+## The dashboard
+
+The iceberg answers *how much room is left*. The dashboard answers *why*.
+
+![The dashboard: three columns headed 01 Cost, 02 Speed and 03 Quality, showing token totals by model, session latency percentiles, and edit acceptance with thumbs up and down](docs/media/dashboard.png)
+
+| | Section | Measures | Shows |
+| --- | --- | --- | --- |
+| `01` | **Cost** | Tokens | Input, output, cache-read and reasoning tokens split by model, premium credits, burn rate, and burn over time. |
+| `02` | **Speed** | Session duration | Median and 95th-percentile session length, model call latency, time to first token, turns per session, slowest tools. |
+| `03` | **Quality** | PR + IDE signals | Edit accept/reject, lines added and removed, how much generated code survives, pull requests, tool success rate, thumbs up/down, and what you did with responses. |
+
+Open it with **Iceberg: Open Token Dashboard**, or from the *Cost, Speed,
+Quality* view in the sidebar. Any section without data says so and names the
+signal it is waiting for, rather than showing a confident zero.
+
 ## Install
 
-Grab the `.vsix` from the [latest release](https://github.com/obrocki/bear-in-mind/releases)
-and install it:
+Grab the `.vsix` from the [latest release](https://github.com/obrocki/bear-in-mind/releases):
 
 ```bash
 code --install-extension bear-in-mind-*.vsix
 ```
 
-Every merge to `main` also publishes a fresh build to the rolling
-[`dev` pre-release](https://github.com/obrocki/bear-in-mind/releases/tag/dev)
-if you want the newest ice.
+Every merge to `main` also refreshes the rolling
+[`dev` pre-release](https://github.com/obrocki/bear-in-mind/releases/tag/dev).
+Or build it yourself with `npm install && npm run vsix`, or press `F5` for an
+Extension Development Host.
 
-Or build it yourself:
+Then open the 🧊 icon in the activity bar.
 
-```bash
-npm install
-npm run vsix
-code --install-extension bear-in-mind-*.vsix
-```
-
-Or press `F5` in the repo to launch an Extension Development Host.
-
-Then open the 🧊 icon in the activity bar. For a larger view, run
-**Iceberg: Open Habitat in Editor**.
-
-| The sidebar view | **Iceberg: Open Habitat in Editor** for the wide view |
+| The sidebar panel | **Iceberg: Open Habitat in Editor** |
 | --- | --- |
 | ![Sidebar panel at 100% ice](docs/media/panel-full.png) | ![The habitat open in an editor tab at 38% ice](docs/media/editor-view.png) |
 
+## Connecting the telemetry
+
+Copilot Chat can emit traces, metrics and events over
+[OpenTelemetry](https://github.com/microsoft/vscode-copilot-chat/blob/main/docs/monitoring/agent_monitoring.md),
+following the GenAI semantic conventions. It is **off by default**. Run
+**Iceberg: Connect Copilot Telemetry…** and pick a source:
+
+| Source | Unlocks | Cost |
+| --- | --- | --- |
+| **Local trace store** — `agent-traces.db` | Sections 01 and 02, exact session timings, and context-window headroom. | None. It registers an *extra* span processor, so it runs alongside any OTLP collector you already use. |
+| **File feed** — a JSON-lines file | All three sections. Only this carries the log records section 03 needs. | It **replaces** your exporter. Setting `outfile` forces `exporterType` to `file`, so a collector you were exporting to stops receiving data. |
+| **Both** | Everything. | Same caveat as the file feed. |
+
+The command warns before replacing anything and never changes an exporter
+silently. Reload the window afterwards so Copilot Chat picks it up.
+
+![The dashboard before telemetry is connected, showing a banner offering to connect and each section explaining what it is waiting for](docs/media/dashboard-empty.png)
+
+Everything stays on your machine — both sources are local files, and Bear in Mind
+has no network access.
+
+### What gets captured, and from where
+
+Bear in Mind reads numbers and labels only. It never reads prompt or response
+text, even when `captureContent` puts it in the feed.
+
+| Signal | Instrument | Source | Used for |
+| --- | --- | --- | --- |
+| Prompt / completion tokens | `gen_ai.client.token.usage` | File feed | 01, and the meter |
+| Cache-read / reasoning tokens | `gen_ai.usage.cache_read.input_tokens`, `…reasoning_tokens` | Trace store | 01 |
+| Model names | `gen_ai.request.model`, `gen_ai.response.model` | Both | 01 |
+| Premium credits | `copilotCredits` | Chat transcripts | 01 |
+| Context window size | `copilot_chat.request.max_prompt_tokens` | Trace store | The ice |
+| Session / call durations | `invoke_agent`, `chat`, `execute_tool` span times | Trace store | 02 |
+| Time to first token | `copilot_chat.time_to_first_token` | Both | 02 |
+| Turns per session | `copilot_chat.agent.turn.count` | Both | 02 |
+| Tool calls and latency | `copilot_chat.tool.call.count`, `…duration` | Both | 02, 03 |
+| Edit accept / reject | `copilot_chat.edit.acceptance.count` | File feed | 03 |
+| Lines added / removed | `copilot_chat.lines_of_code.count` | File feed | 03 |
+| Edit survival | `copilot_chat.edit.survival.four_gram`, `…no_revert` | File feed | 03 |
+| Pull requests | `copilot_chat.pull_request.count` | File feed | 03 |
+| Thumbs up / down | `copilot_chat.user.feedback.count` | File feed | 03 |
+| Copy / insert / apply | `copilot_chat.user.action.count` | File feed | 03 |
+
+> [!NOTE]
+> **Spans in the file feed are deliberately skipped.** Since OpenTelemetry JS SDK
+> v2, span objects keep their state in private class fields, which
+> `JSON.stringify` cannot see — so every span written to the file feed is
+> literally `{}`. That is not a bug in Bear in Mind, and it is why exact timings
+> and context headroom need the trace store. The dashboard reports how many spans
+> it skipped, so the gap is visible rather than mysterious.
+
 ## How tokens get counted
 
-**Regular Copilot Chat is metered automatically.** You do not have to do
-anything — Ask, Edit and Agent requests all count, whichever model you use.
+**You do not have to do anything.** Ask, Edit and Agent requests all count,
+whichever model you use. There is nothing to enter and nothing to reset.
 
-VS Code records the exact per-request counters (`promptTokens`,
-`completionTokens` and `copilotCredits`) in the chat transcripts it keeps under
+There are two independent sources, and Bear in Mind prefers the documented one:
 
-```
-<user-data>/User/globalStorage/emptyWindowChatSessions/*.jsonl
-<user-data>/User/workspaceStorage/<id>/chatSessions/*.jsonl
-```
+- **OpenTelemetry**, once connected, is authoritative. The
+  `gen_ai.client.token.usage` instrument is *cumulative*, so each export is a
+  complete running snapshot rather than an increment. The meter charges the
+  growth, which makes the accounting idempotent — re-reading the same file, or a
+  duplicated export, adds nothing.
+- **Chat transcripts** are the fallback, and what the extension used exclusively
+  before. VS Code records exact per-request counters in append-only `.jsonl` logs
+  under `globalStorage/emptyWindowChatSessions/` and
+  `workspaceStorage/<id>/chatSessions/`.
 
-Bear in Mind tails those append-only logs and charges the numbers Copilot itself
-reported. No estimating, no tokenizer guesswork. This is the mechanism because
-there is no VS Code API that lets one extension observe another's language-model
-traffic — if you know of one, please open an issue.
+### They are reconciled, never added
+
+Both sources watch the same traffic, so summing them would double every figure.
+They share one ledger and only whichever is authoritative may charge it.
+Switching between them costs nothing: the ledger is a running total of what has
+already been charged, so a handover carries the balance and the ice does not jump.
+
+Both keep running regardless, which is what makes the dashboard's drift readout
+possible — it compares what each source saw over the window in which both were
+watching, and says plainly whether they agree. Two differences are expected:
+OpenTelemetry additionally reports cache-read and reasoning tokens, which the
+transcripts have no field for, and the transcripts uniquely report
+`copilotCredits`, which OpenTelemetry does not emit. Credits therefore always
+come from the transcripts.
 
 **Details worth knowing**
 
-- **Only growth is charged.** Counters are cumulative per request and get
-  rewritten as an agent turn works through its tool calls — one real request
-  climbed from 23,516 to 102,515 prompt tokens over a single turn.
-- **History is never charged.** On first run your existing transcripts are
-  adopted as a baseline. When VS Code seeds a continuation transcript with a
-  snapshot of an earlier session, that snapshot is treated as history too.
-  Installing this extension will not instantly melt your iceberg.
+- **Only growth is charged.** Transcript counters are cumulative per request and
+  get rewritten as an agent turn works through its tool calls — one real request
+  climbed from 23,516 to 102,515 prompt tokens in a single turn.
+- **History is never charged.** On first run, existing transcripts and telemetry
+  are adopted as a baseline. Installing this will not instantly melt your berg.
+- **It re-baselines itself.** A cumulative counter going backwards means the feed
+  restarted, so the meter adopts the new baseline rather than charging a negative
+  delta or billing the same tokens twice. That is why there is no refreeze button.
 - **Agent mode is expensive.** It resends context every turn, so prompt tokens
-  dominate roughly 10:1 and a single heavy session can be 2M+ tokens. That is
-  why the default budget is 5,000,000.
-- **Nothing leaves your machine.** No network access; prompt and response text is
-  never read. See [SECURITY.md](SECURITY.md).
-- Turn it all off with `"iceberg.trackCopilotChat": false`.
+  dominate roughly 10:1 and a heavy session can be 2M+ tokens.
+- **Nothing leaves your machine.** See [SECURITY.md](SECURITY.md).
 
 ### Other ways to burn ice
 
 | Source | What it counts |
 | --- | --- |
-| **Copilot Chat** *(automatic)* | Exact prompt + completion tokens and premium-request credits, read from VS Code's own transcripts. |
 | **`@iceberg` chat participant** | Real prompt + completion tokens via the model's own `countTokens`. Ask the bear anything. |
 | **Extension API** | Other extensions call `reportUsage({ input, output })`. |
 | **`iceberg.report` command** | Usable from tasks, scripts, or other extensions. |
-| **Iceberg: Count Selection as Prompt Tokens** | Tokenizes the current selection (or file) and burns it. |
-| **Iceberg: Add Tokens Manually…** | Accepts `2500` or `2000/500` (input/output). |
 | **Iceberg: Toggle Meltdown Demo** | Burns the whole budget over ~60s so you can watch the melt. |
-
-Reporting from another extension:
 
 ```ts
 const bear = vscode.extensions.getExtension('obrocki.bear-in-mind');
@@ -131,33 +212,47 @@ api?.reportUsage({ input: 1843, output: 512 });
 api?.onDidChangeUsage((s) => console.log(s.health)); // 1 = pristine, 0 = melted
 ```
 
-Or without a dependency on the API shape:
+Or without depending on the API shape:
 
 ```ts
 vscode.commands.executeCommand('iceberg.report', { input: 1200, output: 340 });
 ```
 
-Usage is persisted in global state, so the iceberg stays melted across restarts
-until you refreeze it.
-
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `Iceberg: Open Habitat in Editor` | Big view in an editor tab. |
-| `Iceberg: Refreeze (Reset Usage)` | Zeroes the meter and re-baselines the chat watcher, so a reset never re-imports what you already burned. |
-| `Iceberg: Set Token Budget…` | How many tokens equal a fully melted berg. |
-| `Iceberg: Add Tokens Manually…` | Burn a specific amount. |
-| `Iceberg: Count Selection as Prompt Tokens` | Tokenize and burn the selection. |
+| `Iceberg: Open Token Dashboard` | Cost, speed and quality in one view. |
+| `Iceberg: Open Habitat in Editor` | The iceberg, big, in an editor tab. |
+| `Iceberg: Connect Copilot Telemetry…` | Turn on Copilot's OpenTelemetry and point it somewhere local. |
+| `Iceberg: Telemetry Diagnostics` | What the feed is producing, and whether the two sources agree. |
 | `Iceberg: Name the Bear…` | Pick a name from a list, or type your own. |
-| `Iceberg: Show Usage Stats` | Totals, credits, and whether auto-tracking is on. |
+| `Iceberg: Show Usage Stats` | Totals, credits, and which source holds the meter. |
 | `Iceberg: Toggle Meltdown Demo` | Watch the whole melt in a minute. |
+
+## Settings
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `iceberg.otel.enabled` | `true` | Read the OpenTelemetry Copilot Chat emits. |
+| `iceberg.otel.authoritative` | `true` | Let telemetry hold the meter when it is reporting. Off = transcripts stay authoritative and telemetry is display-only. |
+| `iceberg.otel.feedPath` | `""` | Path to the JSON-lines feed. Empty follows Copilot's `outfile`. |
+| `iceberg.otel.tracesDbPath` | `""` | Path to `agent-traces.db`. Empty finds it automatically. |
+| `iceberg.otel.pollIntervalMs` | `4000` | How often to check the telemetry feed. |
+| `iceberg.tokenBudget` | `5000000` | Denominator for the fallback melt. Consumption itself is always measured, never entered. |
+| `iceberg.trackCopilotChat` | `true` | Meter chat transcripts as the fallback source. |
+| `iceberg.chatPollIntervalMs` | `4000` | How often to check the transcripts. |
+| `iceberg.countInputTokens` | `true` | Count prompt tokens. |
+| `iceberg.countOutputTokens` | `true` | Count completion tokens. |
+| `iceberg.statusBar` | `true` | Show `❄ 62%` in the status bar. |
+| `iceberg.animate` | `true` | Animate. Off = static frame, near-zero CPU. |
+| `iceberg.pixelScale` | `0` | Pixel size. `0` auto-fits the panel. |
+| `iceberg.bearName` | `Nanuq` | Your bear's name. See [Naming the bear](#naming-the-bear). |
 
 ## Naming the bear
 
-The bear is called **Nanuq** by default — Inuit for "polar bear". Run
+The bear is **Nanuq** by default — Inuit for "polar bear". Run
 **Iceberg: Name the Bear…** to change it, or set `iceberg.bearName` directly.
-The picker suggests:
 
 | Arctic | Burn rate | Soft |
 | --- | --- | --- |
@@ -170,121 +265,93 @@ The picker suggests:
 
 Any string works; the list is a shortcut, not a whitelist.
 
-## Settings
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `iceberg.tokenBudget` | `5000000` | Tokens that melt the berg completely. |
-| `iceberg.trackCopilotChat` | `true` | Auto-meter regular Copilot Chat usage. |
-| `iceberg.chatPollIntervalMs` | `4000` | How often to check the transcripts. |
-| `iceberg.countInputTokens` | `true` | Count prompt tokens. |
-| `iceberg.countOutputTokens` | `true` | Count completion tokens. |
-| `iceberg.statusBar` | `true` | Show `❄ 62%` in the status bar. |
-| `iceberg.animate` | `true` | Animate. Off = static frame, near-zero CPU. |
-| `iceberg.pixelScale` | `0` | Pixel size. `0` auto-fits the panel. |
-| `iceberg.bearName` | `Nanuq` | Your bear's name. See [Naming the bear](#naming-the-bear). |
-
 ## Troubleshooting
 
 **The percentage never moves.**
-Run **Iceberg: Show Usage Stats** — it reports whether auto-tracking is on. Then
-open View → Output → **Iceberg**, which logs every batch of tokens charged. A
-silent channel means the watcher is not seeing new counters; check that
-`iceberg.trackCopilotChat` is `true` and that your VS Code build is recent enough
-to record token counts (1.130+).
+Run **Iceberg: Telemetry Diagnostics** — it reports which source holds the meter,
+how many records the feed produced, and how many it could not read. Then check
+View → Output → **Iceberg**, which logs every batch of tokens charged. A silent
+channel means neither watcher is seeing counters; check that at least one of
+`iceberg.otel.enabled` or `iceberg.trackCopilotChat` is `true`, and that your VS
+Code is recent enough to record token counts (1.130+).
 
-Note that an unlimited or unmetered Copilot plan makes no difference here —
-Bear in Mind counts the tokens VS Code records, not what you are billed. The ice
-melts either way. (And it never limits anything; see the note at the top.)
+An unlimited Copilot plan makes no difference — Bear in Mind counts tokens VS
+Code records, not what you are billed.
 
-**Every menu item and toolbar button appears twice.**
-It is installed twice. VS Code keys an extension on `publisher.name`, so any
-change to either half creates a *second* extension rather than upgrading the
-first — and the old copy stays. Both then claim the same view and commands,
-which doubles the menu and splits the token count between two meters. This has
-happened twice: the publisher changed from `local` to `obrocki` in 0.2.1, and
-the extension was renamed from `iceberg-copilot` to `bear-in-mind` in 0.4.0.
+**Section 03 Quality is empty but the others work.**
+You are on the local trace store only. Accept/reject, edit survival, pull
+requests and feedback votes are emitted as OpenTelemetry *log records*, and the
+trace store holds spans. Add the file feed — but read what the connect command
+says about replacing your exporter first.
 
-From 0.3.0 onward it detects a second copy and offers to remove it. On older
-versions, uninstall the stale copy by hand:
+**My OTLP collector stopped receiving data.**
+Setting `github.copilot.chat.otel.outfile` forces `exporterType` to `file`
+upstream, replacing the OTLP exporter. Clear `outfile` to get it back, and use
+the trace store instead — that one runs alongside a collector.
+
+**The dashboard says spans were skipped.**
+Expected, and counted rather than hidden. See the note
+[above](#what-gets-captured-and-from-where).
+
+**Every menu item appears twice.**
+It is installed twice. VS Code keys an extension on `publisher.name`, so changing
+either half creates a *second* extension rather than upgrading the first. Both
+claim the same view and commands, which doubles the menus and splits the count.
+From 0.3.0 it detects this and offers to remove the stale copy; on older versions:
 
 ```bash
 code --uninstall-extension local.iceberg-copilot
 code --uninstall-extension obrocki.iceberg-copilot
 ```
 
-Your settings and keybindings carry over untouched — the `iceberg.*` setting and
-command ids deliberately did not change in the rename.
-
-**It moves, but slower than I expected.**
-VS Code flushes transcripts lazily — usually within a minute. The default poll
-interval is 4 seconds on top of that.
+Your settings and keybindings carry over — the `iceberg.*` ids deliberately never
+changed.
 
 **It melted the moment I installed it.**
-It shouldn't; existing history is baselined. If it did, run **Iceberg: Refreeze**
-and please [open an issue](https://github.com/obrocki/bear-in-mind/issues) —
-that is a bug worth knowing about.
+It shouldn't; existing history is baselined on first run. If it did, please
+[open an issue](https://github.com/obrocki/bear-in-mind/issues).
 
-## Building the extension
-
-One command does everything, and it is the same one CI runs:
+## Building
 
 ```bash
 npm run vsix
 ```
 
-It typechecks, bundles with esbuild, packages with `vsce`, and then **reopens the
-archive and checks what actually shipped** — because a `.vsix` with a missing
-`dist/extension.js` still packages "successfully" and only fails once someone
-installs it. It verifies that every required file is present, that no sources,
-source maps or `node_modules` leaked in, that every contributed command really
-exists in the bundle, and that every asset the manifest points at was packaged.
+Typechecks, bundles with esbuild, packages with `vsce`, then **reopens the
+archive and checks what actually shipped** — because a `.vsix` missing
+`dist/extension.js` still packages "successfully" and only fails once installed.
+It verifies every required file is present, that no sources or `node_modules`
+leaked in, that every contributed command exists in the bundle, and that every
+asset the manifest points at was packaged.
 
 ```
-▸ typecheck  tsc --noEmit · 788 ms
-▸ bundle     esbuild --production · 124 ms
+▸ typecheck  tsc --noEmit · 159 ms
+▸ bundle     esbuild --production · 107 ms
 ▸ package    vsce package · 1541 ms
-▸ verify     11 entries · required files present · nothing leaked
-
-bear-in-mind-0.4.0.vsix  33.7 kB · 0.4.0 · obrocki.bear-in-mind
+▸ verify     13 entries · required files present · nothing leaked
 ```
 
-Inside VS Code it is the default build task — `Ctrl+Shift+B`,
-or **Tasks: Run Build Task** → **Build VSIX**. Run
-`node tools/build-vsix.js --help` for the flags (`--pre-release`, `--version`,
-`--label`, `--out-dir`, …).
-
-### On GitHub
-
-| Workflow | Trigger | Result |
-| --- | --- | --- |
-| **Build VSIX** | Every merge to `main` | A `.vsix` artifact on the run, and the rolling [`dev` pre-release](https://github.com/obrocki/bear-in-mind/releases/tag/dev) refreshed to match. |
-| **Build VSIX** | Actions tab → *Run workflow* | Same, on demand. Optionally stamp a version (`0.3.0`) or mark it as a Marketplace pre-release, without committing a version bump. |
-| **CI** | Every pull request | Builds and verifies on Linux, Windows and macOS, and attaches a `.vsix` to the run so a reviewer can install the branch. |
-| **Release** | Pushing a `v*` tag | Checks the tag matches `package.json`, attaches the `.vsix` to a GitHub release, and publishes to the Marketplace if a `VSCE_PAT` secret exists. |
-
-Builds that aren't tagged carry the commit in their file name —
-`bear-in-mind-0.4.0+3f2a1c9.vsix` — so two builds of the same version are
-still tellable apart.
+`npm test` covers the telemetry parsing and aggregation. `npm run check:docs`
+checks the markdown. Inside VS Code, `npm run vsix` is the default build task
+(`Ctrl+Shift+B`). See [CONTRIBUTING.md](CONTRIBUTING.md) for the architecture and
+the sharp edges.
 
 ## Notes on the rendering
 
 Everything is drawn at roughly 200×130 internal pixels with nearest-neighbour
 upscaling, capped at 30fps. The iceberg silhouette comes from a seeded
-value-noise profile that is terraced into flat facets, so the berg keeps its
-identity while it shrinks. Lighting is derived from the local surface slope,
-quantised to three levels, rather than from screen position — that is what makes
-it read as ice rather than as a hill. The bear's paws each sample their own
-column of ice, so it stands correctly on slopes and ledges.
+value-noise profile terraced into flat facets, so the berg keeps its identity
+while it shrinks. Lighting derives from local surface slope, quantised to three
+levels, rather than from screen position — that is what makes it read as ice
+rather than as a hill. The bear's paws each sample their own column of ice, so it
+stands correctly on slopes and ledges.
 
 Click the scene to make the bear hop.
 
 ## Contributing
 
 Bug reports, art, and better bear animation all welcome. See
-[CONTRIBUTING.md](CONTRIBUTING.md) — it documents the architecture and, more
-usefully, the several sharp edges in VS Code's transcript format that the
-accounting has to handle.
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
