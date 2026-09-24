@@ -704,7 +704,20 @@ describe('redacting endpoints', () => {
 
 describe('drift', () => {
   it('is pending until both sources have seen something', () => {
-    assert.equal(computeDrift(0, 0).pending, true);
+    for (const [otel, transcripts] of [[0, 0], [9961, 0], [0, 9961]]) {
+      const drift = computeDrift(otel, transcripts);
+      assert.equal(drift.pending, true);
+      assert.equal(drift.agreeing, true, 'missing observations must not flag divergence');
+      assert.equal(drift.otelObserved, otel);
+      assert.equal(drift.transcriptObserved, transcripts);
+    }
+  });
+
+  it('reports divergence once both sources have observations', () => {
+    const drift = computeDrift(9961, 100);
+    assert.equal(drift.pending, false);
+    assert.equal(drift.agreeing, false);
+    assert.equal(drift.deltaTokens, 9861);
   });
 
   it('tolerates the difference cache and reasoning tokens create', () => {

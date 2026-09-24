@@ -46,11 +46,12 @@ function dashboard() {
   });
   return {
     messages,
-    render(feed, rollup = new OtelRollup()) {
+    nodes,
+    render(feed, rollup = new OtelRollup(), drift = computeDrift(0, 0)) {
       const snapshot = buildSnapshot({
         rollup, spans: emptySpanDigest(), bearName: 'Nanuq', budget: 5000000, health: 1,
         totals: { input: 100, output: 10, credits: 0 }, source: 'otel', basis: 'budget',
-        drift: computeDrift(0, 0),
+        drift,
         feed: {
           watching: true, copilotOtelEnabled: true, jsonlActive: false, sqliteActive: false,
           lastRecordAtMs: 0, records: { metrics: 0, logs: 0, spans: 0, unknown: 0, malformed: 0 },
@@ -113,6 +114,30 @@ it('replaces waiting with quality data when a relevant metric arrives', () => {
   const quality = d.render(feed, rollup);
   assert.doesNotMatch(quality.textContent, /No quality signals|Connect telemetry/);
   assert.match(quality.textContent, /100% positive/);
+});
+
+it('replaces waiting with feedback from a standalone log event', () => {
+  const d = dashboard();
+  const feed = { jsonlPath: 'feed.jsonl', jsonlActive: true };
+  d.render(feed);
+  const rollup = new OtelRollup();
+  rollup.ingestLine(JSON.stringify({
+    _body: 'copilot_chat.user.feedback',
+    attributes: { rating: 'positive' }
+  }));
+  const section = d.render(feed, rollup);
+  assert.match(section.textContent, /100% positive/);
+  assert.doesNotMatch(section.textContent, /No quality signals|Connect telemetry/);
+});
+
+it('shows one-sided reconciliation as pending and later surfaces real divergence', () => {
+  const d = dashboard();
+  const feed = { jsonlPath: 'feed.jsonl', jsonlActive: true };
+  d.render(feed, new OtelRollup(), computeDrift(9961, 0));
+  assert.match(d.nodes.sections.textContent, /Reconciliation pending/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /differs from the chat transcripts/);
+  d.render(feed, new OtelRollup(), computeDrift(9961, 100));
+  assert.match(d.nodes.sections.textContent, /differs from the chat transcripts/);
 });
 
 it('renders standalone quality metrics instead of the empty state, including zero survival', () => {

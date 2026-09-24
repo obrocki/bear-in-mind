@@ -40,6 +40,9 @@ Node's test runner; feed tests use temporary files and renderer tests use a DOM 
   across eviction and rebuild the rollup after restart without recharging history.
 - Drop known content-bearing attributes at the parser boundary. Feed spans can
   serialize as `{}`; use the read-only trace store for exact timings.
+- Quality falls back to documented log events per instrument only when metrics
+  have no measurements. Keep compact event totals beyond the recent-event cap;
+  ignore branch-changed survival samples and never add events to matching metrics.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.

@@ -59,6 +59,10 @@ requests: accept/reject an edit or rate a response. A connected but empty Qualit
 section [waits for those signals](docs/media/dashboard-waiting.png); it does not
 require reconnecting.
 
+Quality uses cumulative metrics when present, otherwise documented edit,
+survival, feedback, cloud-session and tool-call events. Matching metrics and
+events are never added together; inference events alone are not quality signals.
+
 ## How tokens get counted
 
 Existing history becomes a baseline. Watchers charge only growth and persist
@@ -72,6 +76,8 @@ delta. Unrelated recent traffic can be absorbed; later `max()` reconciliation
 does not guarantee recovery. Treat totals as usage estimates, not billing records.
 
 Metering stays local. See [SECURITY.md](SECURITY.md) for data handling.
+Reconciliation stays pending until both watchers have observations; a missing
+transcript comparison is not reported as divergence.
 
 ## API
 

@@ -281,6 +281,8 @@ export class OtelRollup {
   private readonly sealed = new Map<string, Series>();
   private readonly sealedMarks = new Map<string, { value: number; count: number; aggKey: string }>();
   private readonly events: LogEvent[] = [];
+  /** Fixed instrument/outcome keys, independent of the bounded recent-event buffer. */
+  private readonly eventSeries = new Map<string, Series>();
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
 
@@ -319,6 +321,7 @@ export class OtelRollup {
         this.stats.logs++;
         const event = toLogEvent(record);
         if (event) {
+          this.absorbQualityEvent(event);
           this.events.push(event);
           if (this.events.length > MAX_EVENTS) {
             this.events.splice(0, this.events.length - MAX_EVENTS);
@@ -335,6 +338,78 @@ export class OtelRollup {
         break;
     }
     return kind;
+  }
+
+  private absorbQualityEvent(event: LogEvent): void {
+    const a = event.attributes;
+    const decision = (outcome: unknown) => {
+      if (outcome === 'accepted' || outcome === 'rejected') {
+        this.recordEventValue(EDIT_ACCEPTANCE, 1, { 'copilot_chat.edit.outcome': outcome });
+      }
+    };
+    switch (event.name) {
+      case 'copilot_chat.edit.feedback':
+        decision(a.outcome);
+        break;
+      case 'copilot_chat.edit.hunk.action':
+        decision(a.outcome);
+        if (a.outcome === 'accepted') {
+          for (const type of ['added', 'removed']) {
+            const value = a[`lines_${type}`];
+            if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+              this.recordEventValue(LINES_OF_CODE, value, { type });
+            }
+          }
+        }
+        break;
+      case 'copilot_chat.inline.done':
+        if (a.accepted === true || a.accepted === 'true') {
+          decision('accepted');
+        } else if (a.accepted === false || a.accepted === 'false') {
+          decision('rejected');
+        }
+        break;
+      case 'copilot_chat.edit.survival':
+        if (a.did_branch_change === true || a.did_branch_change === 'true') {
+          break;
+        }
+        for (const [attribute, metric] of [
+          ['survival_rate_four_gram', SURVIVAL_FOUR_GRAM],
+          ['survival_rate_no_revert', SURVIVAL_NO_REVERT]
+        ]) {
+          const value = a[attribute];
+          if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1) {
+            this.recordEventValue(metric, value);
+          }
+        }
+        break;
+      case 'copilot_chat.user.feedback':
+        if (a.rating === 'positive' || a.rating === 'negative') {
+          this.recordEventValue(USER_FEEDBACK, 1, { rating: a.rating });
+        }
+        break;
+      case 'copilot_chat.cloud.session.invoke':
+        this.recordEventValue(CLOUD_SESSIONS, 1);
+        break;
+      case 'copilot_chat.tool.call':
+        if (a.success === true || a.success === 'true') {
+          this.recordEventValue(TOOL_CALL_COUNT, 1, { success: 'true' });
+        } else if (a.success === false || a.success === 'false') {
+          this.recordEventValue(TOOL_CALL_COUNT, 1, { success: 'false' });
+        }
+        break;
+    }
+  }
+
+  private recordEventValue(metric: string, value: number, attributes: Record<string, string> = {}): void {
+    const key = `${metric}\u0000${attrKey(attributes)}`;
+    let s = this.eventSeries.get(key);
+    if (!s) {
+      s = newSeries(metric, attributes, 0);
+      this.eventSeries.set(key, s);
+    }
+    s.last += value;
+    s.lastCount++;
   }
 
   private absorbMetrics(record: unknown): void {
@@ -555,16 +630,27 @@ export class OtelRollup {
     }
   }
 
-  /** Live, folded and sealed series together. Every query must read all three. */
+  /** Prefer metrics per instrument; matching log events describe the same traffic. */
   private *allSeries(): Generator<Series> {
-    yield* this.series.values();
-    yield* this.folded.values();
-    yield* this.sealed.values();
+    const reported = new Set<string>();
+    for (const series of [this.series, this.folded, this.sealed]) {
+      for (const s of series.values()) {
+        if (contributionCount(s) > 0) {
+          reported.add(s.metric);
+        }
+        yield s;
+      }
+    }
+    for (const s of this.eventSeries.values()) {
+      if (!reported.has(s.metric)) {
+        yield s;
+      }
+    }
   }
 
   // ------------------------------------------------------------- queries ----
 
-  /** Total of a metric across every series, optionally filtered by attributes. */
+  /** Instrument total, with documented event fallback when no metric measurements exist. */
   total(metric: string, where?: Record<string, string>): number {
     let sum = 0;
     for (const s of this.allSeries()) {

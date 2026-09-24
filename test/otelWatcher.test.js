@@ -115,3 +115,23 @@ it('rebuilds its rollup after restart without losing or repeating growth', (t) =
   restarted.scan();
   assert.equal(deltas[1].input, 50);
 });
+
+it('rebuilds quality event totals once after restart without charging tokens', (t) => {
+  const { file, watcher, deltas, create } = fixture(t);
+  const line = JSON.stringify({
+    _body: 'copilot_chat.user.feedback',
+    attributes: { rating: 'positive' }
+  }) + '\n';
+  fs.writeFileSync(file, line);
+  watcher.scan();
+  watcher.scan();
+  assert.equal(watcher.rollup.total('copilot_chat.user.feedback.count', { rating: 'positive' }), 1);
+  watcher.dispose();
+  const restarted = create();
+  restarted.scan();
+  assert.equal(restarted.rollup.total('copilot_chat.user.feedback.count', { rating: 'positive' }), 1);
+  fs.appendFileSync(file, line);
+  restarted.scan();
+  assert.equal(restarted.rollup.total('copilot_chat.user.feedback.count', { rating: 'positive' }), 2);
+  assert.deepEqual(deltas, [], 'quality events never feed the token ledger');
+});

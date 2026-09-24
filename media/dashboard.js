@@ -347,7 +347,7 @@
       );
     }
     if (drift.pending) {
-      return el('p', 'missing', 'Reconciliation starts once both sources have seen the same traffic.');
+      return el('p', 'missing', 'Reconciliation pending: waiting for observations from both sources.');
     }
     const sign = drift.deltaTokens >= 0 ? '+' : '−';
     return el(

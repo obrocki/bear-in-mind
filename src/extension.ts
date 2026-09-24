@@ -371,7 +371,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(
     `  reconciliation      ${
       drift.pending
-        ? 'pending — the two sources have not overlapped yet'
+        ? 'pending — waiting for observations from both sources'
         : `otel ${fmt(drift.otelObserved)} vs transcripts ${fmt(drift.transcriptObserved)} ` +
           `(${drift.deltaTokens >= 0 ? '+' : '-'}${fmt(Math.abs(drift.deltaTokens))}, ` +
           `${drift.deltaPercent.toFixed(2)}%) — ${drift.agreeing ? 'agreeing' : 'DIVERGING'}`

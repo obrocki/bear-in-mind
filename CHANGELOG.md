@@ -7,6 +7,9 @@
 - Shortened documentation and corrected accounting/privacy descriptions.
 - Quality now distinguishes a connected feed awaiting signals from missing
   telemetry; standalone survival, cloud-session and error metrics remain visible.
+- Added Quality fallbacks for documented log events without adding them to matching
+  metrics; totals survive recent-event eviction.
+- Reconciliation waits for both sources instead of marking one-sided data as divergent.
 - Validated and bounded persisted handover evidence on load and append.
 - Added regressions for API reports, Quality states, missing-feed path changes,
   partial-record seeding, restart accounting and overlap limitations.
