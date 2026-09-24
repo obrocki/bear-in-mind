@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.5.2
 
 - Distinguished local cumulative tokens, reported transcript credits and aggregate
   telemetry from Copilot's monthly allowance, selected-session cost and context window.
