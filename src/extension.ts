@@ -6,7 +6,7 @@ import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
-import { buildSnapshot, type DashboardSnapshot } from './otelSummary';
+import { buildSnapshot, redactUrl, type DashboardSnapshot } from './otelSummary';
 import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
 
 /** Public API other extensions can use: `exports.reportUsage({ input, output })`. */
@@ -233,6 +233,9 @@ export function deactivate(): void {
 async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel): Promise<void> {
   const config = vscode.workspace.getConfiguration(OTEL_SECTION);
   const endpoint = (config.get<string>('otlpEndpoint', '') || '').trim();
+  // Every user-facing mention of the endpoint uses this. The raw value is only
+  // ever used to decide *whether* a collector is configured, never displayed.
+  const endpointLabel = redactUrl(endpoint);
   const exporterType = (config.get<string>('exporterType', '') || '').trim();
   const collectorInUse = !!endpoint && exporterType !== 'file';
 
@@ -249,14 +252,14 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   const fileFeed = {
     label: 'File feed',
     detail: collectorInUse
-      ? `Adds quality signals — but replaces your OTLP exporter, so ${endpoint} stops receiving data.`
+      ? `Adds quality signals — but replaces your OTLP exporter, so ${endpointLabel} stops receiving data.`
       : 'Adds quality signals: accept/reject, edit survival, pull requests and feedback.',
     id: 'file' as const
   };
   const both = {
     label: 'Both',
     detail: collectorInUse
-      ? `Everything in all three sections — but ${endpoint} stops receiving data.`
+      ? `Everything in all three sections — but ${endpointLabel} stops receiving data.`
       : 'Everything in all three sections. Recommended.',
     id: 'both' as const
   };
@@ -265,7 +268,7 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   const placeHolder = !traceStoreAvailable
     ? 'This Copilot Chat has no local trace store, so the file feed is the only source'
     : collectorInUse
-      ? `An OTLP endpoint is configured (${endpoint}) — only the trace store leaves it intact`
+      ? `An OTLP endpoint is configured (${endpointLabel}) — only the trace store leaves it intact`
       : 'Everything stays on this machine; nothing is sent anywhere';
 
   const picked = await vscode.window.showQuickPick(choices, {
@@ -278,7 +281,7 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
 
   if (collectorInUse && picked.id !== 'sqlite') {
     const proceed = await vscode.window.showWarningMessage(
-      `This replaces your OTLP exporter. Copilot Chat will stop sending telemetry to ${endpoint}.`,
+      `This replaces your OTLP exporter. Copilot Chat will stop sending telemetry to ${endpointLabel}.`,
       { modal: true },
       'Replace it'
     );
@@ -384,7 +387,9 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  copilot otel        ${feed.copilotOtelEnabled ? 'enabled' : 'disabled'}`);
   output.appendLine(`  file feed           ${feed.jsonlPath ?? '(not configured)'}`);
   output.appendLine(`  trace store         ${feed.sqlitePath ?? '(not found)'}`);
-  output.appendLine(`  otlp endpoint       ${redactUrl(feed.otlpEndpoint)}`);
+  // Already redacted by `health()`, which is the single place that touches the
+  // raw value.
+  output.appendLine(`  otlp endpoint       ${feed.otlpEndpoint ?? '(none)'}`);
   output.appendLine(
     `  records             ${feed.records.metrics} metric exports · ${feed.records.logs} events · ` +
       `${feed.records.spans} spans skipped · ${feed.records.unknown} unknown · ${feed.records.malformed} malformed`
@@ -407,28 +412,6 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   }
   output.appendLine('───────────────────────────────────────────────────────');
   output.show(true);
-}
-
-/**
- * Strips anything credential-shaped out of a URL before it is logged.
- *
- * OTLP endpoints routinely carry tokens in userinfo or a query string, and the
- * output channel is visible in the UI and kept by the host. The host and path
- * are what make the diagnostics useful; the secrets are not.
- */
-function redactUrl(raw: string | undefined): string {
-  if (!raw) {
-    return '(none)';
-  }
-  try {
-    const url = new URL(raw);
-    const credentials = url.username || url.password ? '<redacted>@' : '';
-    const query = url.search ? '?<redacted>' : '';
-    return `${url.protocol}//${credentials}${url.host}${url.pathname}${query}`;
-  } catch {
-    // Not a URL we can take apart, so say nothing about its contents.
-    return '(unparseable, withheld)';
-  }
 }
 
 /** The view and command ids an extension claims, read from its manifest. */

@@ -3,7 +3,14 @@ import { createRequire } from 'module';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OtelRollup } from './otelParse';
-import { emptySpanDigest, type ContextWindow, type FeedHealth, type SpanDigest, type SpanSession } from './otelSummary';
+import {
+  emptySpanDigest,
+  redactUrl,
+  type ContextWindow,
+  type FeedHealth,
+  type SpanDigest,
+  type SpanSession
+} from './otelSummary';
 
 const STATE_KEY = 'iceberg.otelWatch.v1';
 
@@ -680,7 +687,9 @@ export class OtelWatcher implements vscode.Disposable {
       notes.push('No agent-traces.db found — session timings fall back to histogram estimates.');
     }
     if (endpoint && exporterType !== 'file' && !feedPath) {
-      notes.push(`An OTLP endpoint is configured (${endpoint}); enabling the file feed would replace it.`);
+      notes.push(
+        `An OTLP endpoint is configured (${redactUrl(endpoint)}); enabling the file feed would replace it.`
+      );
     }
 
     return {
@@ -690,7 +699,10 @@ export class OtelWatcher implements vscode.Disposable {
       jsonlActive: !!feedPath && this.rollup.stats.metrics + this.rollup.stats.logs > 0,
       sqlitePath: dbPath,
       sqliteActive: this.spans.available,
-      otlpEndpoint: endpoint || undefined,
+      // Redacted before it leaves this method: `FeedHealth` is posted to the
+      // webview and written to diagnostics, and an OTLP URL can carry a token
+      // in its userinfo or query string.
+      otlpEndpoint: endpoint ? redactUrl(endpoint) : undefined,
       lastRecordAtMs: this.rollup.stats.lastRecordAtMs,
       records: {
         metrics: this.rollup.stats.metrics,

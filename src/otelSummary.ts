@@ -495,7 +495,31 @@ export function buildSnapshot(input: SummaryInput): DashboardSnapshot {
   };
 }
 
-/** Compares what each watcher saw over the window in which both were running. */
+/**
+ * Strips anything credential-shaped out of a URL before it is shown or stored.
+ *
+ * OTLP endpoints routinely carry tokens in userinfo or a query string. The host
+ * and path are what make a message useful; the secrets are not. Everything
+ * user-facing — the connect prompts, the dashboard banner, the diagnostics
+ * dump — goes through here, so there is one place to get this right rather than
+ * three places to forget it.
+ */
+export function redactUrl(raw: string | undefined): string {
+  if (!raw) {
+    return '(none)';
+  }
+  try {
+    const url = new URL(raw);
+    const credentials = url.username || url.password ? '<redacted>@' : '';
+    const query = url.search ? '?<redacted>' : '';
+    return `${url.protocol}//${credentials}${url.host}${url.pathname}${query}`;
+  } catch {
+    // Not a URL we can take apart, so say nothing about its contents.
+    return '(unparseable, withheld)';
+  }
+}
+
+/** Compares what each source saw over the window in which both were running. */
 export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
   if (otelObserved === 0 && transcriptObserved === 0) {
     return {

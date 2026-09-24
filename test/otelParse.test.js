@@ -32,7 +32,7 @@ const {
   TOOL_CALL_COUNT
 } = require(path.join(build, 'otelParse.js'));
 
-const { computeDrift, percentile, buildQuality, buildSpeed, buildCost } = require(
+const { computeDrift, percentile, buildQuality, buildSpeed, buildCost, redactUrl } = require(
   path.join(build, 'otelSummary.js')
 );
 
@@ -608,6 +608,31 @@ describe('summary sections', () => {
     const quality = buildQuality(base(new OtelRollup()));
     assert.equal(quality.available, false);
     assert.equal(quality.acceptRate, undefined);
+  });
+});
+
+describe('redacting endpoints', () => {
+  it('keeps the useful parts and drops the secrets', () => {
+    assert.equal(redactUrl('http://127.0.0.1:4318/v1/traces'), 'http://127.0.0.1:4318/v1/traces');
+    assert.equal(
+      redactUrl('https://user:sekrit@collector.example.com/v1/traces'),
+      'https://<redacted>@collector.example.com/v1/traces'
+    );
+    assert.equal(
+      redactUrl('https://collector.example.com/ingest?api_key=abcd1234'),
+      'https://collector.example.com/ingest?<redacted>'
+    );
+  });
+
+  it('never leaks a credential it cannot parse', () => {
+    // Withheld entirely rather than echoed on the assumption it is harmless.
+    assert.equal(redactUrl('not a url ?token=sekrit'), '(unparseable, withheld)');
+    assert.ok(!redactUrl('not a url ?token=sekrit').includes('sekrit'));
+  });
+
+  it('reports an absent endpoint plainly', () => {
+    assert.equal(redactUrl(undefined), '(none)');
+    assert.equal(redactUrl(''), '(none)');
   });
 });
 
