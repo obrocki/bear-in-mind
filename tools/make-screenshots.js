@@ -27,8 +27,17 @@ const SHOTS = [
   { file: 'melt-progression.png', page: 'grid.html', q: '', w: 1160, h: 330, dsf: 2, settle: 11000 },
   // The dashboard is static DOM, so it needs only long enough to paint.
   { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 540, dsf: 2, settle: 1200 },
-  { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 330, dsf: 2, settle: 1200 }
+  { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 330, dsf: 2, settle: 1200 },
+  { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 540, dsf: 2, settle: 1200 }
 ];
+
+const requested = process.argv.slice(2);
+for (const file of requested) {
+  if (!SHOTS.some((shot) => shot.file === file)) {
+    throw new Error(`Unknown screenshot: ${file}`);
+  }
+}
+const shots = requested.length ? SHOTS.filter((shot) => requested.includes(shot.file)) : SHOTS;
 
 function findBrowser() {
   if (process.env.BROWSER_PATH) return process.env.BROWSER_PATH;
@@ -117,7 +126,7 @@ async function waitForDevTools() {
   const { sessionId } = await send(ws, 'Target.attachToTarget', { targetId, flatten: true });
   await send(ws, 'Page.enable', {}, sessionId);
 
-  for (const shot of SHOTS) {
+  for (const shot of shots) {
     await send(
       ws,
       'Emulation.setDeviceMetricsOverride',

@@ -503,9 +503,7 @@ describe('cumulative metrics', () => {
 
 describe('log events', () => {
   it('never retains prompt or response content', () => {
-    // SECURITY.md promises these are never read. captureContent puts them in
-    // the feed, so they have to be dropped at the parser boundary rather than
-    // kept on the event and merely not displayed.
+    // Captured content must not survive in retained events.
     const event = toLogEvent({
       attributes: {
         'event.name': 'gen_ai.client.inference.operation.details',
@@ -544,9 +542,7 @@ describe('log events', () => {
   });
 
   it('keeps content out of the parsed object, not just out of the result', () => {
-    // scrub() alone would leave the whole prompt materialised as a string first.
-    // The reviver drops it as the record is parsed, which is what SECURITY.md
-    // actually promises.
+    // The reviver strips known content from records before aggregation.
     const rollup = new OtelRollup();
     const secret = 'sk-live-' + 'x'.repeat(4000);
     rollup.ingestLine(

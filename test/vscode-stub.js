@@ -1,22 +1,6 @@
 'use strict';
 
-/**
- * Minimal `vscode` stand-in, so the accounting in `src/tokenMeter.ts` can be
- * tested with plain Node.
- *
- * Only the handful of surfaces the meter actually touches are implemented. It
- * is the riskiest file in the project and the one place a mistake silently
- * charges the wrong number, so leaving it uncovered because it imports `vscode`
- * was not a good enough reason.
- */
-
-/**
- * Settings live on a global rather than in module state.
- *
- * Each bundle esbuild produces inlines its own copy of this stub, so a module
- * export would not be the same object the test can reach. A global is the one
- * channel they genuinely share.
- */
+/** Bundles inline separate stubs; share settings through the test process global. */
 function current() {
   return globalThis.__BEAR_SETTINGS__ || {};
 }
@@ -26,7 +10,7 @@ class EventEmitter {
     this.listeners = [];
     this.event = (fn) => {
       this.listeners.push(fn);
-      return { dispose: () => {} };
+      return { dispose: () => { this.listeners = this.listeners.filter((listener) => listener !== fn); } };
     };
   }
   fire(value) {

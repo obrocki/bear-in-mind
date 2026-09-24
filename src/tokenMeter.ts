@@ -5,21 +5,12 @@ const STORAGE_KEY = 'iceberg.usage.v3';
 const LEGACY_V2 = 'iceberg.usage.v2';
 const LEGACY_V1 = 'iceberg.usage.v1';
 
-/**
- * How long a context-window reading stays current.
- *
- * Long enough to survive a pause for thought mid-session, short enough that an
- * abandoned session stops driving the scene.
- */
+/** Expire context from abandoned sessions. */
 const CONTEXT_STALE_MS = 30 * 60 * 1000;
 
-/**
- * How recently the transcripts must have reported for their ledger to be
- * evidence that they also saw the request telemetry is now reporting.
- *
- * Comfortably more than one export interval, far less than a working session.
- */
+/** Recent transcript usage is only an estimate of overlap, not request identity. */
 const OVERLAP_WINDOW_MS = 5 * 60 * 1000;
+const MAX_RECENT_TRANSCRIPTS = 1024;
 
 /** Which watcher the meter is currently taking its numbers from. */
 export type UsageSource = 'otel' | 'transcripts';
@@ -57,13 +48,14 @@ interface Ledger {
   requests: number;
 }
 
+interface TranscriptObservation {
+  at: number;
+  input: number;
+  output: number;
+}
+
 interface StoredUsage {
-  /**
-   * What each watcher has observed, cumulatively and commensurately.
-   *
-   * Both describe the *same* traffic, so the charged figure is the larger of
-   * the two rather than their sum.
-   */
+  /** Cumulative observations, reconciled per dimension with max(), not addition. */
   otel: Ledger;
   transcripts: Ledger;
   /** Set once telemetry has reported; before that `otel` means nothing. */
@@ -74,14 +66,8 @@ interface StoredUsage {
   since: number;
   /** Tokens each watcher saw since they began overlapping, for the drift readout. */
   sinceHandover: { otel: number; transcripts: number };
-  /**
-   * Recent transcript deltas, bounding how much of a handover is a duplicate.
-   *
-   * Persisted with everything else: a restart between a transcript delta and
-   * the first telemetry delta would otherwise lose the evidence that the two
-   * describe the same request, and charge it twice.
-   */
-  recentTranscript: Array<{ at: number; input: number; output: number }>;
+  /** Persist overlap evidence so a restart between observations does not discard it. */
+  recentTranscript: TranscriptObservation[];
 }
 
 function ledger(): Ledger {
@@ -93,34 +79,10 @@ function tokens(l: Ledger): number {
 }
 
 /**
- * Tracks how many tokens have been burned and derives the "health" of the
- * iceberg from it. Everything the webview needs comes out of `snapshot()`.
- *
- * ## Reconciled, not arbitrated
- *
- * The transcript watcher and the OpenTelemetry watcher observe the *same*
- * Copilot traffic. Adding them together would double every number, so the
- * charged figure is `max(otel, transcripts)` — each keeps its own cumulative
- * total and the further-ahead one sets the meter.
- *
- * This is deliberately not a rule about which *delta* gets charged. That
- * approach leaks: whichever source is charged, the other's observation has to
- * be dropped, and every dropped observation is either usage counted twice or
- * usage lost. A maximum over two monotonic totals cannot do either. It is
- * idempotent, it survives a restart as long as the totals persist, it needs no
- * staleness timer, and if one source stops the other simply overtakes it.
- *
- * The two are made commensurate at handover: when telemetry first reports it
- * adopts whatever the transcripts had reached, so the comparison is like for
- * like and telemetry can actually overtake instead of starting from zero and
- * never catching up.
- *
- * `manual` is separate and always added, because the things that feed it — the
- * exported API, the `@iceberg` participant, the meltdown demo — are not Copilot
- * Chat traffic that either watcher can see.
- *
- * `credits` cannot be arbitrated at all: OpenTelemetry has no equivalent of
- * `copilotCredits`, so premium-request credits always come from the transcripts.
+ * Reconciles automatic usage with max(otel, transcripts) per dimension.
+ * Promotion carries the transcript balance and absorbs estimated recent overlap;
+ * the sources have no shared request ID, so that estimate can undercount.
+ * Manual reports add separately; premium credits come from transcripts.
  */
 export class TokenMeter implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<UsageSnapshot>();
@@ -163,7 +125,7 @@ export class TokenMeter implements vscode.Disposable {
           transcripts: Math.max(0, stored.sinceHandover?.transcripts ?? 0)
         },
 
-        recentTranscript: Array.isArray(stored.recentTranscript) ? stored.recentTranscript : []
+        recentTranscript: recentTranscripts(stored.recentTranscript)
       };
     }
 
@@ -236,16 +198,7 @@ export class TokenMeter implements vscode.Disposable {
       return t;
     }
     const o = this.state.otel;
-    // Per dimension, not by combined total. Picking one ledger wholesale can
-    // report the other's split: if the two disagree transiently — transcripts
-    // ahead on input, telemetry ahead on output — the loser's figure would be
-    // shown for both. Taking the maximum of each keeps `total = input + output`
-    // consistent with the parts, and stays monotonic because both inputs are.
-    //
-    // Note there is no check on whether telemetry is *allowed* here. Switching
-    // it off stops new telemetry being recorded; it does not un-burn tokens it
-    // already reported. Excluding the ledger would make the meter run backwards
-    // and grow the berg back, which is the one thing it must never do.
+    // Keep each dimension monotonic, including usage recorded before OTel was disabled.
     return {
       input: Math.max(o.input, t.input),
       output: Math.max(o.output, t.output),
@@ -277,14 +230,7 @@ export class TokenMeter implements vscode.Disposable {
     return computeDrift(this.state.sinceHandover.otel, this.state.sinceHandover.transcripts);
   }
 
-  /**
-   * Records the live context-window occupancy.
-   *
-   * This is what the ice tracks when it is available, because it is a genuine
-   * constraint the model is working under rather than a number somebody typed.
-   * It also refreezes on its own: a new session, or a context summarisation,
-   * drops the prompt size and the berg grows back.
-   */
+  /** Context headroom can recover after summarisation or a new session. */
   setContext(context: ContextWindow | undefined): void {
     const before = this.context?.atMs;
     this.context = context;
@@ -312,9 +258,7 @@ export class TokenMeter implements vscode.Disposable {
     const total = this.countedTotal;
     const auto = this.charged;
     const context = this.liveContext;
-    // Falling back to the cumulative budget is not a lesser mode — it is the
-    // only thing available until the trace store is connected, since the
-    // context limit rides on spans and the file feed's spans are empty.
+    // Context limits require spans; without them, show cumulative budget headroom.
     const health = context
       ? clamp(1 - context.used / context.limit, 0, 1)
       : clamp(1 - total / budget, 0, 1);
@@ -338,15 +282,7 @@ export class TokenMeter implements vscode.Disposable {
     };
   }
 
-  /**
-   * Records what a watcher saw.
-   *
-   * Every delta is kept — nothing is ever dropped on the grounds that the other
-   * watcher probably had it. Each source's own cumulative total grows, and the
-   * charged figure is the larger of the two, so the same traffic reported twice
-   * cannot inflate the meter and traffic reported by only one source cannot
-   * fall through the gap.
-   */
+  /** Adds a watcher delta, estimating overlap only when telemetry is promoted. */
   observe(
     from: UsageSource,
     input: number,
@@ -373,33 +309,21 @@ export class TokenMeter implements vscode.Disposable {
       this.state.credits += c;
     }
 
-    if (i > 0 || o > 0) {
-      if (from === 'transcripts') {
-        // Prune on the way in. This buffer is persisted, and it is only read
-        // when telemetry promotes the meter — which may never happen — so
-        // pruning solely on read would let it grow for the life of the
-        // extension and carry that growth into global state.
-        const cutoff = Date.now() - OVERLAP_WINDOW_MS;
-        this.state.recentTranscript = this.state.recentTranscript.filter((e) => e.at >= cutoff);
-        this.state.recentTranscript.push({ at: Date.now(), input: i, output: o });
-      }
+    if (from === 'transcripts' && (i > 0 || o > 0)) {
+      // Bound on append even if telemetry is never connected.
+      this.state.recentTranscript.push({ at: Date.now(), input: i, output: o });
+      this.state.recentTranscript = recentTranscripts(this.state.recentTranscript);
     }
 
     let absorbedIn = 0;
     let absorbedOut = 0;
     if (from === 'otel' && !this.state.promoted) {
-      // Make the two commensurate. Telemetry starts recording when it is
-      // switched on, long after the transcripts began, so without this it would
-      // sit permanently below them and could never take over.
+      // Carry the existing balance so newly connected telemetry can catch up.
       this.state.promoted = true;
 
-      // This first delta overlaps traffic the transcripts have already counted,
-      // and that much is already inside the figure being carried over. But the
-      // delta reports growth since telemetry's *own* baseline, which can span
-      // more than the transcripts just reported — and with the watcher off, or
-      // a feed that started long after the last request, they reported none of
-      // it. Absorb only what the transcripts can account for, per dimension,
-      // and charge the rest instead of dropping it.
+      // No shared request ID exists. Absorb at most this delta's recent overlap
+      // per dimension; unrelated traffic can be absorbed, and max() alone does
+      // not guarantee recovery of that undercount.
       const seen = this.recentTranscriptTokens();
       absorbedIn = Math.min(i, seen.input);
       absorbedOut = Math.min(o, seen.output);
@@ -423,51 +347,27 @@ export class TokenMeter implements vscode.Disposable {
     this.publish();
   }
 
-  /**
-   * Transcript tokens inside the overlap window, per dimension.
-   *
-   * Input and output are exposed separately, so a scalar budget would let a
-   * surplus be split by ratio and land in the wrong dimension. Each is absorbed
-   * against its own evidence.
-   */
+  /** Keep input/output overlap separate to preserve the reported split. */
   private recentTranscriptTokens(): { input: number; output: number } {
     if (!this.config.get<boolean>('trackCopilotChat', true)) {
       return { input: 0, output: 0 };
     }
-    const cutoff = Date.now() - OVERLAP_WINDOW_MS;
-    this.state.recentTranscript = this.state.recentTranscript.filter((e) => e.at >= cutoff);
+    this.state.recentTranscript = recentTranscripts(this.state.recentTranscript);
     return this.state.recentTranscript.reduce(
       (sum, e) => ({ input: sum.input + e.input, output: sum.output + e.output }),
       { input: 0, output: 0 }
     );
   }
 
-  /**
-   * Re-publishes when the effective source has changed.
-   *
-   * `source` follows which ledger is ahead, so it can change on an `observe`
-   * for the *other* watcher. The HUD and status bar listen only on
-   * `onDidChange`, so the event has to carry that.
-   */
   private publish(): void {
     this.lastSource = this.source;
     this._onDidChange.fire(this.snapshot());
   }
 
-  /**
-   * Kept for the watcher's poll.
-   *
-   * Two things can change without any usage being observed: telemetry's feed
-   * can go quiet, and the context reading can go stale. Neither raises an event
-   * of its own, and the HUD and status bar listen only on `onDidChange`, so the
-   * poll is where both get noticed.
-   */
+  /** Polling detects idle telemetry and stale context without new token usage. */
   noteOtelAlive(alive: boolean): void {
     if (this.state.promoted && !alive) {
-      // Telemetry has stopped. Hand back to the transcripts without letting the
-      // figure move: they adopt whatever the meter had reached, so nothing is
-      // lost, nothing is re-charged, and their next delta lands on top instead
-      // of having to climb back up to telemetry's total first.
+      // Carry the charged balance so subsequent transcript deltas count immediately.
       this.state.transcripts = { ...this.charged };
       this.state.promoted = false;
       this.persist();
@@ -558,6 +458,29 @@ export class TokenMeter implements vscode.Disposable {
     this._onDidChange.dispose();
     this.subscriptions.forEach((d) => d.dispose());
   }
+}
+
+function recentTranscripts(value: unknown): TranscriptObservation[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const now = Date.now();
+  const recent: TranscriptObservation[] = [];
+  for (let index = value.length - 1; index >= 0 && recent.length < MAX_RECENT_TRANSCRIPTS; index--) {
+    const entry: unknown = value[index];
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+    const { at, input, output } = entry as Partial<TranscriptObservation>;
+    if (
+      typeof at === 'number' && Number.isFinite(at) && at >= now - OVERLAP_WINDOW_MS && at <= now &&
+      typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 &&
+      typeof output === 'number' && Number.isSafeInteger(output) && output >= 0
+    ) {
+      recent.push({ at, input, output });
+    }
+  }
+  return recent.reverse();
 }
 
 function sanitise(value: Partial<Ledger> | undefined): Ledger {

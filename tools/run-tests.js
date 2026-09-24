@@ -1,16 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * Runs the unit tests.
- *
- *   node tools/run-tests.js
- *
- * The code under test is TypeScript, and there is no compile step in the normal
- * loop, so the modules are bundled to a scratch directory with esbuild first and
- * the tests import that. Only `vscode`-free modules can be covered this way,
- * which is exactly why the parsing and aggregation live in their own files.
- */
+/** Bundle TypeScript with a VS Code stub, then run the Node test suite. */
 
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -21,14 +12,8 @@ const esbuild = require('esbuild');
 const repoRoot = path.resolve(__dirname, '..');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-tests-'));
 
-const ENTRIES = ['src/otelParse.ts', 'src/otelSummary.ts', 'src/tokenMeter.ts'];
+const ENTRIES = ['src/api.ts', 'src/otelParse.ts', 'src/otelSummary.ts', 'src/otelWatcher.ts', 'src/tokenMeter.ts'];
 
-/**
- * `src/tokenMeter.ts` imports `vscode`, which does not exist outside the
- * extension host. Pointing the bundler at a stub is what makes the accounting
- * testable at all — it is the riskiest code here, so "it imports vscode" was
- * not a good enough reason to leave it uncovered.
- */
 const vscodeStub = {
   name: 'vscode-stub',
   setup(build) {

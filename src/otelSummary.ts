@@ -454,7 +454,12 @@ export function buildQuality(input: SummaryInput): QualitySection {
       pullRequests > 0 ||
       votes > 0 ||
       engagement > 0 ||
-      toolCalls > 0,
+      toolCalls > 0 ||
+      survivalFourGram !== undefined ||
+      survivalNoRevert !== undefined ||
+      cloudSessions > 0 ||
+      editResponseErrors > 0 ||
+      summarizationsApplied + summarizationsFailed > 0,
     editsAccepted,
     editsRejected,
     acceptRate: decided > 0 ? editsAccepted / decided : undefined,

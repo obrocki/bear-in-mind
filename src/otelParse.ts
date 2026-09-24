@@ -1,35 +1,8 @@
 /**
- * Pure parsing and aggregation for Copilot Chat's OpenTelemetry output.
- *
- * Deliberately free of any `vscode` import so it can be unit-tested with plain
- * Node. `otelWatcher.ts` owns all the I/O; this file only ever sees strings and
- * numbers.
- *
- * ## What the feed actually looks like
- *
- * Copilot Chat's file exporters (`fileExporters.ts` upstream) point a span, a
- * log and a metric exporter at the *same* path and append
- * `JSON.stringify(record) + '\n'` to it. So one file carries three different
- * record shapes, told apart here by `classify()`:
- *
- *   {"resource":{…},"scopeMetrics":[…]}                    metrics
- *   {"resource":{…},"attributes":{…},"_body":"…"}          log record / event
- *   {}                                                     span
- *
- * That last one is not a typo. Since OpenTelemetry JS SDK v2 the span
- * implementation keeps its state in private class fields, which `JSON.stringify`
- * cannot see, so every span serialises to an empty object. Verified against
- * `@opentelemetry/sdk-trace-node` 2.11.0. Spans therefore contribute nothing
- * here and per-span detail has to come from the SQLite store instead — see
- * `otelWatcher.ts`. Empty objects are counted rather than ignored so the
- * dashboard can say why span-derived numbers are missing.
- *
- * ## Why totals are taken, not summed
- *
- * `FileMetricExporter.selectAggregationTemporality()` returns CUMULATIVE, so
- * every metrics line is a complete running snapshot rather than a delta. Adding
- * successive lines together would multiply the real figure by the number of
- * export intervals. Each series is keyed and only its newest value is kept.
+ * Pure OTel parsing; otelWatcher owns I/O. The JSONL feed mixes cumulative
+ * metric snapshots, log events and empty SDK v2 spans (private fields do not
+ * stringify). Keep each metric series' newest value, not the sum of exports.
+ * Exact span details come from the trace store.
  */
 
 /** Seconds/nanoseconds pair, as the OTel SDK serialises timestamps. */
@@ -121,15 +94,7 @@ export function resourceAttributes(record: unknown): Record<string, string> {
   return out;
 }
 
-/**
- * Attributes that carry prompt, response or tool content when `captureContent`
- * is enabled upstream.
- *
- * Bear in Mind promises never to read these, so they are dropped at the parser
- * boundary rather than anywhere later — keeping them on the `LogEvent` would put
- * prompts and file contents in memory and expose them through `recentEvents()`,
- * which is exactly the guarantee SECURITY.md makes.
- */
+/** Known captured-content fields must not reach retained events or aggregates. */
 const CONTENT_ATTRIBUTES = new Set([
   'gen_ai.input.messages',
   'gen_ai.output.messages',
@@ -142,16 +107,7 @@ const CONTENT_ATTRIBUTES = new Set([
 /** Nothing this parser needs is a long string; anything that big is content. */
 const MAX_ATTRIBUTE_CHARS = 512;
 
-/**
- * Drops content-bearing attributes *during* parsing.
- *
- * `scrub()` alone only stops them being retained — by then the whole prompt or
- * tool result has already been materialised as a string in the extension
- * process. A reviver runs as each property is assigned, so returning `undefined`
- * means the value is never attached to the object graph and is collectable
- * immediately, which both honours the promise in SECURITY.md and keeps a
- * capture-enabled feed from allocating megabyte strings per record.
- */
+/** The reviver removes content from parsed records; it cannot prevent transient JSON allocations. */
 function dropContent(key: string, value: unknown): unknown {
   if (CONTENT_ATTRIBUTES.has(key)) {
     return undefined;
