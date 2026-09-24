@@ -40,6 +40,12 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: npm run check:docs
 
+      # The telemetry parsing is the easiest place here to be quietly wrong —
+      # cumulative metrics summed instead of taken, a counter reset losing
+      # history — so it runs on every platform rather than just Linux.
+      - name: Run the tests
+        run: npm test
+
       # One command — the same one contributors run locally. It typechecks,
       # bundles, packages, then reopens the .vsix and checks what actually
       # shipped, so a bad .vscodeignore fails here rather than on a user's

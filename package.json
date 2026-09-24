@@ -2,7 +2,7 @@
   "name": "bear-in-mind",
   "displayName": "Bear in Mind — Copilot Token Meter",
   "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token burn adds up. It cannot cap your spend — the bear is relying on your compassion for that.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -60,6 +60,13 @@
           "name": "Habitat",
           "icon": "media/bear.svg",
           "contextualTitle": "Iceberg"
+        },
+        {
+          "type": "webview",
+          "id": "iceberg.dashboard",
+          "name": "Cost, Speed, Quality",
+          "icon": "media/bear.svg",
+          "contextualTitle": "Iceberg"
         }
       ]
     },
@@ -79,21 +86,17 @@
         "icon": "$(open-preview)"
       },
       {
-        "command": "iceberg.addTokens",
-        "title": "Iceberg: Add Tokens Manually…"
+        "command": "iceberg.openDashboard",
+        "title": "Iceberg: Open Token Dashboard",
+        "icon": "$(graph)"
       },
       {
-        "command": "iceberg.countSelection",
-        "title": "Iceberg: Count Selection as Prompt Tokens"
+        "command": "iceberg.connectTelemetry",
+        "title": "Iceberg: Connect Copilot Telemetry…"
       },
       {
-        "command": "iceberg.setBudget",
-        "title": "Iceberg: Set Token Budget…"
-      },
-      {
-        "command": "iceberg.reset",
-        "title": "Iceberg: Refreeze (Reset Usage)",
-        "icon": "$(refresh)"
+        "command": "iceberg.telemetryDiagnostics",
+        "title": "Iceberg: Telemetry Diagnostics"
       },
       {
         "command": "iceberg.nameBear",
@@ -111,24 +114,14 @@
     "menus": {
       "view/title": [
         {
-          "command": "iceberg.open",
+          "command": "iceberg.openDashboard",
           "when": "view == iceberg.habitat",
           "group": "navigation@1"
         },
         {
-          "command": "iceberg.reset",
+          "command": "iceberg.open",
           "when": "view == iceberg.habitat",
           "group": "navigation@2"
-        },
-        {
-          "command": "iceberg.setBudget",
-          "when": "view == iceberg.habitat",
-          "group": "1_config"
-        },
-        {
-          "command": "iceberg.addTokens",
-          "when": "view == iceberg.habitat",
-          "group": "1_config"
         },
         {
           "command": "iceberg.nameBear",
@@ -139,6 +132,21 @@
           "command": "iceberg.toggleMeltdownDemo",
           "when": "view == iceberg.habitat",
           "group": "9_demo"
+        },
+        {
+          "command": "iceberg.openDashboard",
+          "when": "view == iceberg.dashboard",
+          "group": "navigation@1"
+        },
+        {
+          "command": "iceberg.connectTelemetry",
+          "when": "view == iceberg.dashboard",
+          "group": "1_config"
+        },
+        {
+          "command": "iceberg.telemetryDiagnostics",
+          "when": "view == iceberg.dashboard",
+          "group": "1_config"
         }
       ]
     },
@@ -149,12 +157,39 @@
           "type": "number",
           "default": 5000000,
           "minimum": 1000,
-          "description": "Total token budget. The iceberg is at full size at 0 tokens used and fully melted at this many tokens. Agent-mode sessions resend context every turn, so real usage climbs into the millions quickly."
+          "description": "Total token budget. The iceberg is at full size at 0 tokens used and fully melted at this many tokens. Consumption itself is measured, never entered — this is only the denominator. Agent-mode sessions resend context every turn, so real usage climbs into the millions quickly."
         },
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically meter regular Copilot Chat usage by reading the exact per-request token counts VS Code records in its chat transcripts."
+          "description": "Automatically meter regular Copilot Chat usage by reading the exact per-request token counts VS Code records in its chat transcripts. Used as the fallback whenever OpenTelemetry is not reporting."
+        },
+        "iceberg.otel.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Read the OpenTelemetry Copilot Chat emits. Run **Iceberg: Connect Copilot Telemetry…** to switch it on in Copilot Chat and point it somewhere local."
+        },
+        "iceberg.otel.authoritative": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Let OpenTelemetry hold the meter whenever it is reporting, falling back to chat transcripts when it goes quiet. Turn this off to keep transcripts authoritative and treat telemetry as display-only. The two are never added together."
+        },
+        "iceberg.otel.feedPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the JSON-lines telemetry feed. Leave empty to follow `#github.copilot.chat.otel.outfile#` (or `COPILOT_OTEL_FILE_EXPORTER_PATH`)."
+        },
+        "iceberg.otel.tracesDbPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to Copilot Chat's `agent-traces.db`. Leave empty to find it automatically."
+        },
+        "iceberg.otel.pollIntervalMs": {
+          "type": "number",
+          "default": 4000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "How often (ms) to check the telemetry feed for new records."
         },
         "iceberg.chatPollIntervalMs": {
           "type": "number",
@@ -203,6 +238,7 @@
     "watch": "node esbuild.js --watch",
     "package": "node esbuild.js --production",
     "typecheck": "tsc --noEmit",
+    "test": "node tools/run-tests.js",
     "check:docs": "node tools/check-docs.js",
     "vsix": "node tools/build-vsix.js",
     "media": "node tools/make-screenshots.js && node tools/make-gif.js",

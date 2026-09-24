@@ -19,6 +19,7 @@ icon in the activity bar.
 | `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
 | `npm run watch` | Same, but rebuilds on change. |
 | `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
+| `npm test` | Unit tests for the OpenTelemetry parsing and aggregation. |
 | `npm run check:docs` | Balanced code fences, working relative links, and no raw HTML in any `.md`. |
 | `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
 
@@ -26,29 +27,74 @@ icon in the activity bar.
 (`Ctrl+Shift+B`), and it is exactly what CI runs —
 see [Packaging and releases](#packaging-and-releases).
 
-There is no test runner wired up. `npm run typecheck` plus a manual pass in the
-Extension Development Host is the current bar. If you add a test setup, that
-would be a very welcome PR.
+`npm test` bundles the `vscode`-free modules with esbuild into a scratch
+directory and runs `node --test` against them, so only `src/otelParse.ts` and
+`src/otelSummary.ts` are covered. That is deliberate: the parsing and the
+aggregation are where the bugs that nobody notices for a week live, so they were
+kept free of `vscode` imports specifically to make them testable. Everything else
+is still a manual pass in the Extension Development Host.
 
 ## How the pieces fit together
 
 ```
 src/extension.ts    activation, commands, status bar, chat participant, the
                     exported API. Owns the wiring, no logic of its own.
-src/tokenMeter.ts   the accountant. Holds input/output/credits/requests, derives
+src/tokenMeter.ts   the accountant. Two ledgers, source arbitration, derives
                     `health` (1 = pristine, 0 = melted), persists to globalState,
                     fires onDidChange.
 src/chatWatcher.ts  reads VS Code's chat transcripts and turns them into usage
                     deltas. The subtle part of the project — see below.
-src/habitatView.ts  webview plumbing for the sidebar view and the editor tab.
-media/main.js       the entire renderer. No dependencies, no build step, plain
+src/otelParse.ts    classifies and aggregates Copilot's OpenTelemetry output.
+                    No `vscode` import, so it is unit-testable — which is the
+                    point, because it is the other subtle part.
+src/otelSummary.ts  turns a rollup into the three dashboard sections. Also pure.
+src/otelWatcher.ts  the I/O half: finds the feed and the trace store, tails one,
+                    queries the other.
+src/habitatView.ts  webview plumbing for the iceberg view and editor tab.
+src/dashboardView.ts webview plumbing for the dashboard.
+media/main.js       the iceberg renderer. No dependencies, no build step, plain
                     Canvas2D drawing at ~200x130 internal pixels.
+media/dashboard.js  the dashboard renderer. Plain DOM and inline SVG. Formats
+                    what it is handed and computes nothing.
 media/style.css     the HUD under the canvas.
+media/dashboard.css the 01/02/03 layout.
 ```
 
 State flows one way: something reports usage → `TokenMeter` recomputes `health`
-→ `onDidChange` → the webview gets a `state` message → `media/main.js` eases
-toward the new health. The renderer never decides anything about usage.
+→ `onDidChange` → the webviews get a message → the renderers follow. Neither
+renderer decides anything about usage.
+
+## Working on `src/otelParse.ts`
+
+Copilot Chat's file exporters point a span, a log and a metric exporter at the
+*same* file and append `JSON.stringify(record) + '\n'`, so one file carries three
+different record shapes. Three things about that are worth knowing before you
+touch this code, and all three are load-bearing:
+
+1. **Spans serialise to `{}`.** Since OpenTelemetry JS SDK v2 the span
+   implementation keeps its state in private class fields, which
+   `JSON.stringify` cannot see. Verified against `@opentelemetry/sdk-trace-node`
+   2.11.0. Every span in the feed is an empty object. They are *counted* rather
+   than ignored so the dashboard can explain the missing timings instead of
+   silently showing none. Real spans come from `agent-traces.db`.
+2. **Metrics are cumulative, not deltas.** `FileMetricExporter` selects
+   CUMULATIVE temporality, so each metrics line is a complete running snapshot.
+   Adding successive lines together multiplies the real figure by the number of
+   export intervals. Only the newest value of each series is kept.
+3. **A counter going down means a restart.** Cumulative counters only grow, so a
+   drop means the producing process began again from zero. The previous peak is
+   banked into `retired` rather than lost — the same trick `chatWatcher.ts` uses
+   for reused request slots. Series are keyed by `session.id` too, so two VS Code
+   windows exporting at once stay separate and their totals add.
+
+Prefer documented attribute names (`gen_ai.*`, `copilot_chat.*`) over SDK object
+shape wherever there is a choice. The names are a published contract; the shapes
+are internals that have already changed once.
+
+`npm test` covers all of this. The fixture was generated by driving the real
+OpenTelemetry SDK through exporters that replicate Copilot Chat's byte for byte,
+so it is not a guess about the format — if you change the parser, extend the
+fixture the same way rather than hand-writing records.
 
 ## Working on `src/chatWatcher.ts`
 

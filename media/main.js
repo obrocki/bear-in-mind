@@ -20,7 +20,9 @@
     pct: document.getElementById('pct'),
     fill: document.getElementById('fill'),
     tokens: document.getElementById('tokens'),
-    split: document.getElementById('split')
+    split: document.getElementById('split'),
+    basis: document.getElementById('basis'),
+    source: document.getElementById('source')
   };
 
   // ---------------------------------------------------------------- state ---
@@ -917,6 +919,20 @@
     el.fill.style.width = Math.max(0, state.targetHealth * 100) + '%';
     el.tokens.textContent = fmt(s.total) + ' / ' + fmt(s.budget) + ' tokens';
     el.split.textContent = 'in ' + fmt(s.input) + ' · out ' + fmt(s.output);
+    if (el.basis) {
+      // The percentage means two different things depending on what the
+      // telemetry can see, so say which one it is rather than leaving a bare
+      // number to be misread.
+      el.basis.textContent =
+        s.basis === 'context' && s.context
+          ? 'context free · ' + fmt(s.context.used) + ' / ' + fmt(s.context.limit)
+          : 'budget remaining';
+    }
+    if (el.source) {
+      el.source.textContent =
+        s.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts';
+      el.source.dataset.live = s.source === 'otel' ? 'true' : 'false';
+    }
 
     const accent = pct > 50 ? '#9fd8ff' : pct > 20 ? '#ffcf7a' : '#ff8a6b';
     document.documentElement.style.setProperty('--ice-accent', accent);
@@ -947,12 +963,14 @@
     bear.timer = 2.5;
     dirty = true;
   });
-  document.getElementById('btnReset').addEventListener('click', () => {
-    vscode && vscode.postMessage({ type: 'reset' });
-  });
-  document.getElementById('btnBudget').addEventListener('click', () => {
-    vscode && vscode.postMessage({ type: 'budget' });
-  });
+  // Guarded: the screenshot harnesses render a cut-down HUD, and a missing
+  // optional control must never take the whole canvas down with it.
+  const btnDashboard = document.getElementById('btnDashboard');
+  if (btnDashboard) {
+    btnDashboard.addEventListener('click', () => {
+      vscode && vscode.postMessage({ type: 'dashboard' });
+    });
+  }
 
   layout();
   requestAnimationFrame(frame);
