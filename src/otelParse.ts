@@ -416,7 +416,8 @@ export class OtelRollup {
     }
     total.count++;
     for (const [attribute, value] of Object.entries(event.attributes)) {
-      const valueNumber = typeof value === 'number' ? value : Number(value);
+      const valueNumber =
+        typeof value === 'number' ? value : typeof value === 'string' && value.trim() ? Number(value) : NaN;
       if (!Number.isFinite(valueNumber)) {
         continue;
       }

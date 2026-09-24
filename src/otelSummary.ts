@@ -570,11 +570,13 @@ export function redactUrl(raw: string | undefined): string {
 /** Compares what each source saw over the window in which both were running. */
 export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
   if (otelObserved === 0 || transcriptObserved === 0) {
+    const delta = otelObserved - transcriptObserved;
+    const base = Math.max(otelObserved, transcriptObserved) || 1;
     return {
       otelObserved,
       transcriptObserved,
-      deltaTokens: otelObserved - transcriptObserved,
-      deltaPercent: 0,
+      deltaTokens: delta,
+      deltaPercent: (delta / base) * 100,
       agreeing: false,
       pending: true
     };

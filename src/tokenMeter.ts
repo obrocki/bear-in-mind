@@ -400,9 +400,8 @@ export class TokenMeter implements vscode.Disposable {
         // when telemetry promotes the meter — which may never happen — so
         // pruning solely on read would let it grow for the life of the
         // extension and carry that growth into global state.
-        const cutoff = Date.now() - OVERLAP_WINDOW_MS;
         this.state.recentTranscript = sanitiseRecentTranscript([
-          ...this.state.recentTranscript.filter((e) => e.at >= cutoff),
+          ...this.state.recentTranscript,
           { at: Date.now(), input: i, output: o }
         ]);
       }

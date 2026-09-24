@@ -812,6 +812,7 @@ describe('drift', () => {
     assert.equal(drift.pending, true);
     assert.equal(drift.otelObserved, 1200);
     assert.equal(drift.deltaTokens, 1200);
+    assert.equal(drift.deltaPercent, 100);
     assert.equal(drift.agreeing, false);
   });
 });
