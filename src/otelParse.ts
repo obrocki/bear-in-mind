@@ -249,6 +249,21 @@ interface EventTotal {
   numeric: Map<string, { sum: number; count: number }>;
 }
 
+type EventQuery = Pick<LogEvent, 'name' | 'attributes'>;
+
+/** Only attributes used to group Quality signals belong in the compact totals. */
+const EVENT_TOTAL_ATTRIBUTES = new Set([
+  'outcome',
+  'copilot_chat.edit.outcome',
+  'rating',
+  'action',
+  'success'
+]);
+
+function eventTotalAttributes(attributes: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(attributes).filter(([key]) => EVENT_TOTAL_ATTRIBUTES.has(key)));
+}
+
 function newSeries(metric: string, attributes: Record<string, unknown>, atMs: number): Series {
   return {
     metric,
@@ -392,10 +407,11 @@ export class OtelRollup {
   }
 
   private recordEvent(event: LogEvent): void {
-    const key = `${event.name}\u0000${attrKey(event.attributes)}`;
+    const attributes = eventTotalAttributes(event.attributes);
+    const key = `${event.name}\u0000${attrKey(attributes)}`;
     let total = this.eventTotals.get(key);
     if (!total) {
-      total = { name: event.name, attributes: event.attributes, count: 0, numeric: new Map() };
+      total = { name: event.name, attributes, count: 0, numeric: new Map() };
       this.eventTotals.set(key, total);
     }
     total.count++;
@@ -736,7 +752,7 @@ export class OtelRollup {
     return matched.slice(-limit);
   }
 
-  countEvents(name: string, predicate?: (e: LogEvent) => boolean): number {
+  countEvents(name: string, predicate?: (event: EventQuery) => boolean): number {
     let n = 0;
     for (const e of this.eventTotals.values()) {
       if (e.name === name && (!predicate || predicate(e))) {
@@ -746,7 +762,11 @@ export class OtelRollup {
     return n;
   }
 
-  meanEventAttribute(name: string, attribute: string, predicate?: (e: LogEvent) => boolean): number | undefined {
+  meanEventAttribute(
+    name: string,
+    attribute: string,
+    predicate?: (event: EventQuery) => boolean
+  ): number | undefined {
     let sum = 0;
     let count = 0;
     for (const event of this.eventTotals.values()) {

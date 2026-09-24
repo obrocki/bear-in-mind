@@ -397,6 +397,8 @@ function tokenThroughput(input: SummaryInput, durationsMs: number[]): number {
 export function buildQuality(input: SummaryInput): QualitySection {
   const { rollup } = input;
 
+  // Metrics use namespaced attributes; matching log events use their final
+  // segment (for example, `copilot_chat.edit.outcome` becomes `outcome`).
   const eventMatches = (attributes: Record<string, unknown>, where?: Record<string, string>) =>
     !where ||
     Object.entries(where).every(([key, value]) => {
@@ -419,13 +421,13 @@ export function buildQuality(input: SummaryInput): QualitySection {
   const decided = editsAccepted + editsRejected;
 
   const chatEditsAccepted = Math.round(
-    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'accepted' })
+    rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'accepted' })
   );
   const chatEditsRejected = Math.round(
-    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'rejected' })
+    rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'rejected' })
   );
   const chatEditsSaved = Math.round(
-    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'saved' })
+    rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'saved' })
   );
 
   const linesAdded = Math.round(rollup.total(LINES_OF_CODE, { type: 'added' }));
@@ -495,6 +497,7 @@ export function buildQuality(input: SummaryInput): QualitySection {
       decided > 0 ||
       linesAdded + linesRemoved > 0 ||
       pullRequests > 0 ||
+      cloudSessions > 0 ||
       votes > 0 ||
       engagement > 0 ||
       toolCalls > 0,
@@ -567,9 +570,9 @@ export function redactUrl(raw: string | undefined): string {
 export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
   if (otelObserved === 0 || transcriptObserved === 0) {
     return {
-      otelObserved: 0,
-      transcriptObserved: 0,
-      deltaTokens: 0,
+      otelObserved,
+      transcriptObserved,
+      deltaTokens: otelObserved - transcriptObserved,
       deltaPercent: 0,
       agreeing: true,
       pending: true

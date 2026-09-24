@@ -9,6 +9,10 @@ export interface ReportingAdapter {
 
 export function createReportingAdapter(report: (input: number, output: number) => void): ReportingAdapter {
   return {
-    reportUsage: (usage) => report(usage?.input ?? 0, usage?.output ?? 0)
+    reportUsage: (usage) => report(safe(usage?.input), safe(usage?.output))
   };
+}
+
+function safe(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }

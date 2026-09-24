@@ -21,7 +21,7 @@ const esbuild = require('esbuild');
 const repoRoot = path.resolve(__dirname, '..');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-tests-'));
 
-const ENTRIES = ['src/otelParse.ts', 'src/otelSummary.ts', 'src/tokenMeter.ts'];
+const ENTRIES = ['src/otelParse.ts', 'src/otelSummary.ts', 'src/tokenMeter.ts', 'src/reportingAdapter.ts'];
 
 /**
  * `src/tokenMeter.ts` imports `vscode`, which does not exist outside the

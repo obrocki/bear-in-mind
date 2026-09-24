@@ -805,6 +805,13 @@ describe('drift', () => {
     assert.equal(computeDrift(1200, 1000).deltaTokens, 200);
     assert.equal(computeDrift(800, 1000).deltaTokens, -200);
   });
+
+  it('keeps one-sided observations visible while reconciliation is pending', () => {
+    const drift = computeDrift(1200, 0);
+    assert.equal(drift.pending, true);
+    assert.equal(drift.otelObserved, 1200);
+    assert.equal(drift.deltaTokens, 1200);
+  });
 });
 
 describe('percentile', () => {

@@ -20,6 +20,7 @@ if (!build) {
 }
 
 const { TokenMeter } = require(path.join(build, 'tokenMeter.js'));
+const { createReportingAdapter } = require(path.join(build, 'reportingAdapter.js'));
 
 /** The bundled `vscode` stub reads settings from this global. */
 function settings(next) {
@@ -256,6 +257,14 @@ describe('charging one stream of traffic', () => {
 });
 
 describe('manual reports', () => {
+  it('normalises invalid reports at the shared API and command adapter', () => {
+    const calls = [];
+    const adapter = createReportingAdapter((input, output) => calls.push({ input, output }));
+    adapter.reportUsage({ input: -1, output: NaN });
+    adapter.reportUsage({ input: 7, output: 3 });
+    assert.deepEqual(calls, [{ input: 0, output: 0 }, { input: 7, output: 3 }]);
+  });
+
   it('are added on top, because neither watcher can see them', () => {
     const { meter: m } = meter();
     m.observe('transcripts', 1000, 0);
