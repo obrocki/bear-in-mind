@@ -130,13 +130,13 @@ export class OtelWatcher implements vscode.Disposable {
   private saveTimer: NodeJS.Timeout | undefined;
   private scanning = false;
   /**
-   * Set when a configured feed was not on disk during a scan.
+   * The feed path that was found missing, if any.
    *
-   * A feed that appears afterwards is not a backlog to adopt as history —
-   * everything written to it happened while we were watching, so it is charged
-   * rather than baselined away.
+   * Tied to the path rather than a bare flag: if the setting is repointed at a
+   * different file that already exists, that file *does* have a backlog, and
+   * charging all of it as live usage would melt the berg on a config change.
    */
-  private sawFeedMissing = false;
+  private missingFeedPath: string | undefined;
   private disposed = false;
   private notes: string[] = [];
 
@@ -343,7 +343,7 @@ export class OtelWatcher implements vscode.Disposable {
       // Configured but not there yet — Copilot Chat creates it on its next
       // start. Remember that, so when it does appear its contents are charged
       // instead of being mistaken for history that predates us.
-      this.sawFeedMissing = true;
+      this.missingFeedPath = file;
       return;
     }
     if (!stat.isFile()) {
@@ -363,6 +363,9 @@ export class OtelWatcher implements vscode.Disposable {
     // stored prefix length travels with the hash, and a later scan re-hashes
     // exactly that many bytes to compare like with like.
     const previous = parseSignature(this.state.head);
+    // Only *this* file appearing after we saw it missing means it has no
+    // backlog. A different path that happens to exist has one.
+    const appeared = this.missingFeedPath === file;
     let replaced = this.state.path !== file;
     if (!replaced && previous) {
       replaced =
@@ -377,20 +380,20 @@ export class OtelWatcher implements vscode.Disposable {
         // Whatever is already on disk is the backlog. Fixing the boundary here
         // means records appended while we catch up fall outside it and are
         // charged rather than quietly folded into the baseline.
-        baselineEnd: this.sawFeedMissing ? 0 : stat.size,
+        baselineEnd: appeared ? 0 : stat.size,
         size: 0,
         input: 0,
         output: 0,
         // A feed that did not exist when we started watching is not a backlog:
         // everything in it happened on our watch and has to be charged.
-        seeded: this.sawFeedMissing
+        seeded: appeared
       };
       // The rollup has to go too. It still holds the previous stream's series,
       // events and record counts, so keeping it would blend two unrelated feeds
       // into one dashboard, and the new file's lower counters would read as a
       // counter restart and have the old history banked and added again.
       this._rollup = new OtelRollup();
-      this.sawFeedMissing = false;
+      this.missingFeedPath = undefined;
       this.persist(true);
     } else if (!previous || previous.length < MAX_SIGNATURE_BYTES) {
       // Grown past what we last fingerprinted — take a longer one now that
@@ -446,6 +449,15 @@ export class OtelWatcher implements vscode.Disposable {
     // The tail may be a partial line, so only ever advance past the last break.
     const lastBreak = text.lastIndexOf('\n');
     if (lastBreak < 0) {
+      if (!this.state.seeded && available > 0 && available === length) {
+        // The backlog's final record has no terminating newline, so the
+        // boundary sits inside it and the offset can never reach it. Pull the
+        // boundary back to the last complete line: seeding finishes here, and
+        // the partial record is read normally — and charged — once complete.
+        this.state.baselineEnd = this.state.offset;
+        this.persist();
+        return;
+      }
       if (available > length) {
         // The window is full and there is more file on disk beyond it, so
         // this is not a tail still being written — a single record is bigger
