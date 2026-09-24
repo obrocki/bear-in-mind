@@ -115,6 +115,7 @@ export class TokenMeter implements vscode.Disposable {
   private demoTimer: NodeJS.Timeout | undefined;
   private demo = false;
   private lastSource: UsageSource = 'transcripts';
+  private lastBasis: MeltBasis = 'budget';
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -337,9 +338,11 @@ export class TokenMeter implements vscode.Disposable {
       // This first delta describes traffic the transcripts have already
       // counted — telemetry lags them by an export interval — so it is already
       // inside the figure just carried over. Adding it again would bill the
-      // same request twice. Unless the transcripts have seen nothing at all, in
-      // which case nobody has counted it and it must be kept.
-      absorbed = tokens(this.state.transcripts) > 0;
+      // same request twice. Two exceptions: the transcripts having seen nothing
+      // at all, and the transcript watcher being switched off, in which case
+      // their ledger holds only history and cannot contain this request.
+      absorbed =
+        tokens(this.state.transcripts) > 0 && this.config.get<boolean>('trackCopilotChat', true);
       this.state.otel = { ...this.state.transcripts };
       this.state.sinceHandover = { otel: 0, transcripts: 0 };
     }
@@ -371,12 +374,26 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   /**
-   * Kept for the watcher's poll. Nothing about the charged figure depends on
-   * elapsed time any more, so this only has to notice a source change that a
-   * configuration edit could have caused.
+   * Kept for the watcher's poll.
+   *
+   * Two things can change without any usage being observed: telemetry's feed
+   * can go quiet, and the context reading can go stale. Neither raises an event
+   * of its own, and the HUD and status bar listen only on `onDidChange`, so the
+   * poll is where both get noticed.
    */
-  noteOtelAlive(_alive: boolean): void {
-    if (this.source !== this.lastSource) {
+  noteOtelAlive(alive: boolean): void {
+    if (this.state.promoted && !alive) {
+      // Telemetry has stopped. Hand back to the transcripts without letting the
+      // figure move: they adopt whatever the meter had reached, so nothing is
+      // lost, nothing is re-charged, and their next delta lands on top instead
+      // of having to climb back up to telemetry's total first.
+      this.state.transcripts = { ...this.charged };
+      this.state.promoted = false;
+      this.persist();
+    }
+    const basis = this.basis;
+    if (this.source !== this.lastSource || basis !== this.lastBasis) {
+      this.lastBasis = basis;
       this.publish();
     }
   }

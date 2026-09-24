@@ -10,7 +10,16 @@
  * was not a good enough reason.
  */
 
-let settings = {};
+/**
+ * Settings live on a global rather than in module state.
+ *
+ * Each bundle esbuild produces inlines its own copy of this stub, so a module
+ * export would not be the same object the test can reach. A global is the one
+ * channel they genuinely share.
+ */
+function current() {
+  return globalThis.__BEAR_SETTINGS__ || {};
+}
 
 class EventEmitter {
   constructor() {
@@ -32,6 +41,7 @@ const workspace = {
   getConfiguration(section) {
     return {
       get(key, fallback) {
+        const settings = current();
         const full = section ? `${section}.${key}` : key;
         return Object.prototype.hasOwnProperty.call(settings, full) ? settings[full] : fallback;
       }
@@ -45,9 +55,5 @@ const workspace = {
 module.exports = {
   EventEmitter,
   workspace,
-  lm: { selectChatModels: async () => [] },
-  /** Test helper: replace the backing settings map. */
-  __setSettings(next) {
-    settings = next || {};
-  }
+  lm: { selectChatModels: async () => [] }
 };

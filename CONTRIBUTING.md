@@ -19,7 +19,7 @@ icon in the activity bar.
 | `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
 | `npm run watch` | Same, but rebuilds on change. |
 | `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
-| `npm test` | Unit tests for the OpenTelemetry parsing and aggregation. |
+| `npm test` | Unit tests for the token accounting and the OpenTelemetry parsing. |
 | `npm run check:docs` | Balanced code fences, working relative links, and no raw HTML in any `.md`. |
 | `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
 
@@ -27,12 +27,13 @@ icon in the activity bar.
 (`Ctrl+Shift+B`), and it is exactly what CI runs —
 see [Packaging and releases](#packaging-and-releases).
 
-`npm test` bundles the `vscode`-free modules with esbuild into a scratch
-directory and runs `node --test` against them, so only `src/otelParse.ts` and
-`src/otelSummary.ts` are covered. That is deliberate: the parsing and the
-aggregation are where the bugs that nobody notices for a week live, so they were
-kept free of `vscode` imports specifically to make them testable. Everything else
-is still a manual pass in the Extension Development Host.
+`npm test` bundles the modules with esbuild into a scratch directory and runs
+`node --test` against them. `src/tokenMeter.ts` is covered too, against a small
+`vscode` stub in `test/vscode-stub.js` — it is the one place here where being
+quietly wrong costs the user money, so "it imports `vscode`" was not a good
+enough reason to leave it untested. The parsing and aggregation live in
+`vscode`-free files for the same reason. Everything else is still a manual pass
+in the Extension Development Host.
 
 ## How the pieces fit together
 

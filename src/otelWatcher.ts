@@ -27,6 +27,14 @@ export interface OtelUsageDelta {
 interface PersistedState {
   /** Which feed the offsets below belong to. */
   path: string;
+  /**
+   * Creation time of that feed.
+   *
+   * Size alone cannot tell a replaced feed from a growing one: a new file of
+   * the same size, or one truncated and rewritten past the old offset, both
+   * look unchanged. Identity has to come from the file itself.
+   */
+  birthMs: number;
   /** Bytes of the feed already consumed. */
   offset: number;
   size: number;
@@ -115,6 +123,7 @@ export class OtelWatcher implements vscode.Disposable {
     const stored = context.globalState.get<Partial<PersistedState>>(STATE_KEY);
     this.state = {
       path: stored?.path ?? '',
+      birthMs: Math.max(0, stored?.birthMs ?? 0),
       offset: Math.max(0, stored?.offset ?? 0),
       size: Math.max(0, stored?.size ?? 0),
       input: Math.max(0, stored?.input ?? 0),
@@ -294,16 +303,6 @@ export class OtelWatcher implements vscode.Disposable {
     // reusing them would skip a same-sized file entirely, or read a larger one
     // from the wrong position — and the seeded token baseline would belong to a
     // different stream altogether.
-    if (this.state.path !== file) {
-      this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
-      // The rollup has to go too. It still holds the previous feed's series,
-      // events and record counts, so keeping it would blend two unrelated
-      // streams into one dashboard and charge the new one against the old one's
-      // totals.
-      this._rollup = new OtelRollup();
-      this.persist(true);
-    }
-
     let stat: fs.Stats;
     try {
       stat = fs.statSync(file);
@@ -312,6 +311,29 @@ export class OtelWatcher implements vscode.Disposable {
     }
     if (!stat.isFile()) {
       return;
+    }
+
+    // Identity, not size. A replacement of the same size, or one truncated and
+    // rewritten past the old offset, is invisible to a size comparison — the
+    // reader would carry on mid-line in a file it has never seen.
+    const birthMs = Math.round(stat.birthtimeMs || 0);
+    const replaced = this.state.path !== file || this.state.birthMs !== birthMs;
+    if (replaced || stat.size < this.state.offset) {
+      this.state = {
+        path: file,
+        birthMs,
+        offset: 0,
+        size: 0,
+        input: 0,
+        output: 0,
+        seeded: false
+      };
+      // The rollup has to go too. It still holds the previous stream's series,
+      // events and record counts, so keeping it would blend two unrelated feeds
+      // into one dashboard, and the new file's lower counters would read as a
+      // counter restart and have the old history banked and added again.
+      this._rollup = new OtelRollup();
+      this.persist(true);
     }
     if (stat.size > MAX_FILE_BYTES) {
       this.note(
@@ -323,23 +345,6 @@ export class OtelWatcher implements vscode.Disposable {
     // Nothing new, and the tail is not a half-written line we still owe a read.
     if (stat.size === this.state.size && this.state.offset >= stat.size) {
       return;
-    }
-    // A shrunken file means it was rotated or cleared, most likely by a new
-    // process starting a fresh cumulative counter from zero. The in-memory
-    // rollup for this run starts empty either way, but the persisted
-    // input/output baseline still belongs to the old stream — left in place,
-    // the new (small) cumulative totals would read as negative growth and be
-    // clamped to zero, silently swallowing real usage until it grew past the
-    // old lifetime total. Realign the baseline the same way a changed feed
-    // path does: treat it as history to adopt, not usage already charged.
-    if (stat.size < this.state.offset) {
-      this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
-      // The rollup has to be replaced too. It still holds the old file's
-      // cumulative series, so the new file's lower counters would read as a
-      // counter restart and its history would be banked and added all over
-      // again, inflating both the dashboard and every later meter delta.
-      this._rollup = new OtelRollup();
-      this.persist(true);
     }
 
     const from = this.state.offset;
@@ -611,7 +616,7 @@ export class OtelWatcher implements vscode.Disposable {
 
   /** Forgets what it has charged and re-adopts the current feed as history. */
   rebaseline(): void {
-    this.state = { path: this.feedPath ?? '', offset: 0, size: 0, input: 0, output: 0, seeded: false };
+    this.state = { path: this.feedPath ?? '', birthMs: 0, offset: 0, size: 0, input: 0, output: 0, seeded: false };
     this.persist(true);
     this.scan();
   }

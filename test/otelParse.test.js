@@ -337,6 +337,46 @@ describe('cumulative metrics', () => {
     assert.ok(median > 100, `expected the slow bucket to survive the restart, got ${median}`);
   });
 
+  it('does not re-bank sealed history when a restored series restarts', () => {
+    // The review flagged this path as double-counting. It does not: the sealed
+    // portion is discounted once, in the contribution, so banking the full peak
+    // on restart is still correct. Pinned here so the reasoning is not lost.
+    const rollup = new OtelRollup();
+    const point = (session, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                { attributes: { 'gen_ai.token.type': 'input' }, endTime: [1, 0], value: { sum, count: 1 } }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    rollup.ingest(point('victim', 500));
+    for (let i = 0; i < 9000; i++) {
+      rollup.ingest(point('filler' + i, 1));
+    }
+    const sealedBaseline = rollup.tokenTotals().input;
+
+    // Returns, cumulative 800 — the 500 already sealed plus 300 more.
+    rollup.ingest(point('victim', 800));
+    assert.equal(rollup.tokenTotals().input - sealedBaseline, 300);
+
+    // Its exporter restarts and the counter begins again at 100.
+    rollup.ingest(point('victim', 100));
+    assert.equal(
+      rollup.tokenTotals().input - sealedBaseline,
+      400,
+      '800 burned then 100 more, of which 500 was already sealed'
+    );
+  });
+
   it('filters totals by attribute', () => {
     const rollup = loaded();
     assert.equal(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }), 3);

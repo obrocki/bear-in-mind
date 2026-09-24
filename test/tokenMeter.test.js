@@ -21,6 +21,11 @@ if (!build) {
 
 const { TokenMeter } = require(path.join(build, 'tokenMeter.js'));
 
+/** The bundled `vscode` stub reads settings from this global. */
+function settings(next) {
+  globalThis.__BEAR_SETTINGS__ = next || {};
+}
+
 /** A `vscode.Memento` that just holds a value. */
 function memento() {
   const store = new Map();
@@ -116,6 +121,44 @@ describe('charging one stream of traffic', () => {
       assert.ok(now >= last, `total fell from ${last} to ${now} after ${from} +${n}`);
       last = now;
     }
+  });
+
+  it('hands back to the transcripts when the feed stops, without moving the figure', () => {
+    const { meter: m } = meter();
+    m.observe('transcripts', 1000, 0);
+    m.observe('otel', 1000, 0);
+    m.observe('otel', 800, 0);
+    assert.equal(m.snapshot().total, 1800);
+    assert.equal(m.snapshot().source, 'otel');
+
+    // The feed goes quiet. The transcripts must resume charging immediately,
+    // not after climbing back up to telemetry's total.
+    m.noteOtelAlive(false);
+    assert.equal(m.snapshot().total, 1800, 'handing back must not move the figure');
+    assert.equal(m.snapshot().source, 'transcripts');
+
+    m.observe('transcripts', 100, 0);
+    assert.equal(m.snapshot().total, 1900, 'the next transcript delta lands on top');
+  });
+
+  it('keeps the first telemetry delta when the transcript watcher is off', () => {
+    const mem = memento();
+    // Historical transcript usage exists, but the watcher is disabled now, so
+    // it cannot have observed this request.
+    mem.store.set('iceberg.usage.v3', {
+      otel: { input: 0, output: 0, requests: 0 },
+      transcripts: { input: 5000, output: 0, requests: 2 },
+      promoted: false,
+      manual: { input: 0, output: 0, requests: 0 },
+      credits: 0,
+      since: 1,
+      sinceHandover: { otel: 0, transcripts: 0 }
+    });
+    settings({ 'iceberg.trackCopilotChat': false });
+    const m = new TokenMeter(mem);
+    m.observe('otel', 700, 0);
+    assert.equal(m.snapshot().total, 5700, 'nobody else could have counted it');
+    settings({});
   });
 
   it('survives a restart mid-handover', () => {
