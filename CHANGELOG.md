@@ -1,5 +1,19 @@
 # Change Log
 
+## Unreleased
+
+- Distinguished local cumulative tokens, reported transcript credits and aggregate
+  telemetry from Copilot's monthly allowance, selected-session cost and context window.
+- Fixed the habitat, status and usage stats showing a prompt-headroom percentage
+  beside an unrelated cumulative-budget fraction. Dashboard budget headroom now
+  uses the enabled token dimensions, not all input/output tokens.
+- Labelled trace headroom as the latest observed prompt allowance across sessions,
+  rather than the selected chat's full context window.
+- Separated the ice gauge from cumulative totals, with exact used/limit or
+  counted/target values and an explicit unavailable account credit limit.
+- Added meter scope/start and exact usage figures to diagnostics, credit-only and
+  missing-credit dashboard states, and regressions for the different gauge modes.
+
 ## 0.5.1
 
 - Consolidated the extension API and `iceberg.report` behind one typed adapter,

@@ -76,17 +76,17 @@ class HabitatHost implements vscode.Disposable {
     </div>
     <div class="bar" title="Ice remaining"><div id="fill"></div></div>
     <div class="row sub">
-      <span id="basis">budget remaining</span>
-      <span id="split">in 0 · out 0</span>
+      <span id="basis">local budget remaining</span>
+      <span id="split">local in 0 · out 0</span>
     </div>
     <div class="row sub">
-      <span id="tokens">0 / 1M tokens</span>
+      <span id="tokens">Waiting for local usage…</span>
     </div>
     <div class="row sub">
       <span id="source" class="source" title="Where the numbers come from">—</span>
       <button id="btnDashboard" type="button" title="Open the cost, speed and quality dashboard">Dashboard →</button>
     </div>
-    <p class="note">Bear in Mind can’t cap or reduce your spend — it only makes it visible. The bear is relying on your compassion for that.</p>
+    <p class="note">Local token usage, not your Copilot credit balance. The budget is a visual target, not a spending cap.</p>
   </div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

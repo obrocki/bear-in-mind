@@ -26,7 +26,7 @@ export interface UsageSnapshot {
   /** 1 = pristine iceberg, 0 = fully melted. */
   health: number;
   requests: number;
-  /** Copilot premium-request credits reported by VS Code, when available. */
+  /** Copilot credits observed in local transcripts, not account or selected-chat cost. */
   credits: number;
   meltdownDemo: boolean;
   bearName: string;
@@ -36,7 +36,7 @@ export interface UsageSnapshot {
   source: UsageSource;
   /** Whether the ice tracks the context window or the cumulative budget. */
   basis: MeltBasis;
-  /** Live context-window occupancy, when telemetry is reporting it. */
+  /** Latest observed prompt occupancy/allowance, not selected-chat context. */
   context?: ContextWindow;
   /** Agreement between the two watchers since they started overlapping. */
   drift: DriftReport;
@@ -82,7 +82,7 @@ function tokens(l: Ledger): number {
  * Reconciles automatic usage with max(otel, transcripts) per dimension.
  * Promotion carries the transcript balance and absorbs estimated recent overlap;
  * the sources have no shared request ID, so that estimate can undercount.
- * Manual reports add separately; premium credits come from transcripts.
+ * Manual reports add separately; reported credits come from transcripts.
  */
 export class TokenMeter implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<UsageSnapshot>();

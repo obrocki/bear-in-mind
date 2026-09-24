@@ -252,55 +252,73 @@
   /**
    * Says what the ice percentage actually measures.
    *
-   * It is the context window when telemetry reports one and the cumulative
-   * budget otherwise, and the two mean very different things — so the label has
-   * to follow the basis rather than always claiming "budget".
+   * Keep the numerator, denominator and percentage on the same basis, including
+   * the user's input/output counting settings in local-budget mode.
    */
-  function headroom(cost) {
-    if (cost.basis === 'context' && cost.context) {
-      return (
-        percent(cost.health) +
-        ' of the context window free · ' +
-        tokens(cost.context.used) +
-        ' / ' +
-        tokens(cost.context.limit) +
-        (cost.context.model ? ' on ' + cost.context.model : '')
-      );
-    }
-    return percent(cost.health) + ' of the ' + tokens(cost.budget) + '-token iceberg remains';
+  function renderGauge(cost) {
+    const prompt = cost.basis === 'context' && cost.context;
+    const gauge = el('div', 'gauge');
+    gauge.append(el('h3', null, prompt ? 'Ice gauge · prompt tokens' : 'Ice gauge · local token budget'));
+    gauge.append(stats([
+      { label: prompt ? 'Prompt used' : 'Counted tokens', value: count(prompt ? prompt.used : cost.countedTokens) },
+      { label: prompt ? 'Prompt limit' : 'Visual target', value: count(prompt ? prompt.limit : cost.budget) }
+    ]));
+    gauge.append(el('p', 'gauge-remaining', percent(cost.health) +
+      (prompt ? ' latest prompt allowance free' : ' local budget remaining')));
+    gauge.append(el('p', 'viz-caption', prompt
+      ? 'Latest observed prompt / max_prompt_tokens, not the selected chat\'s full context window. ' +
+        (prompt.model ? prompt.model + ' · ' : '') + ago(prompt.atMs) + '.'
+      : 'iceberg.tokenBudget: a visual target, not a Copilot spending cap. Only enabled token dimensions count.'));
+    return gauge;
   }
 
   function renderCost(cost) {
-    const node = section('cost', 'Cost', 'Tokens');
+    const node = section('cost', 'Cost', 'Local usage · not a bill');
+    node.append(el('p', 'headline-note',
+      'Local usage across sessions and workspaces, not the selected chat.'));
 
     if (!cost.available) {
       node.append(
         emptyState([
-          'No token counts yet. Once Copilot Chat reports usage the iceberg starts melting and this fills in.'
+          'No new token counts or credits in the local meter yet. Existing history is adopted without charging it.',
+          'Account usage and monthly credit allowance are not read.'
         ])
       );
+      node.append(renderGauge(cost));
       return node;
     }
 
     node.append(
       headline(
         tokens(cost.totalTokens),
-        'tokens',
-        headroom(cost) +
+        'local tokens',
+        'Meter since ' + new Date(cost.meterSinceMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' +
           ' · ' +
           (cost.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts')
       )
     );
-
-    const rows = [
+    node.append(stats([
       { label: 'Input', value: tokens(cost.inputTokens) },
       { label: 'Output', value: tokens(cost.outputTokens) }
-    ];
-    if (cost.cachedTokens > 0) rows.push({ label: 'Cache read', value: tokens(cost.cachedTokens) });
-    if (cost.reasoningTokens > 0) rows.push({ label: 'Reasoning', value: tokens(cost.reasoningTokens) });
-    if (cost.credits > 0) rows.push({ label: 'Premium credits', value: cost.credits.toFixed(1) });
-    if (cost.burnPerHour > 0) rows.push({ label: 'Burn rate', value: tokens(cost.burnPerHour), qualifier: '/hr' });
-    node.append(stats(rows));
+    ]));
+    node.append(renderGauge(cost));
+    node.append(stats([
+      { label: 'Reported credits', value: cost.credits > 0 ? cost.credits.toFixed(1) : '—' },
+      { label: 'Account credit limit', value: 'Not read' }
+    ]));
+    node.append(el('p', 'headline-note',
+      'Credits: local transcript growth, not the selected chat\'s Session Cost. ' +
+      'Account usage and monthly credit allowance are not read. Tokens are not credits.'));
+
+    const telemetryRows = [];
+    if (cost.cachedTokens > 0) telemetryRows.push({ label: 'Trace cache read', value: tokens(cost.cachedTokens) });
+    if (cost.reasoningTokens > 0) telemetryRows.push({ label: 'Trace reasoning', value: tokens(cost.reasoningTokens) });
+    if (cost.burnPerHour > 0) telemetryRows.push({ label: 'Feed burn rate', value: tokens(cost.burnPerHour), qualifier: '/hr' });
+    if (telemetryRows.length) {
+      node.append(stats(telemetryRows));
+      node.append(el('p', 'headline-note',
+        'Trace details: retained spans from the last 7 days. Feed rate: plotted intervals.'));
+    }
 
     if (cost.series.length > 1) {
       const viz = el('div', 'viz');
@@ -329,7 +347,8 @@
       // The headline is the charged ledger, which never includes that. Saying so
       // is cheaper than pretending the two cover the same window.
       node.append(
-        el('p', 'viz-caption', 'Split across everything telemetry has observed, including history adopted on first run.')
+        el('p', 'viz-caption', 'All observed feed history, not the local meter. ' +
+          'Repeated prompts count on every model call, not just once as context occupancy.')
       );
     }
 
@@ -363,12 +382,14 @@
         tokens(Math.abs(drift.deltaTokens)) +
         ', ' +
         Math.abs(drift.deltaPercent).toFixed(1) +
-        '%)'
+        '%). Source comparison, not billing; coverage and export timing can differ.'
     );
   }
 
   function renderSpeed(speed) {
-    const node = section('speed', 'Speed', 'Session duration');
+    const node = section('speed', 'Speed', 'Observed session durations');
+    node.append(el('p', 'headline-note',
+      'Across retained traces from the last 7 days or file-feed history, not the selected chat.'));
 
     if (!speed.available) {
       node.append(
@@ -386,7 +407,7 @@
         median.value,
         'median session',
         count(speed.sessions) +
-          ' session' +
+          ' observed session' +
           (speed.sessions === 1 ? '' : 's') +
           ' · ' +
           count(speed.llmCalls) +

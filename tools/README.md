@@ -20,4 +20,5 @@ shim. Keep `shot.html` and `dashboard.html` in sync with the webviews.
 To rebuild one screenshot: `npm run media:shots -- dashboard-waiting.png`.
 
 Preview `shot.html?health=0.3&chrome=0` or `dashboard.html?waiting` in a browser.
-The dashboard also supports `?empty` for a disconnected source.
+Both harnesses support `?context` for latest-prompt headroom; the dashboard also
+supports `?empty` for a disconnected source.

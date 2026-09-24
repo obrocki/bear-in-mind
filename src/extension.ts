@@ -78,6 +78,8 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       feed: otel.health(),
       bearName: usage.bearName,
       budget: usage.budget,
+      countedTokens: usage.total,
+      meterSinceMs: meter.since,
       health: usage.health,
       totals: { input: usage.input, output: usage.output, credits: usage.credits },
       source: usage.source,
@@ -121,18 +123,17 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     status.text = `$(snowflake) ${pct}%`;
     status.tooltip = new vscode.MarkdownString(
       [
-        s.basis === 'context' && s.context
-          ? `**Bear in Mind** — ${pct}% of the context window free`
-          : `**Bear in Mind** — ${pct}% ice remaining`,
+        `**Bear in Mind** — ${iceReadout(s)}`,
         '',
         ...(s.basis === 'context' && s.context
-          ? [`- Context: \`${fmt(s.context.used)}\` / \`${fmt(s.context.limit)}\`${s.context.model ? ` (${s.context.model})` : ''}`]
+          ? [`- Latest trace: ${s.context.model ?? 'unknown model'} at ${new Date(s.context.atMs).toISOString()}; not the selected chat's full context window.`]
           : []),
-        `- Used: \`${fmt(s.total)}\` / \`${fmt(s.budget)}\` tokens`,
-        `- Input: \`${fmt(s.input)}\` · Output: \`${fmt(s.output)}\``,
+        `- Local totals: input \`${fmt(s.input)}\` · output \`${fmt(s.output)}\``,
         `- Requests counted: \`${s.requests}\`` +
-          (s.credits > 0 ? ` · Credits: \`${s.credits.toFixed(1)}\`` : ''),
+          ` · Reported credits: ${s.credits > 0 ? `\`${s.credits.toFixed(1)}\`` : 'not reported'}`,
+        `- Across local sessions/workspaces since ${new Date(meter.since).toISOString()}; not selected-session cost.`,
         `- Source: ${s.source === 'otel' ? 'OpenTelemetry' : 'chat transcripts'}`,
+        '- Account usage and monthly credit allowance are not read.',
         '',
         `${s.bearName} ${moodLine(s.health)}`,
         '',
@@ -169,9 +170,10 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       const s = meter.snapshot();
       const source = s.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts';
       const pick = await vscode.window.showInformationMessage(
-        `${Math.round(s.health * 100)}% ice left — ${fmt(s.total)} / ${fmt(s.budget)} tokens ` +
-          `(in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} requests` +
-          `${s.credits > 0 ? `, ${s.credits.toFixed(1)} credits` : ''}) · ${source}.`,
+        `${iceReadout(s)}. Local totals across sessions/workspaces: ` +
+          `in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} requests; ` +
+          `reported credits ${s.credits > 0 ? s.credits.toFixed(1) : 'not reported'} · ${source}. ` +
+          `Not selected-session cost or account usage; the monthly credit allowance is not read.`,
         'Open Dashboard',
         'Open Habitat'
       );
@@ -368,12 +370,27 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     `  last record         ${feed.lastRecordAtMs ? new Date(feed.lastRecordAtMs).toISOString() : 'never'}`
   );
   output.appendLine(`  charging source     ${usage.source}`);
+  output.appendLine(`  meter since         ${new Date(meter.since).toISOString()}`);
+  output.appendLine(`  local scope         observed sessions/workspaces, not selected chat or billing period`);
+  output.appendLine(`  local totals        ${usage.input} input / ${usage.output} output tokens`);
+  output.appendLine(`  reported credits    ${usage.credits > 0 ? usage.credits : 'not reported'} (local transcripts)`);
+  output.appendLine(`  local budget        ${usage.total} counted / ${usage.budget} tokens (visual target only)`);
+  output.appendLine(`  ice gauge           ${usage.basis}: ${iceReadout(usage)}`);
+  if (usage.context) {
+    output.appendLine(
+      `  latest prompt       ${usage.context.used} / ${usage.context.limit} max_prompt_tokens · ` +
+      `${usage.context.model ?? 'unknown model'} · ${new Date(usage.context.atMs).toISOString()} (any session)`
+    );
+  }
+  const observed = otel.rollup.tokenTotals();
+  output.appendLine(`  feed with history   ${observed.input} input / ${observed.output} output tokens`);
+  output.appendLine('  billing allowance   not read; tokens are not credits');
   output.appendLine(
     `  reconciliation      ${
       drift.pending
         ? 'pending — waiting for observations from both sources'
-        : `otel ${fmt(drift.otelObserved)} vs transcripts ${fmt(drift.transcriptObserved)} ` +
-          `(${drift.deltaTokens >= 0 ? '+' : '-'}${fmt(Math.abs(drift.deltaTokens))}, ` +
+        : `otel ${drift.otelObserved} vs transcripts ${drift.transcriptObserved} tokens ` +
+          `(${drift.deltaTokens >= 0 ? '+' : '-'}${Math.abs(drift.deltaTokens)}, ` +
           `${drift.deltaPercent.toFixed(2)}%) — ${drift.agreeing ? 'agreeing' : 'DIVERGING'}`
     }`
   );
@@ -544,7 +561,6 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
       'iceberg.bear',
       async (request, chatContext, stream, token) => {
         const s = meter.snapshot();
-        const pct = Math.round(s.health * 100);
 
         const history = chatContext.history
           .map((h) => ('prompt' in h ? h.prompt : ''))
@@ -554,8 +570,8 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
         const messages = [
           vscode.LanguageModelChatMessage.User(
             `You are ${s.bearName}, a laconic pixel-art polar bear standing on a shrinking iceberg. ` +
-              `The iceberg represents the user's remaining LLM token budget: ${pct}% ice left ` +
-              `(${s.total} of ${s.budget} tokens burned). Answer the user helpfully in at most ` +
+              `The iceberg shows ${iceReadout(s)}. This is not a Copilot credit balance or spending cap. ` +
+              `Answer the user helpfully in at most ` +
               `4 sentences, and work in one dry remark about the ice.`
           ),
           vscode.LanguageModelChatMessage.User(request.prompt)
@@ -591,6 +607,13 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
   } catch {
     // Chat isn't available in this VS Code build — the rest still works.
   }
+}
+
+function iceReadout(s: UsageSnapshot): string {
+  const pct = Math.round(s.health * 100);
+  return s.basis === 'context' && s.context
+    ? `${pct}% latest prompt allowance free (used ${s.context.used.toLocaleString('en-US')} / limit ${s.context.limit.toLocaleString('en-US')} tokens; latest trace, any session)`
+    : `${pct}% local token budget remaining (counted ${s.total.toLocaleString('en-US')} / target ${s.budget.toLocaleString('en-US')} tokens; visual target, not a Copilot spending cap)`;
 }
 
 function fmt(n: number): string {

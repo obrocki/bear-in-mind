@@ -21,14 +21,16 @@ const SHOTS = [
   { file: 'hero.png', page: 'shot.html', q: 'health=1&chrome=0&hud=0&pixelScale=4', w: 1200, h: 330, dsf: 1, settle: 9000 },
   { file: 'panel-full.png', page: 'shot.html', q: 'health=1', w: 330, h: 440, dsf: 2, settle: 6000 },
   { file: 'panel-mid.png', page: 'shot.html', q: 'health=0.54', w: 330, h: 440, dsf: 2, settle: 6500 },
+  { file: 'panel-context.png', page: 'shot.html', q: 'context', w: 330, h: 440, dsf: 2, settle: 6500 },
   { file: 'panel-low.png', page: 'shot.html', q: 'health=0.16', w: 330, h: 440, dsf: 2, settle: 7000 },
   { file: 'panel-melted.png', page: 'shot.html', q: 'health=0', w: 330, h: 440, dsf: 2, settle: 6000 },
   { file: 'editor-view.png', page: 'shot.html', q: 'health=0.38&compact=0&chrome=0', w: 900, h: 520, dsf: 2, settle: 8000 },
   { file: 'melt-progression.png', page: 'grid.html', q: '', w: 1160, h: 330, dsf: 2, settle: 11000 },
   // The dashboard is static DOM, so it needs only long enough to paint.
-  { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 540, dsf: 2, settle: 1200 },
-  { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 330, dsf: 2, settle: 1200 },
-  { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 540, dsf: 2, settle: 1200 }
+  { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-context.png', page: 'dashboard.html', q: 'context', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 470, dsf: 2, settle: 1200 },
+  { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 1000, dsf: 2, settle: 1200 }
 ];
 
 const requested = process.argv.slice(2);

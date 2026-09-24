@@ -626,12 +626,13 @@ export class OtelWatcher implements vscode.Disposable {
   }
 
   /**
-   * Reads how full the context window was on the most recent model call.
+   * Reads prompt usage against the input allowance of the most recent model call.
    *
    * `copilot_chat.request.max_prompt_tokens` is not one of the columns the
    * store denormalises, but every attribute is kept in `span_attributes`, so it
    * is one join away. Only the newest `chat` span matters — this is a live
-   * gauge, not a total.
+   * gauge, not a total. It may belong to any session in the store, and the prompt
+   * allowance is not necessarily the full context limit displayed by VS Code.
    */
   private readContextWindow(db: SqliteDatabase): ContextWindow | undefined {
     try {

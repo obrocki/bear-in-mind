@@ -47,11 +47,11 @@ function dashboard() {
   return {
     messages,
     nodes,
-    render(feed, rollup = new OtelRollup(), drift = computeDrift(0, 0)) {
+    render(feed, rollup = new OtelRollup(), drift = computeDrift(0, 0), usage = {}) {
       const snapshot = buildSnapshot({
         rollup, spans: emptySpanDigest(), bearName: 'Nanuq', budget: 5000000, health: 1,
         totals: { input: 100, output: 10, credits: 0 }, source: 'otel', basis: 'budget',
-        drift,
+        countedTokens: 110, meterSinceMs: Date.UTC(2026, 8, 24, 12), drift, ...usage,
         feed: {
           watching: true, copilotOtelEnabled: true, jsonlActive: false, sqliteActive: false,
           lastRecordAtMs: 0, records: { metrics: 0, logs: 0, spans: 0, unknown: 0, malformed: 0 },
@@ -63,6 +63,111 @@ function dashboard() {
     }
   };
 }
+
+it('distinguishes local tokens, reported credits and unavailable account limits', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), computeDrift(2100000, 694000), {
+    totals: { input: 2000000, output: 100000, credits: 293.2 },
+    countedTokens: 2100000, health: 0.58
+  });
+  const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
+  assert.match(cost.textContent, /2\.1M local tokens/);
+  assert.match(cost.textContent, /across sessions and workspaces/);
+  assert.match(cost.textContent, /not the selected chat/);
+  assert.match(cost.textContent, /since 2026-09-24 12:00 UTC/);
+  assert.match(cost.textContent, /Reported credits 293\.2/);
+  assert.match(cost.textContent, /Account credit limit Not read/);
+  assert.match(cost.textContent, /Account usage and monthly credit allowance are not read/);
+  assert.match(cost.textContent, /not a Copilot spending cap/);
+  assert.doesNotMatch(cost.textContent, /Premium credits/);
+});
+
+it('uses only enabled token dimensions for the local budget gauge', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    totals: { input: 2000000, output: 100000, credits: 0 },
+    countedTokens: 100000, health: 0.98
+  });
+  assert.match(d.nodes.sections.textContent, /2\.1M local tokens/);
+  assert.match(d.nodes.sections.textContent, /Counted tokens 100,000 Visual target 5,000,000/);
+  assert.match(d.nodes.sections.textContent, /98% local budget remaining/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /2\.1M \/ 5\.0M/);
+});
+
+it('labels context as the latest observed prompt, not current-chat occupancy or quota', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'context', health: 0.8634,
+    context: { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now() }
+  });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /86%.*latest prompt allowance free/);
+  assert.match(text, /Prompt used 136,600 Prompt limit 1,000,000/);
+  assert.match(text, /max_prompt_tokens/);
+  assert.match(text, /not the selected chat's full context window/);
+  assert.doesNotMatch(text, /5\.0M.*remains/);
+});
+
+it('shows credit-only observations without requiring token counts', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    totals: { input: 0, output: 0, credits: 293.2 }, countedTokens: 0
+  });
+  assert.match(d.nodes.sections.textContent, /Reported credits 293\.2/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /No new token counts/);
+});
+
+it('shows a recent prompt gauge before any new tokens have been charged', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    totals: { input: 0, output: 0, credits: 0 }, countedTokens: 0,
+    basis: 'context', health: 0.75,
+    context: { used: 32000, limit: 128000, model: 'gpt-4o', atMs: Date.now() }
+  });
+  assert.match(d.nodes.sections.textContent, /75% latest prompt allowance free/);
+  assert.match(d.nodes.sections.textContent, /Prompt used 32,000 Prompt limit 128,000/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /No new token counts/);
+});
+
+it('explains billing limitations even before local observations arrive', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    totals: { input: 0, output: 0, credits: 0 }, countedTokens: 0
+  });
+  assert.match(d.nodes.sections.textContent, /Account usage and monthly credit allowance are not read/);
+  assert.match(d.nodes.sections.textContent, /No new token counts/);
+  assert.match(d.nodes.sections.textContent, /Visual target 5,000,000/);
+});
+
+it('does not round a prompt limit into an indistinguishable 1M label', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'context', health: 1 - 136600 / 1048576,
+    context: { used: 136600, limit: 1048576, model: null, atMs: Date.now() }
+  });
+  assert.match(d.nodes.sections.textContent, /Prompt limit 1,048,576/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /Visual target/);
+});
+
+it('does not turn missing transcript credits into a zero-cost claim', () => {
+  const d = dashboard();
+  d.render({});
+  assert.match(d.nodes.sections.textContent, /Reported credits —/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /Reported credits 0/);
+});
+
+it('identifies speed as aggregate telemetry rather than the selected session', () => {
+  const d = dashboard();
+  const spans = emptySpanDigest();
+  spans.sessions = [{
+    sessionId: 'one', durationMs: 13000, llmCalls: 32, toolCalls: 37,
+    inputTokens: 2100000, outputTokens: 0, cachedTokens: 0
+  }];
+  d.render({}, new OtelRollup(), undefined, { spans });
+  const speed = d.nodes.sections.children.find((section) => section.dataset.key === 'speed');
+  assert.match(speed.textContent, /1 observed session/);
+  assert.match(speed.textContent, /not the selected chat/);
+});
 
 it('shows waiting, not connect, for a flowing feed with no quality events', () => {
   const d = dashboard();

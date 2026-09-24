@@ -33,7 +33,7 @@
     input: 0,
     output: 0,
     total: 0,
-    budget: 1000000,
+    budget: 5000000,
     bearName: 'Nanuq',
     animate: true,
     pixelScale: 0
@@ -917,20 +917,29 @@
     el.name.textContent = s.bearName || 'Nanuq';
     el.pct.textContent = pct + '%';
     el.fill.style.width = Math.max(0, state.targetHealth * 100) + '%';
-    el.tokens.textContent = fmt(s.total) + ' / ' + fmt(s.budget) + ' tokens';
-    el.split.textContent = 'in ' + fmt(s.input) + ' · out ' + fmt(s.output);
+    const prompt = s.basis === 'context' && s.context;
+    el.tokens.textContent = prompt
+      ? 'Prompt used ' + prompt.used.toLocaleString('en-US') + ' / limit ' + prompt.limit.toLocaleString('en-US') + ' tokens'
+      : 'Counted ' + s.total.toLocaleString('en-US') + ' / target ' + s.budget.toLocaleString('en-US') + ' tokens';
+    el.tokens.title = prompt
+      ? 'Latest observed prompt / max_prompt_tokens; not the selected chat\'s full context window.'
+      : 'Enabled token dimensions / iceberg.tokenBudget; a local visual target, not a Copilot spending cap.';
+    el.split.textContent = 'local in ' + fmt(s.input) + ' · out ' + fmt(s.output);
     if (el.basis) {
       // The percentage means two different things depending on what the
       // telemetry can see, so say which one it is rather than leaving a bare
       // number to be misread.
       el.basis.textContent =
-        s.basis === 'context' && s.context
-          ? 'context free · ' + fmt(s.context.used) + ' / ' + fmt(s.context.limit)
-          : 'budget remaining';
+        prompt ? 'latest prompt free' : 'local budget remaining';
     }
     if (el.source) {
       el.source.textContent =
-        s.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts';
+        prompt
+          ? 'latest trace (any session)'
+          : s.source === 'otel' ? 'local usage · OpenTelemetry' : 'local usage · transcripts';
+      el.source.title = prompt
+        ? (prompt.model || 'unknown model') + ' · ' + new Date(prompt.atMs).toISOString()
+        : 'Observed across local sessions/workspaces, not the selected chat or account billing period.';
       el.source.dataset.live = s.source === 'otel' ? 'true' : 'false';
     }
 
