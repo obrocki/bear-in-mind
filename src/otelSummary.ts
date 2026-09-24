@@ -61,7 +61,7 @@ export interface SpanDigest {
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
-  /** How full the context window was on the most recent model call. */
+  /** Latest observed prompt occupancy against `max_prompt_tokens`, from any session. */
   context?: ContextWindow;
 }
 
