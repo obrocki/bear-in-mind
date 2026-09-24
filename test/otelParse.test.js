@@ -596,13 +596,29 @@ describe('summary sections', () => {
     feed: {},
     bearName: 'Nanuq',
     budget: 1000000,
+    countedTokens: 6970,
+    meterSinceMs: 1234,
+    basis: 'budget',
     health: 0.5,
     totals: { input: 6580, output: 390, credits: 2 },
     source: 'otel',
     drift: computeDrift(0, 0)
   });
 
-  it('builds cost from the telemetry totals', () => {
+  it('keeps meter totals separate from telemetry history and the budget numerator', () => {
+    const input = base(loaded());
+    input.totals = { input: 100000, output: 23456, credits: 2 };
+    input.countedTokens = 390;
+    input.health = 1 - 390 / input.budget;
+    const cost = buildCost(input);
+    assert.equal(cost.totalTokens, 123456);
+    assert.equal(cost.countedTokens, 390);
+    assert.equal(cost.meterSinceMs, 1234);
+    assert.equal(cost.health, 1 - cost.countedTokens / cost.budget);
+    assert.notEqual(cost.byModel.reduce((sum, model) => sum + model.total, 0), cost.totalTokens);
+  });
+
+  it('builds cost from the meter totals', () => {
     const cost = buildCost(base(loaded()));
     assert.equal(cost.totalTokens, 6970);
     assert.ok(cost.available);

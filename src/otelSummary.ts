@@ -61,18 +61,15 @@ export interface SpanDigest {
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
-  /** How full the context window was on the most recent model call. */
+  /** Latest observed prompt occupancy against `max_prompt_tokens`, from any session. */
   context?: ContextWindow;
 }
 
 /**
- * The live occupancy of a model's context window.
- *
- * `copilot_chat.request.max_prompt_tokens` rides on every `chat` span, so the
- * prompt size can be read against the window it had to fit in. Unlike a token
- * budget this needs no configuring and no resetting — it is a real constraint
- * the model is working under, it rises through an agent turn, and it drops on
- * its own when a new session starts or the context is summarised.
+ * Prompt occupancy from the latest observed chat span, across the trace store.
+ * `limit` is `copilot_chat.request.max_prompt_tokens`, not a billing allowance
+ * or necessarily the full context window shown by VS Code (including response
+ * reserve). This reading is not tied to the selected editor chat.
  */
 export interface ContextWindow {
   used: number;
@@ -140,6 +137,9 @@ export interface CostSection {
   cachedTokens: number;
   reasoningTokens: number;
   credits: number;
+  /** Token dimensions enabled for the local visual budget, not all raw tokens. */
+  countedTokens: number;
+  meterSinceMs: number;
   budget: number;
   health: number;
   /** What `health` measures, so the UI never mislabels it. */
@@ -216,6 +216,8 @@ export interface SummaryInput {
   feed: FeedHealth;
   bearName: string;
   budget: number;
+  countedTokens: number;
+  meterSinceMs: number;
   health: number;
   /** Totals currently charged to the meter. */
   totals: { input: number; output: number; credits: number };
@@ -281,13 +283,15 @@ export function buildCost(input: SummaryInput): CostSection {
   const series = input.rollup.tokenSeries();
 
   return {
-    available: inputTokens + outputTokens > 0,
+    available: inputTokens + outputTokens > 0 || totals.credits > 0 || input.context !== undefined,
     totalTokens: inputTokens + outputTokens,
     inputTokens,
     outputTokens,
     cachedTokens: spans.cachedTokens,
     reasoningTokens: spans.reasoningTokens,
     credits: totals.credits,
+    countedTokens: input.countedTokens,
+    meterSinceMs: input.meterSinceMs,
     budget: input.budget,
     health: input.health,
     basis: input.basis,

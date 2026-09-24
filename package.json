@@ -157,12 +157,12 @@
           "type": "number",
           "default": 5000000,
           "minimum": 1000,
-          "description": "Token budget for the fallback melt. Usage is measured automatically; this sets the denominator."
+          "description": "Local visual token budget for the fallback melt (enabled input/output dimensions). Not your Copilot credit allowance, context-window limit or an enforced spending cap; does not reset with billing."
         },
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Read Copilot Chat token counts and premium credits from local transcripts."
+          "description": "Read Copilot Chat token counts and reported credits across local transcripts. Not the selected chat's Session Cost or account billing usage."
         },
         "iceberg.otel.enabled": {
           "type": "boolean",

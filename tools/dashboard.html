@@ -8,6 +8,7 @@
 
        ?empty   the not-yet-connected state
        ?waiting connected feed with no quality signals
+       ?context latest-prompt gauge instead of local budget
        ?narrow  sidebar width (the CSS breakpoint does the rest)
 -->
 <link href="../media/dashboard.css" rel="stylesheet" />
@@ -66,6 +67,9 @@
       reasoningTokens: 18240,
       credits: 37.5,
       budget: 5000000,
+      countedTokens: 3184920,
+      meterSinceMs: Date.UTC(2026, 8, 24, 12),
+      basis: 'budget',
       health: 0.363,
       burnPerHour: 412000,
       byModel: [
@@ -138,6 +142,12 @@
       missing: []
     }
   };
+
+  if (location.search.includes('context')) {
+    snapshot.cost.basis = 'context';
+    snapshot.cost.context = { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now() };
+    snapshot.cost.health = 1 - snapshot.cost.context.used / snapshot.cost.context.limit;
+  }
 
   if (location.search.includes('waiting')) {
     snapshot.quality.available = false;

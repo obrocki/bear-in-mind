@@ -34,13 +34,43 @@ Open **Iceberg: Open Token Dashboard** or the sidebar's *Cost, Speed, Quality* v
 
 | Section | Signals |
 | --- | --- |
-| Cost | Input/output tokens by model, cache/reasoning tokens, premium credits and burn rate. Not a currency bill. |
+| Cost | Local input/output totals, reported Copilot credits, telemetry model totals, cache/reasoning tokens and burn rate. Not a bill. |
 | Speed | Session and model-call durations, first-token latency, turns and slowest tools. |
 | Quality | Edit acceptance, code survival, pull requests, tool success and response feedback. |
 
-The ice shows **context-window headroom** when a recent trace reports it;
-otherwise it shows cumulative usage against `iceberg.tokenBudget` (default 5M).
-The label identifies the mode. Missing signals stay empty rather than implying zero.
+The ice shows **latest observed prompt headroom** when a recent trace reports it;
+otherwise it shows counted local usage against `iceberg.tokenBudget` (default 5M).
+The percentage and token fraction always use the same basis. Missing signals
+stay empty rather than implying zero. The separate **Ice gauge** labels the
+exact **Prompt used / Prompt limit** or **Counted tokens / Visual target**;
+**Account credit limit: Not read** is never replaced with the local token target.
+
+### Comparing this with Copilot
+
+These readings have different units and scopes, even when viewed during one chat:
+
+| Reading | Meaning |
+| --- | --- |
+| Copilot status **Credits used / allowance** | Account/billing-period credits and the allowance Copilot reports. Bear in Mind does not read either value or the reset date. |
+| Copilot **Session Cost** | Credits for the selected chat. Bear in Mind's reported credits instead accumulate observed growth across local transcripts. |
+| Copilot **Context Window** | Context occupancy for that chat, not tokens processed over its lifetime. Repeated model calls can process the same context again. |
+| Dashboard **local tokens** | Persisted, reconciled usage since the displayed meter start, across observed sessions/workspaces, plus manual reports. Existing history is not charged; it does not reset monthly. |
+| Dashboard model totals and speed | Aggregates, not the selected chat: the file feed includes adopted history; trace details cover retained spans from the last seven days. Model totals need not sum to the local meter. |
+| Ice in prompt mode | Input tokens / `max_prompt_tokens` from the latest observed chat trace, which may belong to another session. The prompt allowance is not necessarily the full context window including response reserve. |
+| Ice in local-budget mode | Enabled input/output token dimensions / the configured visual target. This is not a Copilot spending cap. |
+
+For example, **41,780.3 / 10,000,000 credits**, **293.2 session credits** and
+**136.6K / 1M context tokens** are not competing versions of one meter. Neither
+Copilot limit should be copied into the extension's 5M-token visual budget.
+Credits depend on model pricing and token type, including cache usage; there is
+no fixed token-to-credit conversion.
+
+See [Copilot billing](https://docs.github.com/en/copilot/concepts/billing-and-usage/organizations-and-enterprises/billing)
+and [VS Code usage monitoring](https://code.visualstudio.com/docs/agents/guides/optimize-usage#monitor-your-usage).
+A transcript/OTel divergence is a **source diagnostic, not a billing comparison**.
+Different coverage, baselines and export timing can contribute; screenshots alone
+cannot identify the cause. Use **Iceberg: Telemetry Diagnostics** to capture exact
+observed totals, meter start, budget numerator and the current gauge basis.
 
 ## Connecting the telemetry
 
@@ -67,7 +97,7 @@ events are never added together; inference events alone are not quality signals.
 
 Existing history becomes a baseline. Watchers charge only growth and persist
 their accounting across restarts. Automatic input/output totals use
-`max(telemetry, transcripts)` per dimension, **not their sum**; premium credits
+`max(telemetry, transcripts)` per dimension, **not their sum**; reported credits
 come from transcripts. Manual API reports are added separately.
 
 **Handover is approximate.** The sources share no request ID. At each telemetry
@@ -112,7 +142,7 @@ Common settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `iceberg.tokenBudget` | `5000000` | Budget-mode denominator. |
+| `iceberg.tokenBudget` | `5000000` | Local visual budget, not Copilot's credit allowance or context limit. |
 | `iceberg.trackCopilotChat` | `true` | Read transcript token counts and credits. |
 | `iceberg.otel.enabled` | `true` | Read local telemetry. |
 | `iceberg.otel.authoritative` | `true` | Include new telemetry usage in the meter; off makes it display-only. |

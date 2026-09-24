@@ -13,6 +13,7 @@
     budget=<n>      token budget           hud=0        hide the HUD strip
     compact=0       editor-tab layout      bear=<name>  bear name
     pixelScale=<n>  0 = auto-fit           note=0       hide the compassion note
+    context        show latest-prompt headroom with separate local totals
 -->
 <style>
   :root {
@@ -82,17 +83,17 @@
         </div>
         <div class="bar" title="Ice remaining"><div id="fill"></div></div>
         <div class="row sub">
-          <span id="basis">budget remaining</span>
-          <span id="split">in 0 &middot; out 0</span>
+          <span id="basis">local budget remaining</span>
+          <span id="split">local in 0 &middot; out 0</span>
         </div>
         <div class="row sub">
-          <span id="tokens">0 / 5M tokens</span>
+          <span id="tokens">Waiting for local usage&hellip;</span>
         </div>
         <div class="row sub">
           <span id="source" class="source">metered by OpenTelemetry</span>
           <button id="btnDashboard" type="button">Dashboard &rarr;</button>
         </div>
-        <p class="note">Bear in Mind can&rsquo;t cap or reduce your spend &mdash; it only makes it visible. The bear is relying on your compassion for that.</p>
+        <p class="note">Local token usage, not your Copilot credit balance. The budget is a visual target, not a spending cap.</p>
       </div>
     </div>
     <div id="statusbar"><span id="sb">&#10052; 100%</span></div>
@@ -116,7 +117,11 @@
 
       // Roughly the real-world split: agent mode resends context every turn, so
       // prompt tokens dominate about 10:1.
-      var total = Math.round(budget * (1 - health));
+      var context = q.has('context')
+        ? { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now() }
+        : undefined;
+      var total = context ? 2100000 : Math.round(budget * (1 - health));
+      if (context) health = 1 - context.used / context.limit;
       var input = Math.round(total * 0.92);
       window.postMessage({
         type: 'state',
@@ -126,6 +131,9 @@
           output: total - input,
           total: total,
           budget: budget,
+          basis: context ? 'context' : 'budget',
+          context: context,
+          source: 'otel',
           requests: Math.max(1, Math.round((1 - health) * 140)),
           credits: Math.round((1 - health) * 3200) / 10,
           meltdownDemo: false,

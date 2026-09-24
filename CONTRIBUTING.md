@@ -43,6 +43,10 @@ Node's test runner; feed tests use temporary files and renderer tests use a DOM 
 - Quality falls back to documented log events per instrument only when metrics
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.
+- Keep billing credits, local cumulative tokens and latest-prompt occupancy
+  separate. The gauge fraction must use the same basis as its percentage,
+  including input/output counting settings. Never imply active-chat filtering,
+  monthly resets or account quota access that the data sources do not provide.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.
