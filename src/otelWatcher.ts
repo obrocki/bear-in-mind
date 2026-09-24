@@ -543,9 +543,13 @@ export class OtelWatcher implements vscode.Disposable {
           if (duration > 0) {
             digest.agentDurationsMs.push(duration);
           }
-          const turns = numeric(r.turn_index);
-          if (turns > 0) {
-            turnsByNothing.push(turns + 1);
+          const turnIndex = r.turn_index;
+          // `turn_index` is zero-based, so a `turns > 0` guard silently dropped
+          // the first turn of every session and every single-turn session
+          // entirely — inflating turns-per-session by excluding its smallest
+          // values. Absent is the only case worth skipping.
+          if (turnIndex !== null && turnIndex !== undefined) {
+            turnsByNothing.push(numeric(turnIndex) + 1);
           }
         } else if (op === 'chat') {
           if (duration > 0) {

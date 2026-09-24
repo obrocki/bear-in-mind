@@ -275,6 +275,14 @@ export interface TokenBucket {
 const MAX_SERIES = 4000;
 /** Evicted series kept aside so a reappearing one can be rebased, not re-added. */
 const MAX_FOLDED = 4000;
+/**
+ * High-water marks kept for series sealed out of `folded`.
+ *
+ * A key and two numbers each, so tens of thousands cost a couple of megabytes —
+ * cheap enough to keep the rebase correct for any realistic feed, capped so it
+ * cannot grow for ever.
+ */
+const MAX_SEALED_MARKS = 50_000;
 const MAX_EVENTS = 2000;
 const MAX_BUCKETS = 240;
 
@@ -452,6 +460,14 @@ export class OtelRollup {
       const h = value as Partial<HistogramValue>;
       const sum = num(h.sum);
       const count = num(h.count);
+      // A restored series whose first value is already below its sealed mark
+      // has restarted while it was away: this is a fresh run on top of the
+      // sealed history, not a continuation of it. Discounting the mark would
+      // drive the contribution negative and lose the sealed tokens.
+      if (s.rebase > 0 && s.retired === 0 && s.last === 0 && sum < s.rebase) {
+        s.rebase = 0;
+        s.rebaseCount = 0;
+      }
       // Cumulative: a drop means the exporting process restarted.
       if (sum < s.last) {
         s.retired += s.last;
@@ -472,6 +488,11 @@ export class OtelRollup {
       }
     } else {
       const v = num(value);
+      // Same restart-while-sealed case as the histogram branch above.
+      if (s.rebase > 0 && s.retired === 0 && s.last === 0 && v < s.rebase) {
+        s.rebase = 0;
+        s.rebaseCount = 0;
+      }
       if (v < s.last) {
         s.retired += s.last;
       }
@@ -541,6 +562,21 @@ export class OtelRollup {
       value: (mark?.value ?? 0) + value,
       count: (mark?.count ?? 0) + count
     });
+
+    // `sealed` is bounded naturally — it is keyed by metric and attributes with
+    // the session dropped, so it converges on the instrument set. `sealedMarks`
+    // is per key and would otherwise grow for the life of the extension.
+    //
+    // Evicting the oldest mark costs the ability to rebase that one key if it
+    // ever exports again. That is the right trade at this depth: the entry is
+    // the oldest of tens of thousands, its session stopped exporting long ago,
+    // and unbounded growth is a certainty where its return is not.
+    if (this.sealedMarks.size > MAX_SEALED_MARKS) {
+      const oldest = this.sealedMarks.keys().next();
+      if (!oldest.done) {
+        this.sealedMarks.delete(oldest.value);
+      }
+    }
   }
 
   /** Live, folded and sealed series together. Every query must read all three. */

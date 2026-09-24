@@ -225,11 +225,24 @@ export class TokenMeter implements vscode.Disposable {
     if (!this.state.promoted || !this.otelAllowed) {
       return t;
     }
-    return tokens(this.state.otel) >= tokens(t) ? this.state.otel : t;
+    const o = this.state.otel;
+    // Per dimension, not by combined total. Picking one ledger wholesale can
+    // report the other's split: if the two disagree transiently — transcripts
+    // ahead on input, telemetry ahead on output — the loser's figure would be
+    // shown for both. Taking the maximum of each keeps `total = input + output`
+    // consistent with the parts, and stays monotonic because both inputs are.
+    return {
+      input: Math.max(o.input, t.input),
+      output: Math.max(o.output, t.output),
+      requests: Math.max(o.requests, t.requests)
+    };
   }
 
   get source(): UsageSource {
-    return this.charged === this.state.otel ? 'otel' : 'transcripts';
+    if (!this.state.promoted || !this.otelAllowed) {
+      return 'transcripts';
+    }
+    return tokens(this.state.otel) >= tokens(this.state.transcripts) ? 'otel' : 'transcripts';
   }
 
   get countedTotal(): number {

@@ -377,6 +377,42 @@ describe('cumulative metrics', () => {
     );
   });
 
+  it('does not drive a restored series negative when its exporter restarted', () => {
+    // Sealed at 500, then the key returns with a counter that begins again at
+    // 100. Discounting the sealed mark would make the contribution -400 and
+    // lose the sealed tokens; this is a fresh run on top of that history.
+    const rollup = new OtelRollup();
+    const point = (session, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                { attributes: { 'gen_ai.token.type': 'input' }, endTime: [1, 0], value: { sum, count: 1 } }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    rollup.ingest(point('victim', 500));
+    for (let i = 0; i < 9000; i++) {
+      rollup.ingest(point('filler' + i, 1));
+    }
+    const sealedBaseline = rollup.tokenTotals().input;
+
+    rollup.ingest(point('victim', 100));
+    assert.equal(
+      rollup.tokenTotals().input - sealedBaseline,
+      100,
+      'the restarted run adds on top of the sealed history'
+    );
+    assert.ok(rollup.tokenTotals().input >= sealedBaseline, 'never goes backwards');
+  });
+
   it('filters totals by attribute', () => {
     const rollup = loaded();
     assert.equal(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }), 3);

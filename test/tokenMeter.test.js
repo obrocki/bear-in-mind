@@ -187,6 +187,20 @@ describe('charging one stream of traffic', () => {
     assert.equal(m.snapshot().total, 3500, 'one request, one charge');
   });
 
+  it('reports each dimension from whichever watcher is ahead on it', () => {
+    // Selecting one ledger wholesale by combined total could show the loser's
+    // split. total must stay equal to input + output.
+    const { meter: m } = meter();
+    m.observe('transcripts', 1000, 0);
+    m.observe('otel', 1000, 0);
+    m.observe('otel', 0, 400);
+    m.observe('transcripts', 300, 0);
+    const s = m.snapshot();
+    assert.equal(s.input, 1300);
+    assert.equal(s.output, 400);
+    assert.equal(s.total, s.input + s.output);
+  });
+
   it('survives a restart mid-handover', () => {
     const mem = memento();
     const a = new TokenMeter(mem);
