@@ -124,8 +124,8 @@ export class TokenMeter implements vscode.Disposable {
   private demo = false;
   private lastSource: UsageSource = 'transcripts';
   private lastBasis: MeltBasis = 'budget';
-  /** When the transcripts last reported, as the overlap signal for handover. */
-  private lastTranscriptMs = 0;
+  /** Recent transcript deltas, bounding how much of a handover can be absorbed. */
+  private recentTranscript: Array<{ at: number; tokens: number }> = [];
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -354,47 +354,63 @@ export class TokenMeter implements vscode.Disposable {
 
     if (i > 0 || o > 0) {
       if (from === 'transcripts') {
-        this.lastTranscriptMs = Date.now();
+        this.recentTranscript.push({ at: Date.now(), tokens: i + o });
       }
     }
 
-    let absorbed = false;
+    let absorbed = 0;
     if (from === 'otel' && !this.state.promoted) {
       // Make the two commensurate. Telemetry starts recording when it is
       // switched on, long after the transcripts began, so without this it would
       // sit permanently below them and could never take over.
       this.state.promoted = true;
-      // This first delta describes traffic the transcripts have already
-      // counted — telemetry lags them by an export interval — so it is already
-      // inside the figure just carried over, and adding it again would bill the
-      // same request twice.
-      //
-      // That only holds while the transcripts are actually reporting. A ledger
-      // with history in it proves nothing: with the watcher disabled, or the
-      // feed newly created long after the last chat request, the transcripts
-      // cannot have seen *this* request and absorbing it would lose real usage.
-      // So the test is recent overlap, not a non-zero total.
-      const overlapping =
-        this.config.get<boolean>('trackCopilotChat', true) &&
-        this.lastTranscriptMs > 0 &&
-        Date.now() - this.lastTranscriptMs <= OVERLAP_WINDOW_MS;
-      absorbed = overlapping && tokens(this.state.transcripts) > 0;
+
+      // This first delta overlaps traffic the transcripts have already counted,
+      // and that much is already inside the figure being carried over. But the
+      // delta reports growth since telemetry's *own* baseline, which can span
+      // more than the transcripts just reported — and with the watcher off, or
+      // a feed that started long after the last request, they reported none of
+      // it. Absorb only what the transcripts can actually account for, and
+      // charge the rest instead of dropping it.
+      absorbed = Math.min(i + o, this.recentTranscriptTokens());
       this.state.otel = { ...this.state.transcripts };
       this.state.sinceHandover = { otel: 0, transcripts: 0 };
     }
 
-    if (!absorbed && (i > 0 || o > 0)) {
+    const total = i + o;
+    const surplus = Math.max(0, total - absorbed);
+    if (surplus > 0) {
       const target = from === 'otel' ? this.state.otel : this.state.transcripts;
-      target.input += i;
-      target.output += o;
+      // Split the unabsorbed remainder across the dimensions in the proportion
+      // it arrived in.
+      const share = total > 0 ? surplus / total : 0;
+      target.input += Math.round(i * share);
+      target.output += Math.round(o * share);
       target.requests += requestsFrom(countAsRequest);
       if (this.state.promoted) {
-        this.state.sinceHandover[from] += i + o;
+        this.state.sinceHandover[from] += surplus;
       }
     }
 
     this.persist();
     this.publish();
+  }
+
+  /**
+   * Tokens the transcripts have reported inside the overlap window.
+   *
+   * This is the evidence for how much of a handover delta is a duplicate. With
+   * the watcher disabled, or a feed that only started producing long after the
+   * last chat request, it is zero — and the whole delta is charged, because
+   * nobody else counted it.
+   */
+  private recentTranscriptTokens(): number {
+    if (!this.config.get<boolean>('trackCopilotChat', true)) {
+      return 0;
+    }
+    const cutoff = Date.now() - OVERLAP_WINDOW_MS;
+    this.recentTranscript = this.recentTranscript.filter((e) => e.at >= cutoff);
+    return this.recentTranscript.reduce((sum, e) => sum + e.tokens, 0);
   }
 
   /**

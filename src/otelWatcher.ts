@@ -156,6 +156,13 @@ export class OtelWatcher implements vscode.Disposable {
       output: Math.max(0, stored?.output ?? 0),
       seeded: stored?.seeded ?? false
     };
+    // A fresh process has an empty rollup, but the saved offset points into the
+    // middle of the feed. Resuming there would rebuild the rollup from the tail
+    // alone — far below the persisted totals — so every delta would clamp to
+    // zero and telemetry would stop charging until the live series grew past
+    // the whole of history. Re-reading from the top rebuilds the true
+    // cumulative; the persisted totals stay put, so nothing is charged twice.
+    this.state.offset = 0;
   }
 
   private get config(): vscode.WorkspaceConfiguration {
@@ -670,8 +677,12 @@ export class OtelWatcher implements vscode.Disposable {
     if (dIn === 0 && dOut === 0) {
       return;
     }
-    this.state.input = totals.input;
-    this.state.output = totals.output;
+    // Never ratchet the baseline down. One dimension can grow while the other
+    // sits below the stored figure — a series that stopped exporting is simply
+    // absent from the rebuilt rollup — and lowering the baseline there would
+    // let that history be charged a second time when the series came back.
+    this.state.input = Math.max(this.state.input, totals.input);
+    this.state.output = Math.max(this.state.output, totals.output);
     this.persist();
     this.log?.(`otel usage +${dIn} in / +${dOut} out`);
     this.onUsage({ input: dIn, output: dOut, requests: 0 });

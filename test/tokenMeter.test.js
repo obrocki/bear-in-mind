@@ -201,6 +201,18 @@ describe('charging one stream of traffic', () => {
     assert.equal(s.total, s.input + s.output);
   });
 
+  it('charges the part of a handover delta the transcripts cannot account for', () => {
+    // Telemetry reports growth since its own baseline, which can span more than
+    // the transcripts just reported. Absorbing the whole delta would lose the
+    // difference permanently.
+    const { meter: m } = meter();
+    m.observe('transcripts', 1000, 0);
+    // Telemetry's first export covers that request plus 400 the transcripts
+    // never reported.
+    m.observe('otel', 1400, 0);
+    assert.equal(m.snapshot().total, 1400, 'the unmatched 400 must still be charged');
+  });
+
   it('survives a restart mid-handover', () => {
     const mem = memento();
     const a = new TokenMeter(mem);
