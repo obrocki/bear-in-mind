@@ -142,6 +142,26 @@ const CONTENT_ATTRIBUTES = new Set([
 /** Nothing this parser needs is a long string; anything that big is content. */
 const MAX_ATTRIBUTE_CHARS = 512;
 
+/**
+ * Drops content-bearing attributes *during* parsing.
+ *
+ * `scrub()` alone only stops them being retained — by then the whole prompt or
+ * tool result has already been materialised as a string in the extension
+ * process. A reviver runs as each property is assigned, so returning `undefined`
+ * means the value is never attached to the object graph and is collectable
+ * immediately, which both honours the promise in SECURITY.md and keeps a
+ * capture-enabled feed from allocating megabyte strings per record.
+ */
+function dropContent(key: string, value: unknown): unknown {
+  if (CONTENT_ATTRIBUTES.has(key)) {
+    return undefined;
+  }
+  if (typeof value === 'string' && value.length > MAX_ATTRIBUTE_CHARS) {
+    return undefined;
+  }
+  return value;
+}
+
 function scrub(attributes: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attributes)) {
@@ -314,7 +334,9 @@ export class OtelRollup {
     }
     let record: unknown;
     try {
-      record = JSON.parse(trimmed);
+      // The reviver keeps prompts, responses and tool payloads out of the
+      // parsed object entirely when content capture is enabled upstream.
+      record = JSON.parse(trimmed, dropContent);
     } catch {
       this.stats.malformed++;
       return 'unknown';

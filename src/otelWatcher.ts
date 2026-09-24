@@ -319,7 +319,14 @@ export class OtelWatcher implements vscode.Disposable {
     // mid-record in a stream it has never seen. Fingerprinting the head catches
     // all three cases: replaced, rotated, or rewritten.
     const signature = headSignature(file, stat.size);
-    if (this.state.path !== file || this.state.head !== signature) {
+    // The shrink test still earns its place: a rewrite that happens to leave
+    // the first 512 bytes identical has the same signature, and without this
+    // the reader would sit past EOF waiting for the new file to grow back.
+    if (
+      this.state.path !== file ||
+      this.state.head !== signature ||
+      stat.size < this.state.offset
+    ) {
       this.state = {
         path: file,
         head: signature,

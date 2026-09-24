@@ -473,6 +473,29 @@ describe('log events', () => {
     assert.ok(!('some.future.content' in event.attributes));
   });
 
+  it('keeps content out of the parsed object, not just out of the result', () => {
+    // scrub() alone would leave the whole prompt materialised as a string first.
+    // The reviver drops it as the record is parsed, which is what SECURITY.md
+    // actually promises.
+    const rollup = new OtelRollup();
+    const secret = 'sk-live-' + 'x'.repeat(4000);
+    rollup.ingestLine(
+      JSON.stringify({
+        resource: { _rawAttributes: [] },
+        attributes: {
+          'event.name': 'gen_ai.client.inference.operation.details',
+          'gen_ai.usage.input_tokens': 42,
+          'gen_ai.input.messages': secret,
+          'gen_ai.tool.call.result': secret
+        },
+        _body: 'gen_ai.client.inference.operation.details'
+      })
+    );
+    const [event] = rollup.recentEvents('gen_ai.client.inference.operation.details');
+    assert.equal(event.attributes['gen_ai.usage.input_tokens'], 42);
+    assert.ok(!JSON.stringify(event).includes('sk-live-'));
+  });
+
   it('names an event from its attribute, falling back to the body', () => {
     assert.equal(toLogEvent({ attributes: { 'event.name': 'a' }, _body: 'b' }).name, 'a');
     assert.equal(toLogEvent({ attributes: {}, _body: 'b' }).name, 'b');
