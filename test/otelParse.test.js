@@ -79,6 +79,46 @@ describe('record classification', () => {
 });
 
 describe('ingestion', () => {
+  it('passes sanitized span records to extraction without changing record classification', () => {
+    const rollup = new OtelRollup();
+    const spans = [];
+    const kind = rollup.ingestLine(JSON.stringify({
+      spanId: 'redacted-span', startTime: [1, 0], endTime: [2, 0],
+      attributes: {
+        'gen_ai.operation.name': 'chat',
+        'gen_ai.usage.input_tokens': 1500,
+        'gen_ai.input.messages': 'private prompt',
+        'gen_ai.tool.call.arguments': { content: 'private argument' },
+        'copilot_chat.reasoning_content': 'private reasoning',
+        'future.content': 'private'.repeat(1000)
+      }
+    }), (record) => spans.push(record));
+    assert.equal(kind, 'span');
+    assert.equal(rollup.stats.spans, 1);
+    assert.equal(spans.length, 1);
+    assert.deepEqual(spans[0].attributes, {
+      'gen_ai.operation.name': 'chat',
+      'gen_ai.usage.input_tokens': 1500
+    });
+    assert.doesNotMatch(JSON.stringify(spans), /private/);
+  });
+
+  it('does not send metrics, logs, malformed lines or legacy empty spans to extraction', () => {
+    const rollup = new OtelRollup();
+    const spans = [];
+    for (const line of [
+      '{}', '', 'not json', '{"broken":',
+      '{"scopeMetrics":[]}', '{"body":"copilot_chat.user.feedback","attributes":{"rating":"positive"}}'
+    ]) {
+      rollup.ingestLine(line, (record) => spans.push(record));
+    }
+    assert.deepEqual(spans, []);
+    assert.equal(rollup.stats.spans, 1);
+    assert.equal(rollup.stats.malformed, 1);
+    assert.equal(rollup.stats.metrics, 1);
+    assert.equal(rollup.stats.logs, 1);
+  });
+
   it('counts every line it sees', () => {
     const rollup = loaded();
     const { metrics, logs, spans, unknown, malformed } = rollup.stats;

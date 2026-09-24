@@ -46,6 +46,8 @@ Node's test runner; feed tests use temporary files and renderer tests use a DOM 
 - Drop content-bearing attributes; retain only span usage metadata. Support
   current serialized file spans as well as legacy `{}` exports. Use read-only
   SQLite and an attribute allowlist; do not select captured content.
+  Extract file spans from the parser's redacted record, never by parsing the raw
+  line a second time.
 - Quality falls back to documented log events per instrument only when metrics
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.

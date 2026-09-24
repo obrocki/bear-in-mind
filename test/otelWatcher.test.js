@@ -151,6 +151,36 @@ function spanRecord(id, now, operation = 'chat') {
   };
 }
 
+it('parses captured-content spans once through redaction before extracting usage', (t) => {
+  let now = Date.UTC(2026, 8, 24, 12);
+  t.mock.method(Date, 'now', () => now);
+  const { file, watcher, deltas } = fixture(t);
+  now += 2000;
+  const span = spanRecord('redacted', now - 1000);
+  span.attributes['gen_ai.input.messages'] = 'private prompt'.repeat(10000);
+  span.attributes['gen_ai.tool.call.arguments'] = { command: 'private argument' };
+  const line = JSON.stringify(span);
+  fs.writeFileSync(file, line + '\n');
+  const parse = JSON.parse;
+  const parsed = [];
+  t.mock.method(JSON, 'parse', (text, reviver) => {
+    const record = parse(text, reviver);
+    if (text === line) {
+      parsed.push(record);
+    }
+    return record;
+  });
+
+  watcher.scan();
+  assert.equal(parsed.length, 1, 'the raw captured-content span must not be reparsed');
+  assert.doesNotMatch(JSON.stringify(parsed), /private/);
+  assert.equal(watcher.spanDigest.sessions[0].credits, 2);
+  assert.equal(watcher.spanDigest.sessions[0].llmCalls, 1);
+  assert.equal(watcher.spanDigest.context.limit, 128000);
+  assert.deepEqual(deltas, [{ input: 1000, output: 100, requests: 1, source: 'traces' }]);
+  assert.equal(watcher.health().records.spans, 1);
+});
+
 it('meters modern serialized file spans without metrics and never repeats them after restart', (t) => {
   let now = Date.UTC(2026, 8, 24, 12);
   t.mock.method(Date, 'now', () => now);

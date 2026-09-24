@@ -506,10 +506,8 @@ export class OtelWatcher implements vscode.Disposable {
       return;
     }
     for (const line of text.slice(0, lastBreak).split('\n')) {
-      const kind = this.rollup.ingestLine(line);
-      if (kind === 'span' && line.includes('"spanId"')) {
-        // ingestLine has already validated JSON. Retain only numeric metadata.
-        const span = fileUsageSpan(JSON.parse(line));
+      this.rollup.ingestLine(line, (record) => {
+        const span = fileUsageSpan(record);
         if (span && span.start >= Date.now() - SPAN_WINDOW_MS) {
           if (this.fileSpans.size < 50_000 || this.fileSpans.has(span.id)) {
             this.fileSpans.set(span.id, span);
@@ -517,7 +515,7 @@ export class OtelWatcher implements vscode.Disposable {
             this.note('The file span limit (50,000) was reached; trace details are incomplete.');
           }
         }
-      }
+      });
     }
     this.state.offset = from + Buffer.byteLength(text.slice(0, lastBreak + 1), 'utf8');
     this.state.size = stat.size;

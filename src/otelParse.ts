@@ -294,14 +294,13 @@ export class OtelRollup {
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
 
-  /** Feeds one raw JSONL line in. Returns what the line turned out to be. */
-  ingestLine(line: string): RecordKind {
+  /** Ingests once; optional span extraction receives the already-redacted record. */
+  ingestLine(line: string, onSpan?: (record: unknown) => void): RecordKind {
     const trimmed = line.trim();
     if (!trimmed || trimmed.charCodeAt(0) !== 123 /* { */) {
       return 'unknown';
     }
-    // Spans are the single most common line and are always exactly `{}`, so
-    // recognise them without paying for JSON.parse.
+    // Legacy exporters write empty spans; keep that common case parse-free.
     if (trimmed === '{}') {
       this.stats.spans++;
       return 'span';
@@ -315,7 +314,11 @@ export class OtelRollup {
       this.stats.malformed++;
       return 'unknown';
     }
-    return this.ingest(record);
+    const kind = this.ingest(record);
+    if (kind === 'span') {
+      onSpan?.(record);
+    }
+    return kind;
   }
 
   ingest(record: unknown): RecordKind {
