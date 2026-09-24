@@ -454,7 +454,12 @@ export function buildQuality(input: SummaryInput): QualitySection {
       pullRequests > 0 ||
       votes > 0 ||
       engagement > 0 ||
-      toolCalls > 0,
+      toolCalls > 0 ||
+      survivalFourGram !== undefined ||
+      survivalNoRevert !== undefined ||
+      cloudSessions > 0 ||
+      editResponseErrors > 0 ||
+      summarizationsApplied + summarizationsFailed > 0,
     editsAccepted,
     editsRejected,
     acceptRate: decided > 0 ? editsAccepted / decided : undefined,
@@ -521,16 +526,7 @@ export function redactUrl(raw: string | undefined): string {
 
 /** Compares what each source saw over the window in which both were running. */
 export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
-  if (otelObserved === 0 && transcriptObserved === 0) {
-    return {
-      otelObserved: 0,
-      transcriptObserved: 0,
-      deltaTokens: 0,
-      deltaPercent: 0,
-      agreeing: true,
-      pending: true
-    };
-  }
+  const pending = otelObserved === 0 || transcriptObserved === 0;
   const delta = otelObserved - transcriptObserved;
   const base = Math.max(otelObserved, transcriptObserved) || 1;
   const percent = (delta / base) * 100;
@@ -541,8 +537,8 @@ export function computeDrift(otelObserved: number, transcriptObserved: number): 
     deltaPercent: percent,
     // Transcripts round differently and miss cache/reasoning tokens entirely,
     // so exact equality is not the bar. Within 2% is agreement.
-    agreeing: Math.abs(percent) <= 2,
-    pending: false
+    agreeing: pending || Math.abs(percent) <= 2,
+    pending
   };
 }
 

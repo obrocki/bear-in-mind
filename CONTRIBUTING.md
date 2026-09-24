@@ -1,205 +1,83 @@
 # Contributing
 
-Thanks for looking. This is a small project — a pixel-art scene, a token
-accountant, and about 400 lines of glue.
+Run `npm ci`, then press `F5` for an Extension Development Host.
 
-## Getting set up
-
-```bash
-git clone https://github.com/obrocki/bear-in-mind.git
-cd bear-in-mind
-npm install
-```
-
-Press `F5` to launch an Extension Development Host, then open the 🧊
-icon in the activity bar.
-
-| Command | What it does |
+| Command | Purpose |
 | --- | --- |
-| `npm run compile` | Bundle `src/` into `dist/extension.js` with esbuild. |
-| `npm run watch` | Same, but rebuilds on change. |
-| `npm run typecheck` | `tsc --noEmit`. This is the gate CI enforces. |
-| `npm test` | Unit tests for the token accounting and the OpenTelemetry parsing. |
-| `npm run check:docs` | Balanced code fences, working relative links, and no raw HTML in any `.md`. |
-| `npm run vsix` | Typecheck, production bundle, package, then verify the `.vsix`. |
+| `npm run compile` / `npm run watch` | Bundle once / rebuild on changes. |
+| `npm run typecheck` | Check TypeScript. |
+| `npm test` | Accounting, API, telemetry and dashboard regressions. |
+| `npm run check:docs` | Check fences, relative links and raw HTML. |
+| `npm run vsix` | Typecheck, bundle, package and verify the archive. |
 
-`npm run vsix` is also the default VS Code build task
-(`Ctrl+Shift+B`), and it is exactly what CI runs —
-see [Packaging and releases](#packaging-and-releases).
+## Architecture
 
-`npm test` bundles the modules with esbuild into a scratch directory and runs
-`node --test` against them. `src/tokenMeter.ts` is covered too, against a small
-`vscode` stub in `test/vscode-stub.js` — it is the one place here where being
-quietly wrong costs the user money, so "it imports `vscode`" was not a good
-enough reason to leave it untested. The parsing and aggregation live in
-`vscode`-free files for the same reason. Everything else is still a manual pass
-in the Extension Development Host.
+| Files | Responsibility |
+| --- | --- |
+| `src/api.ts`, `src/extension.ts` | Public contract, shared reporting adapter, activation and commands. |
+| `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
+| `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
+| `src/otelParse.ts`, `src/otelSummary.ts` | Pure parsing, aggregation and dashboard snapshots. |
+| `src/*View.ts`, `media/` | Webview messaging and rendering. |
 
-## How the pieces fit together
+Watchers → meter/summary → snapshots → webviews. Renderers format data; they do
+not decide accounting. Tests bundle TypeScript with a small VS Code stub and use
+Node's test runner; feed tests use temporary files and renderer tests use a DOM shim.
 
-```
-src/extension.ts    activation, commands, status bar, chat participant, the
-                    exported API. Owns the wiring, no logic of its own.
-src/tokenMeter.ts   the accountant. Two ledgers, source arbitration, derives
-                    `health` (1 = pristine, 0 = melted), persists to globalState,
-                    fires onDidChange.
-src/chatWatcher.ts  reads VS Code's chat transcripts and turns them into usage
-                    deltas. The subtle part of the project — see below.
-src/otelParse.ts    classifies and aggregates Copilot's OpenTelemetry output.
-                    No `vscode` import, so it is unit-testable — which is the
-                    point, because it is the other subtle part.
-src/otelSummary.ts  turns a rollup into the three dashboard sections. Also pure.
-src/otelWatcher.ts  the I/O half: finds the feed and the trace store, tails one,
-                    queries the other.
-src/habitatView.ts  webview plumbing for the iceberg view and editor tab.
-src/dashboardView.ts webview plumbing for the dashboard.
-media/main.js       the iceberg renderer. No dependencies, no build step, plain
-                    Canvas2D drawing at ~200x130 internal pixels.
-media/dashboard.js  the dashboard renderer. Plain DOM and inline SVG. Formats
-                    what it is handed and computes nothing.
-media/style.css     the HUD under the canvas.
-media/dashboard.css the 01/02/03 layout.
-```
+## Accounting invariants
 
-State flows one way: something reports usage → `TokenMeter` recomputes `health`
-→ `onDidChange` → the webviews get a message → the renderers follow. Neither
-renderer decides anything about usage.
+- Reconcile cumulative watcher totals with `max()` per dimension, never by
+  summing the sources. Manual reports add separately; credits come from transcripts.
+- Promotion estimates overlap from up to 1,024 transcript observations within five
+  minutes. Validate/prune on load and append. There is no shared request ID:
+  unrelated usage can be absorbed, and recovery is not guaranteed.
+- Adopt pre-existing history without charging it. Transcript snapshots replay
+  history; reused slots and restarted metric counters must preserve earlier usage.
+- Tie feed offsets and missing-file observations to their path. Keep the initial
+  backlog boundary fixed while catching up; a partial final record must not wedge
+  seeding. Charge it once completed. Bound reads and skip oversized records.
+- Cumulative exports are snapshots, not increments. Preserve high-water marks
+  across eviction and rebuild the rollup after restart without recharging history.
+- Drop known content-bearing attributes at the parser boundary. Feed spans can
+  serialize as `{}`; use the read-only trace store for exact timings.
+- Quality falls back to documented log events per instrument only when metrics
+  have no measurements. Keep compact event totals beyond the recent-event cap;
+  ignore branch-changed survival samples and never add events to matching metrics.
 
-## Working on `src/otelParse.ts`
+Extend regression tests for accounting changes. The OTel fixture was generated
+using the SDK and Copilot-compatible exporters; preserve those record shapes.
+See [SECURITY.md](SECURITY.md) for the data-handling contract.
 
-Copilot Chat's file exporters point a span, a log and a metric exporter at the
-*same* file and append `JSON.stringify(record) + '\n'`, so one file carries three
-different record shapes. Three things about that are worth knowing before you
-touch this code, and all three are load-bearing:
+## UI changes
 
-1. **Spans serialise to `{}`.** Since OpenTelemetry JS SDK v2 the span
-   implementation keeps its state in private class fields, which
-   `JSON.stringify` cannot see. Verified against `@opentelemetry/sdk-trace-node`
-   2.11.0. Every span in the feed is an empty object. They are *counted* rather
-   than ignored so the dashboard can explain the missing timings instead of
-   silently showing none. Real spans come from `agent-traces.db`.
-2. **Metrics are cumulative, not deltas.** `FileMetricExporter` selects
-   CUMULATIVE temporality, so each metrics line is a complete running snapshot.
-   Adding successive lines together multiplies the real figure by the number of
-   export intervals. Only the newest value of each series is kept.
-3. **A counter going down means a restart.** Cumulative counters only grow, so a
-   drop means the producing process began again from zero. The previous peak is
-   banked into `retired` rather than lost — the same trick `chatWatcher.ts` uses
-   for reused request slots. Series are keyed by `session.id` too, so two VS Code
-   windows exporting at once stay separate and their totals add.
+Keep rendering at pixel-art resolution and respect disabled animation. Preserve
+the seeded iceberg shape and slope-based shading.
 
-Prefer documented attribute names (`gen_ai.*`, `copilot_chat.*`) over SDK object
-shape wherever there is a choice. The names are a published contract; the shapes
-are internals that have already changed once.
-
-`npm test` covers all of this. The fixture was generated by driving the real
-OpenTelemetry SDK through exporters that replicate Copilot Chat's byte for byte,
-so it is not a guess about the format — if you change the parser, extend the
-fixture the same way rather than hand-writing records.
-
-## Working on `src/chatWatcher.ts`
-
-This file is the easiest place in the project to introduce a bug that nobody
-notices for a week. It tails append-only JSONL transcripts that VS Code writes,
-and the format has several traps. All of these are real behaviours observed in
-actual transcripts, and each one caused a wrong number before it was handled:
-
-1. **Counters are cumulative and rewritten mid-turn.** During an agent turn,
-   `requests/1/promptTokens` was seen going 23,516 → 36,611 → 48,836 → 76,876 →
-   96,782 → 102,515 as tool calls ran. Summing the records over-counts about
-   fivefold. Only growth is charged.
-2. **`kind:0` snapshots replay history.** When VS Code starts a continuation
-   transcript it opens with a full snapshot of the previous session, tokens and
-   all. One real file carried 18.9M tokens in its first line. Anything a
-   snapshot brings in is recorded as `base` and subtracted before charging.
-3. **Request slots get reused.** Index 0 was observed serving three different
-   requests across sessions. A counter going *down* means a new request landed
-   in that slot; the old value is banked into `retired` so the earlier burn is
-   not lost.
-4. **Files get rewritten, not just appended to.** If `size < offset` the file is
-   re-read from the top, and the already-charged amount is rebased *after*
-   parsing, because whether the rewrite was a snapshot changes the arithmetic.
-5. **The tail may be a partial line.** The read offset only ever advances past
-   the last `\n`.
-
-If you change the accounting, please say in the PR how you convinced yourself it
-is right. Replaying your own real transcripts and comparing against a
-independently-written total is the approach that has worked.
-
-Things that are cheap and worth preserving: the string pre-filter before
-`JSON.parse` (most lines are not token records), skipping files whose `stat.size`
-has not moved, and refreshing the directory listing only every 30 seconds.
-
-## Working on the renderer
-
-`media/main.js` is loaded directly by the webview — there is no build step for
-it, so you can edit and reload. A few conventions:
-
-- Everything is drawn into a small internal buffer and upscaled with
-  `image-rendering: pixelated`. Never draw at display resolution; it stops
-  looking like pixel art immediately.
-- The iceberg silhouette comes from a *seeded* noise profile terraced into
-  facets, so the berg keeps its identity as it shrinks rather than morphing into
-  a different mountain.
-- Shading is derived from local surface slope, quantised to three levels. This
-  is what makes it read as ice rather than as a hill. Please don't replace it
-  with a vertical gradient.
-- Respect `state.animate === false`: it must settle to a static frame and stop
-  requesting frames.
-
-### Regenerating the screenshots
-
-`docs/media/*` is generated, not hand-made:
-
-```bash
-npm run media
-```
-
-That drives the real renderer twice — once in headless Chromium/Edge for the
-stills that include the HUD, and once in a Node `vm` against a Canvas2D shim for
-the animated GIF. Neither needs VS Code running. If you change the art, please
-regenerate the images in the same PR so the README does not drift. See
-[`tools/README.md`](tools/README.md).
+Run `npm run media` after artwork changes. The HTML screenshot harness mirrors
+webview markup and must stay in sync. `tools/dashboard.html?waiting` previews a
+connected feed without quality signals. See [tools/README.md](tools/README.md).
 
 ## Packaging and releases
 
-`tools/build-vsix.js` is the single build path — locally, in CI, and at release
-time. Nothing runs `vsce` directly, so a build can't behave differently depending
-on where it happened.
+`tools/build-vsix.js` is the shared local/CI build path. It checks required assets,
+command registrations and accidental source/dependency leaks in the packaged VSIX.
+Use `node tools/build-vsix.js --help` for options.
 
-After packaging it reopens the archive and reads its central directory, because
-`vsce` will happily produce a `.vsix` that is missing the bundle. It fails the
-build if a required file is absent, if sources, source maps or `node_modules`
-leaked in, if a contributed command doesn't appear anywhere in the bundle, or if
-the manifest points at an asset that wasn't packaged.
+| Workflow | Result |
+| --- | --- |
+| `ci.yml` | Tests and VSIX builds on Linux, Windows and macOS; PR artifact on Linux. |
+| `build-vsix.yml` | Build artifact and rolling `dev` release on merge or manual run. |
+| `release.yml` | Tagged release; Marketplace publication when `VSCE_PAT` is configured. |
 
-```bash
-node tools/build-vsix.js --help
-```
+For a release, run `npm version patch --no-git-tag-version` (or the intended
+version), update `CHANGELOG.md`, commit, and tag `vX.Y.Z`. Keep `package.json` and
+`package-lock.json` in sync.
 
-| Workflow | Trigger | What it produces |
-| --- | --- | --- |
-| `ci.yml` | Push to `main`, pull requests | Build + verify on Linux, Windows and macOS. PRs also get an installable `.vsix` attached to the run. |
-| `build-vsix.yml` | Merge to `main`, or manually | A `.vsix` artifact, plus a refresh of the rolling `dev` pre-release. The manual run can stamp a version or mark the build as a pre-release without committing anything. |
-| `release.yml` | Pushing a `v*` tag | Verifies the tag matches `package.json`, attaches the `.vsix` to a GitHub release, and publishes to the Marketplace if `VSCE_PAT` is set. |
+## Pull requests and bugs
 
-To cut a release: bump the version in `package.json`, run
-`npm install --package-lock-only` so the lockfile follows (`npm ci` fails if it
-doesn't), update `CHANGELOG.md`, then tag `vX.Y.Z`.
+Keep changes focused. Use two-space indentation, single quotes and semicolons.
+Run the relevant tests, docs check and VSIX build; include screenshots for UI work.
+Record changes under `Unreleased` unless bumping a release version.
 
-## Pull requests
-
-- One change per PR. A rendering tweak and an accounting fix are two PRs.
-- Run `npm run typecheck` before pushing.
-- Include a screenshot for anything visual.
-- Update `CHANGELOG.md` under an `## Unreleased` heading.
-- Match the surrounding style: two-space indent, single quotes, semicolons, and
-  comments only where something is genuinely non-obvious.
-
-## Reporting bugs
-
-If the iceberg is not melting, the two most useful things you can attach are the
-output of **Iceberg: Show Usage Stats** and the last few lines of the **Iceberg**
-output channel (View → Output → Iceberg). The output channel logs every batch of
-tokens the watcher charges, so a silent channel and a silent iceberg together
-narrow the problem down a lot.
+For metering bugs, include **Iceberg: Telemetry Diagnostics**, usage stats and
+relevant **Iceberg** output. Do not attach raw chat transcripts or captured content.

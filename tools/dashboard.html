@@ -7,6 +7,7 @@
      docs/media are the actual UI rather than a mock-up.
 
        ?empty   the not-yet-connected state
+       ?waiting connected feed with no quality signals
        ?narrow  sidebar width (the CSS breakpoint does the rest)
 -->
 <link href="../media/dashboard.css" rel="stylesheet" />
@@ -138,7 +139,17 @@
     }
   };
 
-  if (location.search.includes('empty')) {
+  if (location.search.includes('waiting')) {
+    snapshot.quality.available = false;
+    snapshot.cost.drift = {
+      otelObserved: 1284391,
+      transcriptObserved: 0,
+      deltaTokens: 1284391,
+      deltaPercent: 100,
+      agreeing: true,
+      pending: true
+    };
+  } else if (location.search.includes('empty')) {
     snapshot.feed.copilotOtelEnabled = false;
     snapshot.feed.jsonlPath = undefined;
     snapshot.feed.jsonlActive = false;

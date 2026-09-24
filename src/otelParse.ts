@@ -1,35 +1,8 @@
 /**
- * Pure parsing and aggregation for Copilot Chat's OpenTelemetry output.
- *
- * Deliberately free of any `vscode` import so it can be unit-tested with plain
- * Node. `otelWatcher.ts` owns all the I/O; this file only ever sees strings and
- * numbers.
- *
- * ## What the feed actually looks like
- *
- * Copilot Chat's file exporters (`fileExporters.ts` upstream) point a span, a
- * log and a metric exporter at the *same* path and append
- * `JSON.stringify(record) + '\n'` to it. So one file carries three different
- * record shapes, told apart here by `classify()`:
- *
- *   {"resource":{…},"scopeMetrics":[…]}                    metrics
- *   {"resource":{…},"attributes":{…},"_body":"…"}          log record / event
- *   {}                                                     span
- *
- * That last one is not a typo. Since OpenTelemetry JS SDK v2 the span
- * implementation keeps its state in private class fields, which `JSON.stringify`
- * cannot see, so every span serialises to an empty object. Verified against
- * `@opentelemetry/sdk-trace-node` 2.11.0. Spans therefore contribute nothing
- * here and per-span detail has to come from the SQLite store instead — see
- * `otelWatcher.ts`. Empty objects are counted rather than ignored so the
- * dashboard can say why span-derived numbers are missing.
- *
- * ## Why totals are taken, not summed
- *
- * `FileMetricExporter.selectAggregationTemporality()` returns CUMULATIVE, so
- * every metrics line is a complete running snapshot rather than a delta. Adding
- * successive lines together would multiply the real figure by the number of
- * export intervals. Each series is keyed and only its newest value is kept.
+ * Pure OTel parsing; otelWatcher owns I/O. The JSONL feed mixes cumulative
+ * metric snapshots, log events and empty SDK v2 spans (private fields do not
+ * stringify). Keep each metric series' newest value, not the sum of exports.
+ * Exact span details come from the trace store.
  */
 
 /** Seconds/nanoseconds pair, as the OTel SDK serialises timestamps. */
@@ -121,15 +94,7 @@ export function resourceAttributes(record: unknown): Record<string, string> {
   return out;
 }
 
-/**
- * Attributes that carry prompt, response or tool content when `captureContent`
- * is enabled upstream.
- *
- * Bear in Mind promises never to read these, so they are dropped at the parser
- * boundary rather than anywhere later — keeping them on the `LogEvent` would put
- * prompts and file contents in memory and expose them through `recentEvents()`,
- * which is exactly the guarantee SECURITY.md makes.
- */
+/** Known captured-content fields must not reach retained events or aggregates. */
 const CONTENT_ATTRIBUTES = new Set([
   'gen_ai.input.messages',
   'gen_ai.output.messages',
@@ -142,16 +107,7 @@ const CONTENT_ATTRIBUTES = new Set([
 /** Nothing this parser needs is a long string; anything that big is content. */
 const MAX_ATTRIBUTE_CHARS = 512;
 
-/**
- * Drops content-bearing attributes *during* parsing.
- *
- * `scrub()` alone only stops them being retained — by then the whole prompt or
- * tool result has already been materialised as a string in the extension
- * process. A reviver runs as each property is assigned, so returning `undefined`
- * means the value is never attached to the object graph and is collectable
- * immediately, which both honours the promise in SECURITY.md and keeps a
- * capture-enabled feed from allocating megabyte strings per record.
- */
+/** The reviver removes content from parsed records; it cannot prevent transient JSON allocations. */
 function dropContent(key: string, value: unknown): unknown {
   if (CONTENT_ATTRIBUTES.has(key)) {
     return undefined;
@@ -325,6 +281,8 @@ export class OtelRollup {
   private readonly sealed = new Map<string, Series>();
   private readonly sealedMarks = new Map<string, { value: number; count: number; aggKey: string }>();
   private readonly events: LogEvent[] = [];
+  /** Fixed instrument/outcome keys, independent of the bounded recent-event buffer. */
+  private readonly eventSeries = new Map<string, Series>();
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
 
@@ -363,6 +321,7 @@ export class OtelRollup {
         this.stats.logs++;
         const event = toLogEvent(record);
         if (event) {
+          this.absorbQualityEvent(event);
           this.events.push(event);
           if (this.events.length > MAX_EVENTS) {
             this.events.splice(0, this.events.length - MAX_EVENTS);
@@ -379,6 +338,78 @@ export class OtelRollup {
         break;
     }
     return kind;
+  }
+
+  private absorbQualityEvent(event: LogEvent): void {
+    const a = event.attributes;
+    const decision = (outcome: unknown) => {
+      if (outcome === 'accepted' || outcome === 'rejected') {
+        this.recordEventValue(EDIT_ACCEPTANCE, 1, { 'copilot_chat.edit.outcome': outcome });
+      }
+    };
+    switch (event.name) {
+      case 'copilot_chat.edit.feedback':
+        decision(a.outcome);
+        break;
+      case 'copilot_chat.edit.hunk.action':
+        decision(a.outcome);
+        if (a.outcome === 'accepted') {
+          for (const type of ['added', 'removed']) {
+            const value = a[`lines_${type}`];
+            if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+              this.recordEventValue(LINES_OF_CODE, value, { type });
+            }
+          }
+        }
+        break;
+      case 'copilot_chat.inline.done':
+        if (a.accepted === true || a.accepted === 'true') {
+          decision('accepted');
+        } else if (a.accepted === false || a.accepted === 'false') {
+          decision('rejected');
+        }
+        break;
+      case 'copilot_chat.edit.survival':
+        if (a.did_branch_change === true || a.did_branch_change === 'true') {
+          break;
+        }
+        for (const [attribute, metric] of [
+          ['survival_rate_four_gram', SURVIVAL_FOUR_GRAM],
+          ['survival_rate_no_revert', SURVIVAL_NO_REVERT]
+        ]) {
+          const value = a[attribute];
+          if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1) {
+            this.recordEventValue(metric, value);
+          }
+        }
+        break;
+      case 'copilot_chat.user.feedback':
+        if (a.rating === 'positive' || a.rating === 'negative') {
+          this.recordEventValue(USER_FEEDBACK, 1, { rating: a.rating });
+        }
+        break;
+      case 'copilot_chat.cloud.session.invoke':
+        this.recordEventValue(CLOUD_SESSIONS, 1);
+        break;
+      case 'copilot_chat.tool.call':
+        if (a.success === true || a.success === 'true') {
+          this.recordEventValue(TOOL_CALL_COUNT, 1, { success: 'true' });
+        } else if (a.success === false || a.success === 'false') {
+          this.recordEventValue(TOOL_CALL_COUNT, 1, { success: 'false' });
+        }
+        break;
+    }
+  }
+
+  private recordEventValue(metric: string, value: number, attributes: Record<string, string> = {}): void {
+    const key = `${metric}\u0000${attrKey(attributes)}`;
+    let s = this.eventSeries.get(key);
+    if (!s) {
+      s = newSeries(metric, attributes, 0);
+      this.eventSeries.set(key, s);
+    }
+    s.last += value;
+    s.lastCount++;
   }
 
   private absorbMetrics(record: unknown): void {
@@ -599,16 +630,27 @@ export class OtelRollup {
     }
   }
 
-  /** Live, folded and sealed series together. Every query must read all three. */
+  /** Prefer metrics per instrument; matching log events describe the same traffic. */
   private *allSeries(): Generator<Series> {
-    yield* this.series.values();
-    yield* this.folded.values();
-    yield* this.sealed.values();
+    const reported = new Set<string>();
+    for (const series of [this.series, this.folded, this.sealed]) {
+      for (const s of series.values()) {
+        if (contributionCount(s) > 0) {
+          reported.add(s.metric);
+        }
+        yield s;
+      }
+    }
+    for (const s of this.eventSeries.values()) {
+      if (!reported.has(s.metric)) {
+        yield s;
+      }
+    }
   }
 
   // ------------------------------------------------------------- queries ----
 
-  /** Total of a metric across every series, optionally filtered by attributes. */
+  /** Instrument total, with documented event fallback when no metric measurements exist. */
   total(metric: string, where?: Record<string, string>): number {
     let sum = 0;
     for (const s of this.allSeries()) {

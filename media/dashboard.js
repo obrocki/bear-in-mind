@@ -347,7 +347,7 @@
       );
     }
     if (drift.pending) {
-      return el('p', 'missing', 'Reconciliation starts once both sources have seen the same traffic.');
+      return el('p', 'missing', 'Reconciliation pending: waiting for observations from both sources.');
     }
     const sign = drift.deltaTokens >= 0 ? '+' : '−';
     return el(
@@ -443,14 +443,28 @@
     return node;
   }
 
-  function renderQuality(quality) {
+  function renderQuality(quality, feed) {
     const node = section('quality', 'Quality', 'PR + IDE signals');
 
     if (!quality.available) {
+      if (!feed.watching) {
+        node.append(emptyState([
+          'Telemetry reading is off. Enable iceberg.otel.enabled to see quality signals.'
+        ], { label: 'Diagnostics', command: 'diagnostics' }));
+        return node;
+      }
+      if (feed.jsonlActive || (feed.copilotOtelEnabled && feed.jsonlPath)) {
+        node.append(emptyState([
+          feed.jsonlActive
+            ? 'Telemetry is connected. No quality signals recorded yet.'
+            : 'File feed configured. Waiting for quality signals.',
+          'Accept or reject a Copilot edit, or rate a response. Signals appear after the next export.'
+        ], { label: 'Diagnostics', command: 'diagnostics' }));
+        return node;
+      }
       node.append(
         emptyState([
-          'No quality signals yet. Accept and reject decisions, edit survival, pull requests and feedback votes arrive as OpenTelemetry log records.',
-          'Those only reach a file feed, so the local trace store alone will not populate this section.'
+          'Quality signals need the file feed; the local trace store alone is not enough.'
         ], { label: 'Connect telemetry…', command: 'connect' })
       );
       return node;
@@ -666,7 +680,7 @@
     root.replaceChildren(
       renderCost(snapshot.cost),
       renderSpeed(snapshot.speed),
-      renderQuality(snapshot.quality)
+      renderQuality(snapshot.quality, snapshot.feed)
     );
     renderProvenance(snapshot.feed);
   }

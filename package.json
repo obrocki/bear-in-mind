@@ -1,8 +1,8 @@
 {
   "name": "bear-in-mind",
   "displayName": "Bear in Mind — Copilot Token Meter",
-  "description": "A pixel-art iceberg with a polar bear on it. The iceberg melts as your Copilot / LLM token burn adds up. It cannot cap your spend — the bear is relying on your compassion for that.",
-  "version": "0.5.0",
+  "description": "A polar bear's iceberg melts with Copilot token usage. Track tokens, speed and quality — not a spending cap.",
+  "version": "0.5.1",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -157,12 +157,12 @@
           "type": "number",
           "default": 5000000,
           "minimum": 1000,
-          "description": "Total token budget. The iceberg is at full size at 0 tokens used and fully melted at this many tokens. Consumption itself is measured, never entered — this is only the denominator. Agent-mode sessions resend context every turn, so real usage climbs into the millions quickly."
+          "description": "Token budget for the fallback melt. Usage is measured automatically; this sets the denominator."
         },
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Automatically meter regular Copilot Chat usage by reading the exact per-request token counts VS Code records in its chat transcripts. Used as the fallback whenever OpenTelemetry is not reporting."
+          "description": "Read Copilot Chat token counts and premium credits from local transcripts."
         },
         "iceberg.otel.enabled": {
           "type": "boolean",
@@ -172,7 +172,7 @@
         "iceberg.otel.authoritative": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Let OpenTelemetry hold the meter whenever it is reporting, falling back to chat transcripts when it goes quiet. Turn this off to keep transcripts authoritative and treat telemetry as display-only. The two are never added together."
+          "markdownDescription": "Include new telemetry usage in the reconciled meter. Off makes telemetry display-only; previously counted usage stays counted. Sources are reconciled, never summed."
         },
         "iceberg.otel.feedPath": {
           "type": "string",
@@ -228,7 +228,7 @@
         "iceberg.bearName": {
           "type": "string",
           "default": "Nanuq",
-          "markdownDescription": "Your bear's name. `Nanuq` is Inuit for \"polar bear\". Run **Iceberg: Name the Bear…** for suggestions — arctic (`Siku`, `Isbjørn`, `Knut`), burn-rate puns (`Frostbyte`, `Burnie`, `Calvin`), or soft (`Teddy`, `Pudge`)."
+          "markdownDescription": "Your bear's name. Run **Iceberg: Name the Bear…** for suggestions or enter your own."
         }
       }
     }

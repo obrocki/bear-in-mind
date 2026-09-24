@@ -503,9 +503,7 @@ describe('cumulative metrics', () => {
 
 describe('log events', () => {
   it('never retains prompt or response content', () => {
-    // SECURITY.md promises these are never read. captureContent puts them in
-    // the feed, so they have to be dropped at the parser boundary rather than
-    // kept on the event and merely not displayed.
+    // Captured content must not survive in retained events.
     const event = toLogEvent({
       attributes: {
         'event.name': 'gen_ai.client.inference.operation.details',
@@ -544,9 +542,7 @@ describe('log events', () => {
   });
 
   it('keeps content out of the parsed object, not just out of the result', () => {
-    // scrub() alone would leave the whole prompt materialised as a string first.
-    // The reviver drops it as the record is parsed, which is what SECURITY.md
-    // actually promises.
+    // The reviver strips known content from records before aggregation.
     const rollup = new OtelRollup();
     const secret = 'sk-live-' + 'x'.repeat(4000);
     rollup.ingestLine(
@@ -708,7 +704,20 @@ describe('redacting endpoints', () => {
 
 describe('drift', () => {
   it('is pending until both sources have seen something', () => {
-    assert.equal(computeDrift(0, 0).pending, true);
+    for (const [otel, transcripts] of [[0, 0], [9961, 0], [0, 9961]]) {
+      const drift = computeDrift(otel, transcripts);
+      assert.equal(drift.pending, true);
+      assert.equal(drift.agreeing, true, 'missing observations must not flag divergence');
+      assert.equal(drift.otelObserved, otel);
+      assert.equal(drift.transcriptObserved, transcripts);
+    }
+  });
+
+  it('reports divergence once both sources have observations', () => {
+    const drift = computeDrift(9961, 100);
+    assert.equal(drift.pending, false);
+    assert.equal(drift.agreeing, false);
+    assert.equal(drift.deltaTokens, 9861);
   });
 
   it('tolerates the difference cache and reasoning tokens create', () => {

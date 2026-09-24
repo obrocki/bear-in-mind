@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { createIcebergApi, type IcebergApi } from './api';
 import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
@@ -9,12 +10,7 @@ import { OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, type DashboardSnapshot } from './otelSummary';
 import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
 
-/** Public API other extensions can use: `exports.reportUsage({ input, output })`. */
-export interface IcebergApi {
-  reportUsage(usage: { input?: number; output?: number }): void;
-  getUsage(): UsageSnapshot;
-  onDidChangeUsage: vscode.Event<UsageSnapshot>;
-}
+export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
 
 const OTEL_SECTION = 'github.copilot.chat.otel';
 
@@ -25,15 +21,14 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   }
 
   const meter = new TokenMeter(context.globalState);
+  const api = createIcebergApi(meter);
   context.subscriptions.push(meter);
 
   const output = vscode.window.createOutputChannel('Iceberg');
   context.subscriptions.push(output);
   const log = (message: string) => output.appendLine(`[${new Date().toISOString()}] ${message}`);
 
-  // Automatic metering, from two independent observers of the same traffic.
-  // `TokenMeter.observe` decides which one is allowed to charge, so they can
-  // both run without double counting — see the comment on the meter itself.
+  // Watchers observe the same traffic; the meter reconciles their cumulative totals.
   const watcher = new ChatUsageWatcher(
     context,
     (delta) => meter.observe('transcripts', delta.input, delta.output, delta.requests, delta.credits),
@@ -162,16 +157,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       openDashboardPanel(context.extensionUri, snapshot, changed.event)
     ),
 
-    vscode.commands.registerCommand(
-      'iceberg.report',
-      (usage: { input?: number; output?: number } | number) => {
-        if (typeof usage === 'number') {
-          meter.report(usage, 0);
-        } else {
-          meter.report(usage?.input ?? 0, usage?.output ?? 0);
-        }
-      }
-    ),
+    vscode.commands.registerCommand('iceberg.report', api.reportUsage),
 
     vscode.commands.registerCommand('iceberg.nameBear', () => pickBearName(meter.snapshot().bearName)),
 
@@ -206,30 +192,14 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   registerChatParticipant(context, meter);
 
-  return {
-    reportUsage: (u) => meter.report(u?.input ?? 0, u?.output ?? 0),
-    getUsage: () => meter.snapshot(),
-    onDidChangeUsage: meter.onDidChange
-  };
+  return api;
 }
 
 export function deactivate(): void {
   /* disposables handle cleanup */
 }
 
-/**
- * Switches Copilot Chat's telemetry on and points it somewhere readable.
- *
- * The two sources are not equally intrusive, and the difference matters enough
- * to put in front of the user rather than decide for them:
- *
- * - The **local trace store** registers an extra span processor, so it runs
- *   happily beside an existing OTLP exporter. It carries spans only.
- * - The **file feed** *replaces* the exporter set entirely — setting `outfile`
- *   forces `exporterType` to `file` upstream. Anyone already shipping to a
- *   collector would silently stop. It is also the only source that carries the
- *   log records the quality section is built from.
- */
+/** Trace storage is additive; the file feed replaces OTLP, so ask before changing it. */
 async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel): Promise<void> {
   const config = vscode.workspace.getConfiguration(OTEL_SECTION);
   const endpoint = (config.get<string>('otlpEndpoint', '') || '').trim();
@@ -401,7 +371,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(
     `  reconciliation      ${
       drift.pending
-        ? 'pending — the two sources have not overlapped yet'
+        ? 'pending — waiting for observations from both sources'
         : `otel ${fmt(drift.otelObserved)} vs transcripts ${fmt(drift.transcriptObserved)} ` +
           `(${drift.deltaTokens >= 0 ? '+' : '-'}${fmt(Math.abs(drift.deltaTokens))}, ` +
           `${drift.deltaPercent.toFixed(2)}%) — ${drift.agreeing ? 'agreeing' : 'DIVERGING'}`
@@ -455,32 +425,7 @@ function sharesAny(ours: Set<string>, theirs: Set<string>): boolean {
   return false;
 }
 
-/**
- * Finds another installed copy of this extension.
- *
- * VS Code keys an extension on `publisher.name`, so changing either half
- * produces a *different* extension rather than an upgrade, and the old copy
- * stays installed. Both then contribute the same view, the same commands and
- * the same chat participant, so whichever activates second throws "already
- * registered" — after its usage watcher has already started, quietly charging a
- * second meter the user never sees. The visible tell is a doubled view/title
- * menu.
- *
- * This has happened twice: publisher `local` to `obrocki` at 0.2.1, and name
- * `iceberg-copilot` to `bear-in-mind` at 0.4.0.
- *
- * Matching is on contributed ids rather than on the extension name, because the
- * name is exactly what changes when this happens: an earlier version of this
- * guard looked for a literal `iceberg-copilot`, which went blind the moment the
- * extension was renamed — the one case it exists to catch. Two copies collide
- * when they claim the same registrations, so that is what we look for.
- *
- * This is also why the `iceberg.*` view, command and setting ids were left
- * alone during the 0.4.0 rename. Had they been renamed too, the old and new
- * copies would share nothing, this guard would stay silent, and the duplicate
- * menus would be back. Keeping them stable also preserves user settings and
- * keybindings across the rename.
- */
+/** Match contributed IDs, not names: renamed installs can still claim the same commands and views. */
 function findConflictingInstall(
   self: vscode.Extension<unknown> | undefined
 ): vscode.Extension<unknown> | undefined {

@@ -272,6 +272,85 @@ describe('manual reports', () => {
   });
 });
 
+describe('bounded handover evidence', () => {
+  beforeEach(() => settings({}));
+
+  it('prunes expired, future and malformed entries when loading', (t) => {
+    const now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const mem = memento();
+    mem.store.set('iceberg.usage.v3', {
+      transcripts: { input: 1000, output: 0, requests: 1 },
+      recentTranscript: [
+        null,
+        { at: now - 300001, input: 900, output: 0 },
+        { at: now + 1, input: 900, output: 0 },
+        { at: now, input: Infinity, output: 0 },
+        { at: now, input: -10, output: 0 },
+        { at: now, input: '900', output: 0 },
+        { at: now, input: 100, output: 0, extra: 'not persisted' }
+      ]
+    });
+    const m = new TokenMeter(mem);
+    m.observe('otel', 400, 0);
+    assert.equal(m.snapshot().total, 1300);
+    m.dispose();
+    assert.deepEqual(mem.store.get('iceberg.usage.v3').recentTranscript, [
+      { at: now, input: 100, output: 0 }
+    ]);
+  });
+
+  it('caps restored evidence without changing the charged balance', (t) => {
+    const now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const mem = memento();
+    mem.store.set('iceberg.usage.v3', {
+      transcripts: { input: 5000, output: 0, requests: 1 },
+      recentTranscript: Array.from({ length: 2000 }, () => ({ at: now, input: 1, output: 0 }))
+    });
+    const m = new TokenMeter(mem);
+    assert.equal(m.snapshot().total, 5000);
+    m.dispose();
+    assert.equal(mem.store.get('iceberg.usage.v3').recentTranscript.length, 1024);
+  });
+
+  it('caps and expires evidence on append even without telemetry', (t) => {
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const { meter: m, mem } = meter();
+    for (let i = 0; i < 1100; i++) m.observe('transcripts', 1, 0);
+    m.dispose();
+    assert.equal(mem.store.get('iceberg.usage.v3').recentTranscript.length, 1024);
+    const resumed = new TokenMeter(mem);
+    now += 300001;
+    resumed.observe('transcripts', 10, 0);
+    resumed.dispose();
+    assert.equal(mem.store.get('iceberg.usage.v3').recentTranscript.length, 1);
+    assert.equal(mem.store.get('iceberg.usage.v3').transcripts.input, 1110);
+  });
+
+  it('retains overlap across a restart before the first telemetry delta', () => {
+    const { meter: m, mem } = meter();
+    m.observe('transcripts', 1000, 100);
+    m.dispose();
+    const resumed = new TokenMeter(mem);
+    resumed.observe('otel', 1000, 100);
+    assert.equal(resumed.snapshot().total, 1100);
+    resumed.dispose();
+  });
+
+  it('documents the ambiguous-overlap limit: max alone cannot recover unseen usage', () => {
+    const { meter: m } = meter();
+    m.observe('transcripts', 2000, 0);
+    m.observe('otel', 1000, 0); // A distinct request with no shared ID.
+    assert.equal(m.snapshot().total, 2000);
+    m.observe('transcripts', 500, 0);
+    m.observe('otel', 500, 0);
+    assert.equal(m.snapshot().total, 2500, 'shared later traffic does not repair the absorbed 1000');
+    m.dispose();
+  });
+});
+
 describe('credits', () => {
   it('always come from the transcripts, whichever source leads', () => {
     const { meter: m } = meter();
