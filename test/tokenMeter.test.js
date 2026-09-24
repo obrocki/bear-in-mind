@@ -46,8 +46,8 @@ function meter(mem = memento()) {
 
 describe('charging one stream of traffic', () => {
   beforeEach(() => {
-    // Defaults: both watchers on, telemetry allowed to lead.
-    require(path.join(build, 'tokenMeter.js'));
+    // Settings live on a global, so a failing test must not leak into the next.
+    settings({});
   });
 
   it('charges transcripts before telemetry is connected', () => {
@@ -211,6 +211,31 @@ describe('charging one stream of traffic', () => {
     // never reported.
     m.observe('otel', 1400, 0);
     assert.equal(m.snapshot().total, 1400, 'the unmatched 400 must still be charged');
+  });
+
+  it('absorbs each dimension against its own evidence', () => {
+    // A scalar budget would absorb 100 of a 100-in/100-out delta and split the
+    // surplus by ratio, landing 150 in / 50 out instead of 100 / 100.
+    const { meter: m } = meter();
+    m.observe('transcripts', 100, 0);
+    m.observe('otel', 100, 100);
+    const s = m.snapshot();
+    assert.equal(s.input, 100, 'the input half was already counted');
+    assert.equal(s.output, 100, 'the output half was not');
+  });
+
+  it('does not refreeze the ice when telemetry is switched off', () => {
+    const { meter: m } = meter();
+    m.observe('transcripts', 1000, 0);
+    m.observe('otel', 1000, 0);
+    m.observe('otel', 400, 0);
+    assert.equal(m.snapshot().total, 1400);
+
+    // Disabling telemetry must hand the figure over, not fall back to the
+    // smaller transcript ledger and grow the berg back.
+    settings({ 'iceberg.otel.enabled': false });
+    assert.equal(m.snapshot().total, 1400, 'the meter must never go backwards');
+    settings({});
   });
 
   it('survives a restart mid-handover', () => {

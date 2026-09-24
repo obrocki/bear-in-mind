@@ -74,6 +74,14 @@ interface StoredUsage {
   since: number;
   /** Tokens each watcher saw since they began overlapping, for the drift readout. */
   sinceHandover: { otel: number; transcripts: number };
+  /**
+   * Recent transcript deltas, bounding how much of a handover is a duplicate.
+   *
+   * Persisted with everything else: a restart between a transcript delta and
+   * the first telemetry delta would otherwise lose the evidence that the two
+   * describe the same request, and charge it twice.
+   */
+  recentTranscript: Array<{ at: number; input: number; output: number }>;
 }
 
 function ledger(): Ledger {
@@ -124,8 +132,6 @@ export class TokenMeter implements vscode.Disposable {
   private demo = false;
   private lastSource: UsageSource = 'transcripts';
   private lastBasis: MeltBasis = 'budget';
-  /** Recent transcript deltas, bounding how much of a handover can be absorbed. */
-  private recentTranscript: Array<{ at: number; tokens: number }> = [];
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -136,7 +142,7 @@ export class TokenMeter implements vscode.Disposable {
     this.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('iceberg')) {
-          this._onDidChange.fire(this.snapshot());
+          this.publish();
         }
       })
     );
@@ -155,7 +161,9 @@ export class TokenMeter implements vscode.Disposable {
         sinceHandover: {
           otel: Math.max(0, stored.sinceHandover?.otel ?? 0),
           transcripts: Math.max(0, stored.sinceHandover?.transcripts ?? 0)
-        }
+        },
+
+        recentTranscript: Array.isArray(stored.recentTranscript) ? stored.recentTranscript : []
       };
     }
 
@@ -177,7 +185,8 @@ export class TokenMeter implements vscode.Disposable {
         manual: sanitise(v2.manual),
         credits: Math.max(0, v2.credits ?? 0),
         since: v2.since ?? Date.now(),
-        sinceHandover: { otel: 0, transcripts: 0 }
+        sinceHandover: { otel: 0, transcripts: 0 },
+        recentTranscript: []
       };
     }
 
@@ -199,7 +208,8 @@ export class TokenMeter implements vscode.Disposable {
       manual: ledger(),
       credits: Math.max(0, v1?.credits ?? 0),
       since: v1?.since ?? Date.now(),
-      sinceHandover: { otel: 0, transcripts: 0 }
+      sinceHandover: { otel: 0, transcripts: 0 },
+      recentTranscript: []
     };
   }
 
@@ -222,7 +232,7 @@ export class TokenMeter implements vscode.Disposable {
   /** The watcher currently setting the figure: whichever has seen more. */
   private get charged(): Ledger {
     const t = this.state.transcripts;
-    if (!this.state.promoted || !this.otelAllowed) {
+    if (!this.state.promoted) {
       return t;
     }
     const o = this.state.otel;
@@ -231,6 +241,11 @@ export class TokenMeter implements vscode.Disposable {
     // ahead on input, telemetry ahead on output — the loser's figure would be
     // shown for both. Taking the maximum of each keeps `total = input + output`
     // consistent with the parts, and stays monotonic because both inputs are.
+    //
+    // Note there is no check on whether telemetry is *allowed* here. Switching
+    // it off stops new telemetry being recorded; it does not un-burn tokens it
+    // already reported. Excluding the ledger would make the meter run backwards
+    // and grow the berg back, which is the one thing it must never do.
     return {
       input: Math.max(o.input, t.input),
       output: Math.max(o.output, t.output),
@@ -239,7 +254,7 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get source(): UsageSource {
-    if (!this.state.promoted || !this.otelAllowed) {
+    if (!this.state.promoted) {
       return 'transcripts';
     }
     return tokens(this.state.otel) >= tokens(this.state.transcripts) ? 'otel' : 'transcripts';
@@ -346,6 +361,12 @@ export class TokenMeter implements vscode.Disposable {
       return;
     }
 
+    // Telemetry switched off means stop ingesting it. What it already reported
+    // stays charged — see `charged`.
+    if (from === 'otel' && !this.otelAllowed) {
+      return;
+    }
+
     // Only the transcripts carry credits, so they are taken regardless of which
     // watcher is currently setting the token figure.
     if (c > 0) {
@@ -354,11 +375,12 @@ export class TokenMeter implements vscode.Disposable {
 
     if (i > 0 || o > 0) {
       if (from === 'transcripts') {
-        this.recentTranscript.push({ at: Date.now(), tokens: i + o });
+        this.state.recentTranscript.push({ at: Date.now(), input: i, output: o });
       }
     }
 
-    let absorbed = 0;
+    let absorbedIn = 0;
+    let absorbedOut = 0;
     if (from === 'otel' && !this.state.promoted) {
       // Make the two commensurate. Telemetry starts recording when it is
       // switched on, long after the transcripts began, so without this it would
@@ -370,25 +392,24 @@ export class TokenMeter implements vscode.Disposable {
       // delta reports growth since telemetry's *own* baseline, which can span
       // more than the transcripts just reported — and with the watcher off, or
       // a feed that started long after the last request, they reported none of
-      // it. Absorb only what the transcripts can actually account for, and
-      // charge the rest instead of dropping it.
-      absorbed = Math.min(i + o, this.recentTranscriptTokens());
+      // it. Absorb only what the transcripts can account for, per dimension,
+      // and charge the rest instead of dropping it.
+      const seen = this.recentTranscriptTokens();
+      absorbedIn = Math.min(i, seen.input);
+      absorbedOut = Math.min(o, seen.output);
       this.state.otel = { ...this.state.transcripts };
       this.state.sinceHandover = { otel: 0, transcripts: 0 };
     }
 
-    const total = i + o;
-    const surplus = Math.max(0, total - absorbed);
-    if (surplus > 0) {
+    const surplusIn = Math.max(0, i - absorbedIn);
+    const surplusOut = Math.max(0, o - absorbedOut);
+    if (surplusIn > 0 || surplusOut > 0) {
       const target = from === 'otel' ? this.state.otel : this.state.transcripts;
-      // Split the unabsorbed remainder across the dimensions in the proportion
-      // it arrived in.
-      const share = total > 0 ? surplus / total : 0;
-      target.input += Math.round(i * share);
-      target.output += Math.round(o * share);
+      target.input += surplusIn;
+      target.output += surplusOut;
       target.requests += requestsFrom(countAsRequest);
       if (this.state.promoted) {
-        this.state.sinceHandover[from] += surplus;
+        this.state.sinceHandover[from] += surplusIn + surplusOut;
       }
     }
 
@@ -397,20 +418,22 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   /**
-   * Tokens the transcripts have reported inside the overlap window.
+   * Transcript tokens inside the overlap window, per dimension.
    *
-   * This is the evidence for how much of a handover delta is a duplicate. With
-   * the watcher disabled, or a feed that only started producing long after the
-   * last chat request, it is zero — and the whole delta is charged, because
-   * nobody else counted it.
+   * Input and output are exposed separately, so a scalar budget would let a
+   * surplus be split by ratio and land in the wrong dimension. Each is absorbed
+   * against its own evidence.
    */
-  private recentTranscriptTokens(): number {
+  private recentTranscriptTokens(): { input: number; output: number } {
     if (!this.config.get<boolean>('trackCopilotChat', true)) {
-      return 0;
+      return { input: 0, output: 0 };
     }
     const cutoff = Date.now() - OVERLAP_WINDOW_MS;
-    this.recentTranscript = this.recentTranscript.filter((e) => e.at >= cutoff);
-    return this.recentTranscript.reduce((sum, e) => sum + e.tokens, 0);
+    this.state.recentTranscript = this.state.recentTranscript.filter((e) => e.at >= cutoff);
+    return this.state.recentTranscript.reduce(
+      (sum, e) => ({ input: sum.input + e.input, output: sum.output + e.output }),
+      { input: 0, output: 0 }
+    );
   }
 
   /**
@@ -475,7 +498,8 @@ export class TokenMeter implements vscode.Disposable {
       manual: ledger(),
       credits: 0,
       since: Date.now(),
-      sinceHandover: { otel: 0, transcripts: 0 }
+      sinceHandover: { otel: 0, transcripts: 0 },
+      recentTranscript: []
     };
     this.persist(true);
     this.publish();

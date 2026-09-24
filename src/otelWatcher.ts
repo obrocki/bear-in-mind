@@ -414,10 +414,17 @@ export class OtelWatcher implements vscode.Disposable {
     }
 
     const from = this.state.offset;
+    // While still adopting the backlog, never read past its boundary. A window
+    // that straddled it would ingest post-boundary records into the rollup
+    // before seeding ran, and they would be copied into the baseline instead of
+    // being charged.
+    const limit = this.state.seeded
+      ? stat.size
+      : Math.min(stat.size, Math.max(this.state.baselineEnd, 0));
     // Read in bounded windows: the file is append-only and nothing trims it, so
     // a large backlog would otherwise be resident three times over — buffer,
     // string, and the array of split lines.
-    const available = Math.max(0, stat.size - from);
+    const available = Math.max(0, limit - from);
     const length = Math.min(available, MAX_READ_BYTES);
 
     let chunk: Buffer;
