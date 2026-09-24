@@ -28,13 +28,13 @@ interface PersistedState {
   /** Which feed the offsets below belong to. */
   path: string;
   /**
-   * Creation time of that feed.
+   * Fingerprint of the feed's first bytes.
    *
-   * Size alone cannot tell a replaced feed from a growing one: a new file of
-   * the same size, or one truncated and rewritten past the old offset, both
-   * look unchanged. Identity has to come from the file itself.
+   * Neither size nor birth time identifies a stream: a replacement can be the
+   * same size, and truncating and rewriting in place keeps the birth time. The
+   * opening bytes change in every one of those cases.
    */
-  birthMs: number;
+  head: string;
   /** Bytes of the feed already consumed. */
   offset: number;
   size: number;
@@ -123,7 +123,7 @@ export class OtelWatcher implements vscode.Disposable {
     const stored = context.globalState.get<Partial<PersistedState>>(STATE_KEY);
     this.state = {
       path: stored?.path ?? '',
-      birthMs: Math.max(0, stored?.birthMs ?? 0),
+      head: stored?.head ?? '',
       offset: Math.max(0, stored?.offset ?? 0),
       size: Math.max(0, stored?.size ?? 0),
       input: Math.max(0, stored?.input ?? 0),
@@ -313,15 +313,16 @@ export class OtelWatcher implements vscode.Disposable {
       return;
     }
 
-    // Identity, not size. A replacement of the same size, or one truncated and
-    // rewritten past the old offset, is invisible to a size comparison — the
-    // reader would carry on mid-line in a file it has never seen.
-    const birthMs = Math.round(stat.birthtimeMs || 0);
-    const replaced = this.state.path !== file || this.state.birthMs !== birthMs;
-    if (replaced || stat.size < this.state.offset) {
+    // Identity, not size or age. A replacement of the same size is invisible to
+    // a size comparison, and truncating and rewriting a file in place keeps its
+    // birth time, so neither is enough on its own — the reader would resume
+    // mid-record in a stream it has never seen. Fingerprinting the head catches
+    // all three cases: replaced, rotated, or rewritten.
+    const signature = headSignature(file, stat.size);
+    if (this.state.path !== file || this.state.head !== signature) {
       this.state = {
         path: file,
-        birthMs,
+        head: signature,
         offset: 0,
         size: 0,
         input: 0,
@@ -616,7 +617,7 @@ export class OtelWatcher implements vscode.Disposable {
 
   /** Forgets what it has charged and re-adopts the current feed as history. */
   rebaseline(): void {
-    this.state = { path: this.feedPath ?? '', birthMs: 0, offset: 0, size: 0, input: 0, output: 0, seeded: false };
+    this.state = { path: this.feedPath ?? '', head: '', offset: 0, size: 0, input: 0, output: 0, seeded: false };
     this.persist(true);
     this.scan();
   }
@@ -703,6 +704,35 @@ export class OtelWatcher implements vscode.Disposable {
 function numeric(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Cheap fingerprint of a file's opening bytes, used to tell one stream from
+ * another. FNV-1a over at most 512 bytes: enough to notice a rewrite, small
+ * enough to run on every poll.
+ */
+function headSignature(file: string, size: number): string {
+  const length = Math.min(512, size);
+  if (length <= 0) {
+    return '0:0';
+  }
+  try {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(length);
+      fs.readSync(fd, buf, 0, length, 0);
+      let hash = 0x811c9dc5;
+      for (const byte of buf) {
+        hash ^= byte;
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+      }
+      return `${length}:${hash.toString(16)}`;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return '';
+  }
 }
 
 function fileExists(target: string): boolean {
