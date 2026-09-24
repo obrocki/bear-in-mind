@@ -7,8 +7,8 @@ import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
-import { buildSnapshot, redactUrl, type DashboardSnapshot } from './otelSummary';
-import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
+import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, type DashboardSnapshot, type SessionComparison } from './otelSummary';
+import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
 
@@ -27,6 +27,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   const output = vscode.window.createOutputChannel('Iceberg');
   context.subscriptions.push(output);
   const log = (message: string) => output.appendLine(`[${new Date().toISOString()}] ${message}`);
+  let selectedSessionId = context.workspaceState.get<string>('iceberg.selectedSession');
 
   // Watchers observe the same traffic; the meter reconciles their cumulative totals.
   const watcher = new ChatUsageWatcher(
@@ -39,22 +40,22 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   const otel = new OtelWatcher(
     context,
-    (delta) => meter.observe('otel', delta.input, delta.output, delta.requests),
+    (delta) => meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests),
     log
   );
   context.subscriptions.push(otel);
   otel.start();
 
-  // The ice tracks how full the model's context window is whenever telemetry
-  // reports it, and falls back to cumulative burn against the budget when it
-  // does not. Pushing it on every poll keeps the scene live, and keeps
-  // telemetry authoritative through idle spells when no tokens are moving.
+  const updateContext = () => {
+    const session = selectedSession({ transcripts: watcher.sessions, spans: otel.spanDigest, selectedSessionId });
+    meter.setContext(session?.trace?.context);
+    meter.noteOtelAlive(otel.producing);
+  };
   context.subscriptions.push(
-    otel.onDidScan(() => {
-      meter.setContext(otel.spanDigest.context);
-      meter.noteOtelAlive(otel.producing);
-    })
+    otel.onDidScan(updateContext),
+    watcher.onDidScan(updateContext)
   );
+  updateContext();
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
@@ -85,7 +86,11 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       source: usage.source,
       basis: usage.basis,
       context: usage.context,
-      drift: usage.drift
+      drift: usage.drift,
+      manualTokens: usage.manualTokens,
+      legacyTokens: usage.legacyTokens,
+      transcripts: watcher.sessions,
+      selectedSessionId
     });
   };
 
@@ -96,7 +101,8 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   context.subscriptions.push(
     changed,
     meter.onDidChange(() => changed.fire()),
-    otel.onDidScan(() => changed.fire())
+    otel.onDidScan(() => changed.fire()),
+    watcher.onDidScan(() => changed.fire())
   );
 
   const provider = new IcebergViewProvider(context.extensionUri, meter);
@@ -120,19 +126,20 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       return;
     }
     const pct = Math.round(s.health * 100);
-    status.text = `$(snowflake) ${pct}%`;
+    status.text = `$(snowflake) ${s.basis === 'unavailable' ? '—' : s.basis === 'demo' ? 'Demo' : `${pct}%`}`;
     status.tooltip = new vscode.MarkdownString(
       [
         `**Bear in Mind** — ${iceReadout(s)}`,
         '',
         ...(s.basis === 'context' && s.context
-          ? [`- Latest trace: ${s.context.model ?? 'unknown model'} at ${new Date(s.context.atMs).toISOString()}; not the selected chat's full context window.`]
+          ? [`- Session: ${s.context.sessionId ?? 'not reported'}; ${s.context.model ?? 'unknown model'} at ${new Date(s.context.atMs).toISOString()}; prompt allowance, not the model picker's full window.`]
           : []),
         `- Local totals: input \`${fmt(s.input)}\` · output \`${fmt(s.output)}\``,
-        `- Requests counted: \`${s.requests}\`` +
+        `- Observed model calls + manual reports: \`${s.requests}\`` +
           ` · Reported credits: ${s.credits > 0 ? `\`${s.credits.toFixed(1)}\`` : 'not reported'}`,
         `- Across local sessions/workspaces since ${new Date(meter.since).toISOString()}; not selected-session cost.`,
-        `- Source: ${s.source === 'otel' ? 'OpenTelemetry' : 'chat transcripts'}`,
+        `- Source: ${s.source === 'otel' ? 'OpenTelemetry (metrics/spans, not added together)' : 'awaiting telemetry'}`,
+        `- Explicit manual reports: ${fmt(s.manualTokens)} tokens; excluded legacy estimates: ${fmt(s.legacyTokens)}.`,
         '- Account usage and monthly credit allowance are not read.',
         '',
         `${s.bearName} ${moodLine(s.health)}`,
@@ -164,14 +171,35 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
     vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output)),
 
-    vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output)),
+    vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output, snapshot().session)),
+
+    vscode.commands.registerCommand('iceberg.selectSession', async () => {
+      const choices = [
+        { label: 'Latest observed session', description: 'Not automatically the active VS Code chat', sessionId: undefined },
+        ...sessionComparisons(watcher.sessions, otel.spanDigest.sessions).map((session) => ({
+          label: session.sessionId,
+          description: `${session.trace?.model ?? session.transcript?.model ?? 'unknown model'} · ${new Date(session.updatedAt).toLocaleString()}`,
+          sessionId: session.sessionId
+        }))
+      ];
+      const choice = await vscode.window.showQuickPick(choices, {
+        title: 'Session to compare with Copilot',
+        placeHolder: 'Pin a session ID, or follow the most recently observed session'
+      });
+      if (choice) {
+        selectedSessionId = choice.sessionId;
+        await context.workspaceState.update('iceberg.selectedSession', selectedSessionId);
+        updateContext();
+        changed.fire();
+      }
+    }),
 
     vscode.commands.registerCommand('iceberg.showStats', async () => {
       const s = meter.snapshot();
-      const source = s.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts';
+      const source = s.source === 'otel' ? 'metered by OpenTelemetry' : 'awaiting telemetry (manual reports only)';
       const pick = await vscode.window.showInformationMessage(
         `${iceReadout(s)}. Local totals across sessions/workspaces: ` +
-          `in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} requests; ` +
+          `in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} model calls + manual reports; ` +
           `reported credits ${s.credits > 0 ? s.credits.toFixed(1) : 'not reported'} · ${source}. ` +
           `Not selected-session cost or account usage; the monthly credit allowance is not read.`,
         'Open Dashboard',
@@ -214,7 +242,9 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   // `dbSpanExporter` only exists in newer Copilot Chat builds. Offering the
   // trace store where the setting is unregistered would promise exact timings
   // and context-window headroom that can never arrive, so check before offering.
-  const traceStoreAvailable = config.inspect('dbSpanExporter')?.defaultValue !== undefined;
+  const traceSetting = config.inspect('dbSpanExporter.enabled')?.defaultValue !== undefined
+    ? 'dbSpanExporter.enabled' : 'dbSpanExporter';
+  const traceStoreAvailable = config.inspect(traceSetting)?.defaultValue !== undefined;
 
   const traceStore = {
     label: 'Local trace store',
@@ -264,7 +294,7 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
 
   const wanted: Array<[string, unknown]> = [['enabled', true]];
   if (picked.id === 'sqlite' || picked.id === 'both') {
-    wanted.push(['dbSpanExporter', true]);
+    wanted.push([traceSetting, true]);
   }
   if (picked.id === 'file' || picked.id === 'both') {
     // If the user has pinned `iceberg.otel.feedPath`, that is the file the
@@ -348,7 +378,7 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   }
 }
 
-function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.OutputChannel): void {
+function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.OutputChannel, session?: SessionComparison): void {
   const feed = otel.health();
   const usage = meter.snapshot();
   const drift = usage.drift;
@@ -364,7 +394,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  otlp endpoint       ${feed.otlpEndpoint ?? '(none)'}`);
   output.appendLine(
     `  records             ${feed.records.metrics} metric exports · ${feed.records.logs} events · ` +
-      `${feed.records.spans} spans skipped · ${feed.records.unknown} unknown · ${feed.records.malformed} malformed`
+      `${feed.records.spans} span records (legacy exports may be empty) · ${feed.records.unknown} unknown · ${feed.records.malformed} malformed`
   );
   output.appendLine(
     `  last record         ${feed.lastRecordAtMs ? new Date(feed.lastRecordAtMs).toISOString() : 'never'}`
@@ -375,6 +405,13 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  local totals        ${usage.input} input / ${usage.output} output tokens`);
   output.appendLine(`  reported credits    ${usage.credits > 0 ? usage.credits : 'not reported'} (local transcripts)`);
   output.appendLine(`  local budget        ${usage.total} counted / ${usage.budget} tokens (visual target only)`);
+  output.appendLine(`  manual / legacy     ${usage.manualTokens} explicit / ${usage.legacyTokens} excluded old estimates`);
+  if (session) {
+    output.appendLine(`  comparison session  ${session.sessionId} (${session.pinned ? 'pinned' : 'latest observed'}, not active-chat API)`);
+    output.appendLine(`  session cost        ${session.transcript?.credits ?? 'not reported'} transcript credits`);
+    output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
+    output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
+  }
   output.appendLine(`  ice gauge           ${usage.basis}: ${iceReadout(usage)}`);
   if (usage.context) {
     output.appendLine(
@@ -389,7 +426,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     `  reconciliation      ${
       drift.pending
         ? 'pending — waiting for observations from both sources'
-        : `otel ${drift.otelObserved} vs transcripts ${drift.transcriptObserved} tokens ` +
+        : `metrics ${drift.otelObserved} vs spans ${drift.spanObserved} tokens ` +
           `(${drift.deltaTokens >= 0 ? '+' : '-'}${Math.abs(drift.deltaTokens)}, ` +
           `${drift.deltaPercent.toFixed(2)}%) — ${drift.agreeing ? 'agreeing' : 'DIVERGING'}`
     }`
@@ -529,15 +566,17 @@ function standDown(
       health: 1,
       requests: 0,
       credits: 0,
+      manualTokens: 0,
+      legacyTokens: 0,
       meltdownDemo: false,
       bearName: '',
       animate: false,
       pixelScale: 0,
-      source: 'transcripts',
-      basis: 'budget',
+      source: 'none',
+      basis: 'unavailable',
       drift: {
         otelObserved: 0,
-        transcriptObserved: 0,
+        spanObserved: 0,
         deltaTokens: 0,
         deltaPercent: 0,
         agreeing: true,
@@ -549,8 +588,8 @@ function standDown(
 }
 
 /**
- * `@iceberg` chat participant. Anything routed through it is metered with the
- * model's own tokenizer, so the iceberg melts by a real amount.
+ * `@iceberg` uses the same telemetry as other calls; tokenizing visible text
+ * would miss system/tool/reasoning usage and double-count the observed call.
  */
 function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenMeter): void {
   if (!vscode.chat?.createChatParticipant) {
@@ -559,13 +598,8 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
   try {
     const participant = vscode.chat.createChatParticipant(
       'iceberg.bear',
-      async (request, chatContext, stream, token) => {
+      async (request, _chatContext, stream, token) => {
         const s = meter.snapshot();
-
-        const history = chatContext.history
-          .map((h) => ('prompt' in h ? h.prompt : ''))
-          .join('\n');
-        const promptTokens = await countTokens(request.prompt + '\n' + history, request.model);
 
         const messages = [
           vscode.LanguageModelChatMessage.User(
@@ -590,13 +624,8 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
           stream.markdown(reply);
         }
 
-        const replyTokens = await countTokens(reply, request.model);
-        meter.report(promptTokens, replyTokens);
-
-        const after = meter.snapshot();
         stream.markdown(
-          `\n\n---\n\`${fmt(promptTokens)}\` in · \`${fmt(replyTokens)}\` out — ` +
-            `**${Math.round(after.health * 100)}%** ice left.`
+          '\n\n---\nUsage is recorded from Copilot telemetry when available, not estimated from visible text.'
         );
         stream.button({ command: 'iceberg.open', title: 'Watch the iceberg' });
         return {};
@@ -611,8 +640,14 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
 
 function iceReadout(s: UsageSnapshot): string {
   const pct = Math.round(s.health * 100);
+  if (s.basis === 'unavailable') {
+    return 'ice unscaled: no reported prompt limit or user-selected target; not an environmental measurement';
+  }
+  if (s.basis === 'demo') {
+    return `${pct}% demo ice remaining (synthetic animation, no usage recorded)`;
+  }
   return s.basis === 'context' && s.context
-    ? `${pct}% latest prompt allowance free (used ${s.context.used.toLocaleString('en-US')} / limit ${s.context.limit.toLocaleString('en-US')} tokens; latest trace, any session)`
+    ? `${pct}% latest prompt allowance free (used ${s.context.used.toLocaleString('en-US')} / limit ${s.context.limit.toLocaleString('en-US')} tokens; session ${s.context.sessionId ?? 'not reported'})`
     : `${pct}% local token budget remaining (counted ${s.total.toLocaleString('en-US')} / target ${s.budget.toLocaleString('en-US')} tokens; visual target, not a Copilot spending cap)`;
 }
 

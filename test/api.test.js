@@ -15,7 +15,7 @@ function api(t) {
 
 it('shares object and legacy numeric reports through the same API callback', (t) => {
   const { api: a, meter } = api(t);
-  meter.observe('transcripts', 1000, 100);
+  meter.observe('traces', 1000, 100);
   const command = a.reportUsage;
   command({ input: 120, output: 30 });
   command(50);

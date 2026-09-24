@@ -3,13 +3,12 @@ import { createRequire } from 'module';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OtelRollup } from './otelParse';
+import { digestSpans, fileUsageSpan, usageSpan, type UsageSpan } from './spanUsage';
 import {
   emptySpanDigest,
   redactUrl,
-  type ContextWindow,
   type FeedHealth,
-  type SpanDigest,
-  type SpanSession
+  type SpanDigest
 } from './otelSummary';
 
 const STATE_KEY = 'iceberg.otelWatch.v1';
@@ -31,6 +30,12 @@ export interface OtelUsageDelta {
   input: number;
   output: number;
   requests: number;
+  source?: 'traces';
+}
+
+interface TraceAccounting {
+  since: number;
+  seen: Record<string, { input: number; output: number; at: number }>;
 }
 
 interface PersistedState {
@@ -96,13 +101,10 @@ function loadSqlite(): SqliteModule | undefined {
  *
  * Two sources, because neither is sufficient alone:
  *
- * - **The JSONL file feed** (`github.copilot.chat.otel.outfile`) carries metrics
- *   and log events. Metrics cover all three dashboard sections and are the
- *   authoritative token total. Its spans are worthless — under OTel JS SDK v2
- *   they serialise to `{}` — so it cannot supply per-session timings.
- * - **`agent-traces.db`** (`…otel.dbSpanExporter`) carries real spans with exact
- *   start and end times, and a prebuilt `sessions` view. It has no metrics and
- *   no log records, so it cannot supply the quality signals.
+ * - **The JSONL file feed** carries metrics, log events and current serialized
+ *   spans. Legacy SDK v2 exports can contain empty `{}` span records instead.
+ * - **`agent-traces.db`** carries completed spans and their attributes. Read
+ *   metadata only and merge by span ID so file/SQLite copies count just once.
  *
  * They are also not equally intrusive. Setting `outfile` *replaces* whatever
  * OTLP exporter the user configured, silently cutting off their collector. The
@@ -123,6 +125,9 @@ export class OtelWatcher implements vscode.Disposable {
 
   private state: PersistedState;
   private spans: SpanDigest = emptySpanDigest();
+  private readonly fileSpans = new Map<string, UsageSpan>();
+  private dbSpans: UsageSpan[] = [];
+  private readonly traceAccounting: TraceAccounting;
   private feedPath: string | undefined;
   private dbPath: string | undefined;
   private pathsResolvedAt = 0;
@@ -163,6 +168,8 @@ export class OtelWatcher implements vscode.Disposable {
     // the whole of history. Re-reading from the top rebuilds the true
     // cumulative; the persisted totals stay put, so nothing is charged twice.
     this.state.offset = 0;
+    this.traceAccounting = context.globalState.get<TraceAccounting>('iceberg.traceWatch.v1') ??
+      { since: Date.now(), seen: {} };
   }
 
   private get config(): vscode.WorkspaceConfiguration {
@@ -317,8 +324,22 @@ export class OtelWatcher implements vscode.Disposable {
         this.pathsResolvedAt = now;
       }
 
+      const cutoff = Date.now() - SPAN_WINDOW_MS;
+      for (const [id, span] of this.fileSpans) {
+        if (span.start < cutoff) {
+          this.fileSpans.delete(id);
+        }
+      }
       this.consumeFeed();
       this.readSpans();
+      const spans = new Map(this.fileSpans);
+      for (const span of this.dbSpans) {
+        if (span.start >= cutoff) {
+          spans.set(span.id, span);
+        }
+      }
+      this.spans = digestSpans(spans.values());
+      this.emitSpanDelta(spans.values());
       this.emitDelta();
       this._onDidScan.fire();
     } finally {
@@ -393,6 +414,7 @@ export class OtelWatcher implements vscode.Disposable {
       // into one dashboard, and the new file's lower counters would read as a
       // counter restart and have the old history banked and added again.
       this._rollup = new OtelRollup();
+      this.fileSpans.clear();
       this.missingFeedPath = undefined;
       this.persist(true);
     } else if (!previous || previous.length < MAX_SIGNATURE_BYTES) {
@@ -484,7 +506,16 @@ export class OtelWatcher implements vscode.Disposable {
       return;
     }
     for (const line of text.slice(0, lastBreak).split('\n')) {
-      this.rollup.ingestLine(line);
+      this.rollup.ingestLine(line, (record) => {
+        const span = fileUsageSpan(record);
+        if (span && span.start >= Date.now() - SPAN_WINDOW_MS) {
+          if (this.fileSpans.size < 50_000 || this.fileSpans.has(span.id)) {
+            this.fileSpans.set(span.id, span);
+          } else {
+            this.note('The file span limit (50,000) was reached; trace details are incomplete.');
+          }
+        }
+      });
     }
     this.state.offset = from + Buffer.byteLength(text.slice(0, lastBreak + 1), 'utf8');
     this.state.size = stat.size;
@@ -531,13 +562,13 @@ export class OtelWatcher implements vscode.Disposable {
   private readSpans(): void {
     const file = this.dbPath;
     if (!file) {
-      this.spans = emptySpanDigest();
+      this.dbSpans = [];
       return;
     }
     const sqlite = loadSqlite();
     if (!sqlite) {
       this.note('node:sqlite is unavailable in this VS Code build, so span timings are off.');
-      this.spans = emptySpanDigest();
+      this.dbSpans = [];
       return;
     }
 
@@ -545,73 +576,50 @@ export class OtelWatcher implements vscode.Disposable {
     try {
       db = new sqlite.DatabaseSync(file, { readOnly: true });
       const since = Date.now() - SPAN_WINDOW_MS;
-      const digest = emptySpanDigest();
-      digest.available = true;
-
-      for (const raw of db.prepare('SELECT * FROM sessions WHERE started_at >= ?').all(since)) {
-        const r = raw as Record<string, unknown>;
-        digest.sessions.push({
-          sessionId: String(r.session_id ?? ''),
-          agentName: (r.agent_name as string) ?? null,
-          model: (r.model as string) ?? null,
-          startedAt: numeric(r.started_at),
-          endedAt: numeric(r.ended_at),
-          durationMs: numeric(r.duration_ms),
-          llmCalls: numeric(r.llm_calls),
-          toolCalls: numeric(r.tool_calls),
-          inputTokens: numeric(r.total_input_tokens),
-          outputTokens: numeric(r.total_output_tokens),
-          cachedTokens: numeric(r.total_cached_tokens)
-        } satisfies SpanSession);
-      }
-
       const rows = db
         .prepare(
-          'SELECT operation_name, tool_name, start_time_ms, end_time_ms, ttft_ms, turn_index, ' +
+          'SELECT span_id, operation_name, tool_name, start_time_ms, end_time_ms, ttft_ms, ' +
+            'conversation_id, chat_session_id, request_model, response_model, ' +
             'input_tokens, output_tokens, cached_tokens, reasoning_tokens ' +
             'FROM spans WHERE start_time_ms >= ?'
         )
         .all(since);
-
-      const turnsByNothing: number[] = [];
+      const attributes = new Map<string, Record<string, unknown>>();
+      for (const raw of db.prepare(
+        'SELECT a.span_id, a.key, a.value FROM span_attributes a JOIN spans s ON s.span_id = a.span_id ' +
+        'WHERE s.start_time_ms >= ? AND a.key IN (?, ?, ?, ?, ?, ?)'
+      ).all(since, 'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
+        'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens',
+        'copilot_chat.parent_chat_session_id', 'copilot_chat.debug_log_label')) {
+        const r = raw as Record<string, unknown>;
+        const id = String(r.span_id);
+        const a = attributes.get(id) ?? {};
+        const key = String(r.key);
+        a[key] = key.endsWith('session_id') || key.endsWith('debug_log_label') ? r.value : Number(r.value);
+        attributes.set(id, a);
+      }
+      const completed: UsageSpan[] = [];
       for (const raw of rows) {
         const r = raw as Record<string, unknown>;
-        const op = String(r.operation_name ?? '');
-        const duration = Math.max(0, numeric(r.end_time_ms) - numeric(r.start_time_ms));
-        if (op === 'invoke_agent') {
-          if (duration > 0) {
-            digest.agentDurationsMs.push(duration);
-          }
-          const turnIndex = r.turn_index;
-          // `turn_index` is zero-based, so a `turns > 0` guard silently dropped
-          // the first turn of every session and every single-turn session
-          // entirely — inflating turns-per-session by excluding its smallest
-          // values. Absent is the only case worth skipping.
-          if (turnIndex !== null && turnIndex !== undefined) {
-            turnsByNothing.push(numeric(turnIndex) + 1);
-          }
-        } else if (op === 'chat') {
-          if (duration > 0) {
-            digest.llmDurationsMs.push(duration);
-          }
-          const ttft = numeric(r.ttft_ms);
-          if (ttft > 0) {
-            digest.ttftMs.push(ttft);
-          }
-        } else if (op === 'execute_tool') {
-          const name = String(r.tool_name ?? 'unknown');
-          const list = digest.toolDurationsMs.get(name) ?? [];
-          list.push(duration);
-          digest.toolDurationsMs.set(name, list);
+        const span = usageSpan(r.span_id, {
+          'gen_ai.operation.name': r.operation_name,
+          'gen_ai.tool.name': r.tool_name,
+          'gen_ai.conversation.id': r.conversation_id,
+          'copilot_chat.chat_session_id': r.chat_session_id,
+          'gen_ai.request.model': r.request_model,
+          'gen_ai.response.model': r.response_model,
+          'gen_ai.usage.input_tokens': r.input_tokens,
+          'gen_ai.usage.output_tokens': r.output_tokens,
+          'gen_ai.usage.cache_read.input_tokens': r.cached_tokens,
+          'gen_ai.usage.reasoning_tokens': r.reasoning_tokens,
+          'copilot_chat.time_to_first_token': r.ttft_ms,
+          ...attributes.get(String(r.span_id))
+        }, numeric(r.start_time_ms), numeric(r.end_time_ms));
+        if (span) {
+          completed.push(span);
         }
-        digest.cachedTokens += numeric(r.cached_tokens);
-        digest.reasoningTokens += numeric(r.reasoning_tokens);
       }
-      digest.turnCounts = turnsByNothing;
-      digest.inputTokens = digest.sessions.reduce((a, s) => a + s.inputTokens, 0);
-      digest.outputTokens = digest.sessions.reduce((a, s) => a + s.outputTokens, 0);
-      digest.context = this.readContextWindow(db);
-      this.spans = digest;
+      this.dbSpans = completed;
     } catch (err) {
       // A locked or mid-recovery WAL database is normal and transient; keep the
       // previous digest rather than flapping the dashboard to empty.
@@ -625,38 +633,39 @@ export class OtelWatcher implements vscode.Disposable {
     }
   }
 
-  /**
-   * Reads prompt usage against the input allowance of the most recent model call.
-   *
-   * `copilot_chat.request.max_prompt_tokens` is not one of the columns the
-   * store denormalises, but every attribute is kept in `span_attributes`, so it
-   * is one join away. Only the newest `chat` span matters — this is a live
-   * gauge, not a total. It may belong to any session in the store, and the prompt
-   * allowance is not necessarily the full context limit displayed by VS Code.
-   */
-  private readContextWindow(db: SqliteDatabase): ContextWindow | undefined {
-    try {
-      const rows = db
-        .prepare(
-          'SELECT s.input_tokens AS used, s.request_model AS model, ' +
-            's.start_time_ms AS at, a.value AS limit_value ' +
-            'FROM spans s JOIN span_attributes a ON a.span_id = s.span_id ' +
-            "WHERE s.operation_name = 'chat' AND a.key = ? AND s.input_tokens IS NOT NULL " +
-            'ORDER BY s.start_time_ms DESC LIMIT 1'
-        )
-        .all('copilot_chat.request.max_prompt_tokens');
-      const row = rows[0] as Record<string, unknown> | undefined;
-      if (!row) {
-        return undefined;
+  private emitSpanDelta(spans: Iterable<UsageSpan>): void {
+    const delta: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces' };
+    const seen = this.traceAccounting.seen;
+    const cutoff = Date.now() - SPAN_WINDOW_MS;
+    for (const [id, previous] of Object.entries(seen)) {
+      if (previous.at < cutoff) {
+        delete seen[id];
       }
-      const limit = numeric(row.limit_value);
-      const used = numeric(row.used);
-      if (limit <= 0 || used <= 0) {
-        return undefined;
+    }
+    let size = Object.keys(seen).length;
+    for (const span of spans) {
+      if (span.operation !== 'chat' || span.start < this.traceAccounting.since ||
+          span.start < cutoff || (span.input === undefined && span.output === undefined)) {
+        continue;
       }
-      return { used, limit, model: (row.model as string) ?? null, atMs: numeric(row.at) };
-    } catch {
-      return undefined;
+      const previous = seen[span.id];
+      if (!previous && size >= 50_000) {
+        this.note('The trace accounting limit (50,000 calls) was reached; new calls are not metered.');
+        continue;
+      }
+      const input = Math.max(previous?.input ?? 0, span.input ?? 0);
+      const output = Math.max(previous?.output ?? 0, span.output ?? 0);
+      delta.input += input - (previous?.input ?? 0);
+      delta.output += output - (previous?.output ?? 0);
+      if (!previous) {
+        size++;
+        delta.requests++;
+      }
+      seen[span.id] = { input, output, at: span.start };
+    }
+    if (delta.input || delta.output || delta.requests) {
+      this.onUsage(delta);
+      this.persist();
     }
   }
 
@@ -729,7 +738,10 @@ export class OtelWatcher implements vscode.Disposable {
   health(): FeedHealth {
     const feedPath = this.feedPath ?? this.resolveFeedPath();
     const dbPath = this.dbPath ?? this.resolveDbPath();
-    const copilotEnabled = this.copilotConfig.get<boolean>('enabled', false);
+    const copilotEnabled = this.copilotConfig.get<boolean>('enabled', false) ||
+      this.copilotConfig.get<boolean>('dbSpanExporter.enabled', false) ||
+      this.copilotConfig.get<boolean>('dbSpanExporter', false) ||
+      process.env.COPILOT_OTEL_ENABLED === 'true' || !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     const endpoint = (this.copilotConfig.get<string>('otlpEndpoint', '') || '').trim();
     const exporterType = (this.copilotConfig.get<string>('exporterType', '') || '').trim();
 
@@ -738,10 +750,10 @@ export class OtelWatcher implements vscode.Disposable {
       notes.push('Copilot Chat telemetry is switched off, so there is nothing to read.');
     }
     if (!feedPath) {
-      notes.push('No JSONL feed configured — cost and quality signals need one.');
+      notes.push('No JSONL feed configured — quality signals need one; traces can still supply tokens and credits.');
     }
     if (!dbPath) {
-      notes.push('No agent-traces.db found — session timings fall back to histogram estimates.');
+      notes.push('No agent-traces.db found — exact timings require serialized file spans or the trace store.');
     }
     if (endpoint && exporterType !== 'file' && !feedPath) {
       notes.push(
@@ -753,14 +765,14 @@ export class OtelWatcher implements vscode.Disposable {
       watching: this.enabled,
       copilotOtelEnabled: copilotEnabled,
       jsonlPath: feedPath,
-      jsonlActive: !!feedPath && this.rollup.stats.metrics + this.rollup.stats.logs > 0,
+      jsonlActive: !!feedPath && this.rollup.stats.metrics + this.rollup.stats.logs + this.fileSpans.size > 0,
       sqlitePath: dbPath,
-      sqliteActive: this.spans.available,
+      sqliteActive: this.dbSpans.length > 0,
       // Redacted before it leaves this method: `FeedHealth` is posted to the
       // webview and written to diagnostics, and an OTLP URL can carry a token
       // in its userinfo or query string.
       otlpEndpoint: endpoint ? redactUrl(endpoint) : undefined,
-      lastRecordAtMs: this.rollup.stats.lastRecordAtMs,
+      lastRecordAtMs: Math.max(this.rollup.stats.lastRecordAtMs, ...this.spans.sessions.map((s) => s.endedAt), 0),
       records: {
         metrics: this.rollup.stats.metrics,
         logs: this.rollup.stats.logs,
@@ -787,7 +799,10 @@ export class OtelWatcher implements vscode.Disposable {
       clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
     }
-    const write = () => void this.context.globalState.update(STATE_KEY, this.state);
+    const write = () => {
+      void this.context.globalState.update(STATE_KEY, this.state);
+      void this.context.globalState.update('iceberg.traceWatch.v1', this.traceAccounting);
+    };
     if (immediate) {
       write();
       return;

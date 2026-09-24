@@ -12,7 +12,7 @@ const esbuild = require('esbuild');
 const repoRoot = path.resolve(__dirname, '..');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-tests-'));
 
-const ENTRIES = ['src/api.ts', 'src/otelParse.ts', 'src/otelSummary.ts', 'src/otelWatcher.ts', 'src/tokenMeter.ts'];
+const ENTRIES = ['src/api.ts', 'src/chatWatcher.ts', 'src/spanUsage.ts', 'src/otelParse.ts', 'src/otelSummary.ts', 'src/otelWatcher.ts', 'src/tokenMeter.ts'];
 
 const vscodeStub = {
   name: 'vscode-stub',
@@ -43,7 +43,7 @@ async function main() {
 
   const result = spawnSync(
     process.execPath,
-    ['--test', ...testFiles],
+    ['--test', '--test-reporter=spec', ...testFiles],
     { stdio: 'inherit', env: { ...process.env, BEAR_TEST_BUILD: outDir } }
   );
 

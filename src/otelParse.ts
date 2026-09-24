@@ -67,6 +67,9 @@ export function classify(record: unknown): RecordKind {
   if (Object.keys(r).length === 0) {
     return 'span';
   }
+  if (typeof r.spanId === 'string' && r.startTime && r.endTime) {
+    return 'span';
+  }
   if (r.attributes !== undefined || r._body !== undefined || r.body !== undefined) {
     return 'log';
   }
@@ -101,7 +104,12 @@ const CONTENT_ATTRIBUTES = new Set([
   'gen_ai.system_instructions',
   'gen_ai.tool.definitions',
   'gen_ai.tool.call.arguments',
-  'gen_ai.tool.call.result'
+  'gen_ai.tool.call.result',
+  'copilot_chat.user_request',
+  'copilot_chat.prompt_context',
+  'copilot_chat.prompt_instructions',
+  'copilot_chat.reasoning_content',
+  'copilot_chat.markdown_content'
 ]);
 
 /** Nothing this parser needs is a long string; anything that big is content. */
@@ -286,14 +294,13 @@ export class OtelRollup {
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
 
-  /** Feeds one raw JSONL line in. Returns what the line turned out to be. */
-  ingestLine(line: string): RecordKind {
+  /** Ingests once; optional span extraction receives the already-redacted record. */
+  ingestLine(line: string, onSpan?: (record: unknown) => void): RecordKind {
     const trimmed = line.trim();
     if (!trimmed || trimmed.charCodeAt(0) !== 123 /* { */) {
       return 'unknown';
     }
-    // Spans are the single most common line and are always exactly `{}`, so
-    // recognise them without paying for JSON.parse.
+    // Legacy exporters write empty spans; keep that common case parse-free.
     if (trimmed === '{}') {
       this.stats.spans++;
       return 'span';
@@ -307,7 +314,11 @@ export class OtelRollup {
       this.stats.malformed++;
       return 'unknown';
     }
-    return this.ingest(record);
+    const kind = this.ingest(record);
+    if (kind === 'span') {
+      onSpan?.(record);
+    }
+    return kind;
   }
 
   ingest(record: unknown): RecordKind {
@@ -431,14 +442,14 @@ export class OtelRollup {
           continue;
         }
         for (const point of m.dataPoints) {
-          const p = point as { attributes?: Record<string, unknown>; endTime?: unknown; value?: unknown };
+          const p = point as { attributes?: Record<string, unknown>; startTime?: unknown; endTime?: unknown; value?: unknown };
           const attributes = p.attributes && typeof p.attributes === 'object' ? p.attributes : {};
           const endMs = hrToMs(p.endTime);
           newestMs = Math.max(newestMs, endMs);
           if (name === TOKEN_USAGE) {
             newestTokenUsageMs = Math.max(newestTokenUsageMs, endMs);
           }
-          this.absorbPoint(sessionId, name, attributes, p.value, endMs);
+          this.absorbPoint(sessionId, name, attributes, p.value, endMs, hrToMs(p.startTime));
         }
       }
     }
@@ -457,9 +468,10 @@ export class OtelRollup {
     metric: string,
     attributes: Record<string, unknown>,
     value: unknown,
-    atMs: number
+    atMs: number,
+    startAtMs: number
   ): void {
-    const key = `${sessionId}\u0000${metric}\u0000${attrKey(attributes)}`;
+    const key = `${sessionId}\u0000${startAtMs || ''}\u0000${metric}\u0000${attrKey(attributes)}`;
     let s = this.series.get(key);
     if (!s) {
       // A series that was evicted and is now exporting again must resume its
@@ -486,11 +498,24 @@ export class OtelRollup {
       }
       this.series.set(key, s);
     }
+    // The start timestamp distinguishes process runs even when a fresh counter
+    // is already above the old peak. Delayed exports within a run are not resets.
+    if (atMs > 0 && atMs < s.updatedAtMs) {
+      return;
+    }
 
     if (value && typeof value === 'object' && 'sum' in (value as object)) {
       const h = value as Partial<HistogramValue>;
+      if (typeof h.sum !== 'number' || !Number.isFinite(h.sum) || h.sum < 0 ||
+          typeof h.count !== 'number' || !Number.isFinite(h.count) || h.count < 0) {
+        this.stats.malformed++;
+        return;
+      }
       const sum = num(h.sum);
       const count = num(h.count);
+      if (startAtMs && (sum < s.last || count < s.lastCount)) {
+        return;
+      }
       // A restored series whose first value is already below its sealed mark
       // has restarted while it was away: this is a fresh run on top of the
       // sealed history, not a continuation of it. Discounting the mark would
@@ -500,16 +525,18 @@ export class OtelRollup {
         s.rebaseCount = 0;
       }
       // Cumulative: a drop means the exporting process restarted.
-      if (sum < s.last) {
+      if (sum < s.last && !startAtMs) {
         s.retired += s.last;
         s.retiredCount += s.lastCount;
         // Bank the finished run's buckets too. Without this a restart would
         // erase every pre-restart sample from the quantile estimates while
         // `mean()` went on counting them.
         s.retiredCounts = addCounts(s.retiredCounts, s.counts);
+        s.last = 0;
+        s.lastCount = 0;
       }
-      s.last = sum;
-      s.lastCount = count;
+      s.last = Math.max(s.last, sum);
+      s.lastCount = Math.max(s.lastCount, count);
       s.min = typeof h.min === 'number' ? h.min : s.min;
       s.max = typeof h.max === 'number' ? h.max : s.max;
       const buckets = (h as { buckets?: { boundaries?: number[]; counts?: number[] } }).buckets;
@@ -518,16 +545,21 @@ export class OtelRollup {
         s.counts = buckets.counts;
       }
     } else {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        this.stats.malformed++;
+        return;
+      }
       const v = num(value);
       // Same restart-while-sealed case as the histogram branch above.
       if (s.rebase > 0 && s.retired === 0 && s.last === 0 && v < s.rebase) {
         s.rebase = 0;
         s.rebaseCount = 0;
       }
-      if (v < s.last) {
+      if (v < s.last && !startAtMs) {
         s.retired += s.last;
+        s.last = 0;
       }
-      s.last = v;
+      s.last = Math.max(s.last, v);
       s.lastCount = 1;
     }
     s.updatedAtMs = Math.max(s.updatedAtMs, atMs);
@@ -774,14 +806,16 @@ export class OtelRollup {
       if (s.metric !== TOKEN_USAGE) {
         continue;
       }
-      const model = String(s.attributes['gen_ai.request.model'] ?? s.attributes['gen_ai.response.model'] ?? 'unknown');
+      const model = String(s.attributes['gen_ai.response.model'] ?? s.attributes['gen_ai.request.model'] ?? 'unknown');
       const type = String(s.attributes['gen_ai.token.type'] ?? '');
       const entry = byModel.get(model) ?? { input: 0, output: 0 };
       const value = contribution(s);
       if (type === 'output') {
         entry.output += value;
-      } else {
+      } else if (type === 'input') {
         entry.input += value;
+      } else {
+        continue;
       }
       byModel.set(model, entry);
     }
@@ -805,7 +839,12 @@ export class OtelRollup {
     const dIn = Math.max(0, totals.input - this.lastTokenTotals.input);
     const dOut = Math.max(0, totals.output - this.lastTokenTotals.output);
     this.lastTokenTotals = totals;
-    if (dIn === 0 && dOut === 0) {
+    const previous = this.buckets[this.buckets.length - 1];
+    if (previous && atMs <= previous.tMs) {
+      if (atMs === previous.tMs) {
+        previous.input += dIn;
+        previous.output += dOut;
+      }
       return;
     }
     this.buckets.push({ tMs: atMs, input: dIn, output: dOut });

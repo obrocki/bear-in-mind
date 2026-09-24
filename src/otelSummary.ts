@@ -31,6 +31,8 @@ import {
   USER_ACTIONS,
   USER_FEEDBACK
 } from './otelParse';
+import type { ChatSessionUsage } from './chatWatcher';
+import type { MeltBasis, UsageSource } from './tokenMeter';
 
 /** One row of the `sessions` view in Copilot Chat's `agent-traces.db`. */
 export interface SpanSession {
@@ -45,6 +47,11 @@ export interface SpanSession {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
+  credits?: number;
+  creditCalls?: number;
+  tokenCalls?: number;
+  activeMs?: number;
+  context?: ContextWindow;
 }
 
 /** Aggregates derived from the `spans` table, when the SQLite source is live. */
@@ -76,6 +83,7 @@ export interface ContextWindow {
   limit: number;
   model: string | null;
   atMs: number;
+  sessionId?: string;
 }
 
 export function emptySpanDigest(): SpanDigest {
@@ -119,13 +127,13 @@ export interface FeedHealth {
 }
 
 export interface DriftReport {
-  /** Tokens both watchers saw since OTel took over. */
+  /** Reported metric and span growth since each source's own baseline. */
   otelObserved: number;
-  transcriptObserved: number;
+  spanObserved: number;
   deltaTokens: number;
   deltaPercent: number;
   agreeing: boolean;
-  /** No overlap yet, so there is nothing to compare. */
+  /** Both sources have not yet reported usage. */
   pending: boolean;
 }
 
@@ -143,13 +151,15 @@ export interface CostSection {
   budget: number;
   health: number;
   /** What `health` measures, so the UI never mislabels it. */
-  basis: 'context' | 'budget';
+  basis: MeltBasis;
   context?: ContextWindow;
   burnPerHour: number;
   byModel: Array<{ model: string; input: number; output: number; total: number; share: number }>;
   series: TokenBucket[];
-  source: 'otel' | 'transcripts';
+  source: UsageSource;
   drift: DriftReport;
+  manualTokens: number;
+  legacyTokens: number;
 }
 
 export interface SpeedSection {
@@ -157,11 +167,12 @@ export interface SpeedSection {
   sessions: number;
   sessionMedianMs: Measure;
   sessionP95Ms: Measure;
+  agentMedianMs: Measure;
   llmCalls: number;
   llmMedianMs: Measure;
   llmP95Ms: Measure;
   ttftMedianMs: Measure;
-  turnsPerSession: Measure;
+  turnsPerInvocation: Measure;
   toolCalls: number;
   toolMedianMs: Measure;
   slowestTools: Array<{ name: string; calls: number; medianMs: number }>;
@@ -208,6 +219,43 @@ export interface DashboardSnapshot {
   cost: CostSection;
   speed: SpeedSection;
   quality: QualitySection;
+  session?: SessionComparison;
+}
+
+export interface SessionComparison {
+  sessionId: string;
+  pinned: boolean;
+  updatedAt: number;
+  transcript?: ChatSessionUsage;
+  trace?: SpanSession;
+}
+
+export function sessionComparisons(
+  transcripts: ChatSessionUsage[], spans: SpanSession[]
+): SessionComparison[] {
+  const sessions = new Map<string, SessionComparison>();
+  for (const transcript of transcripts) {
+    sessions.set(transcript.sessionId, {
+      sessionId: transcript.sessionId, pinned: false, updatedAt: transcript.updatedAt, transcript
+    });
+  }
+  for (const trace of spans) {
+    const session = sessions.get(trace.sessionId) ?? {
+      sessionId: trace.sessionId, pinned: false, updatedAt: trace.endedAt
+    };
+    session.trace = trace;
+    session.updatedAt = Math.max(session.updatedAt, trace.endedAt);
+    sessions.set(trace.sessionId, session);
+  }
+  return [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+export function selectedSession(input: Pick<SummaryInput, 'transcripts' | 'spans' | 'selectedSessionId'>): SessionComparison | undefined {
+  const sessions = sessionComparisons(input.transcripts ?? [], input.spans.sessions);
+  return input.selectedSessionId
+    ? { ...(sessions.find((s) => s.sessionId === input.selectedSessionId) ??
+      { sessionId: input.selectedSessionId, updatedAt: 0 }), pinned: true }
+    : sessions[0];
 }
 
 export interface SummaryInput {
@@ -221,11 +269,15 @@ export interface SummaryInput {
   health: number;
   /** Totals currently charged to the meter. */
   totals: { input: number; output: number; credits: number };
-  source: 'otel' | 'transcripts';
+  source: UsageSource;
   /** What `health` measures. */
-  basis: 'context' | 'budget';
+  basis: MeltBasis;
   context?: ContextWindow;
   drift: DriftReport;
+  manualTokens?: number;
+  legacyTokens?: number;
+  transcripts?: ChatSessionUsage[];
+  selectedSessionId?: string;
 }
 
 // ------------------------------------------------------------------ helpers --
@@ -300,7 +352,9 @@ export function buildCost(input: SummaryInput): CostSection {
     byModel,
     series,
     source: input.source,
-    drift: input.drift
+    drift: input.drift,
+    manualTokens: input.manualTokens ?? 0,
+    legacyTokens: input.legacyTokens ?? 0
   };
 }
 
@@ -315,7 +369,8 @@ function burnRate(series: TokenBucket[]): number {
   if (hours <= 0) {
     return 0;
   }
-  const burned = series.reduce((a, b) => a + b.input + b.output, 0);
+  // The first export is a cumulative baseline with an unknown elapsed interval.
+  const burned = series.slice(1).reduce((a, b) => a + b.input + b.output, 0);
   return burned / hours;
 }
 
@@ -323,11 +378,9 @@ export function buildSpeed(input: SummaryInput): SpeedSection {
   const { rollup, spans } = input;
 
   const sessionDurations = spans.sessions.map((s) => s.durationMs).filter((d) => d > 0);
-  const agentDurations = sessionDurations.length ? sessionDurations : spans.agentDurationsMs;
 
   // The metric histograms record seconds; the dashboard works in milliseconds.
   const agentEstMedian = scaleSeconds(rollup.quantile(AGENT_DURATION, 0.5));
-  const agentEstP95 = scaleSeconds(rollup.quantile(AGENT_DURATION, 0.95));
   const llmEstMedian = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.5));
   const llmEstP95 = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.95));
   const ttftEstMedian = scaleSeconds(rollup.quantile(TIME_TO_FIRST_TOKEN, 0.5));
@@ -355,18 +408,19 @@ export function buildSpeed(input: SummaryInput): SpeedSection {
   const turnsExact = mean(spans.turnCounts);
   const turnsEstimate = rollup.mean(AGENT_TURNS);
 
-  const tokensPerMinute = tokenThroughput(input, agentDurations);
+  const tokensPerMinute = tokenThroughput(input);
 
   return {
     available: sessions > 0 || llmCalls > 0 || toolCalls > 0,
     sessions,
-    sessionMedianMs: prefer(percentile(agentDurations, 0.5), agentEstMedian),
-    sessionP95Ms: prefer(percentile(agentDurations, 0.95), agentEstP95),
+    sessionMedianMs: prefer(percentile(sessionDurations, 0.5), undefined),
+    sessionP95Ms: prefer(percentile(sessionDurations, 0.95), undefined),
+    agentMedianMs: prefer(percentile(spans.agentDurationsMs, 0.5), agentEstMedian),
     llmCalls,
     llmMedianMs: prefer(percentile(spans.llmDurationsMs, 0.5), llmEstMedian),
     llmP95Ms: prefer(percentile(spans.llmDurationsMs, 0.95), llmEstP95),
     ttftMedianMs: prefer(percentile(spans.ttftMs, 0.5), ttftEstMedian),
-    turnsPerSession: prefer(turnsExact, turnsEstimate),
+    turnsPerInvocation: prefer(turnsExact, turnsEstimate),
     toolCalls,
     toolMedianMs: prefer(percentile(toolDurations, 0.5), rollup.quantile(TOOL_CALL_DURATION, 0.5)),
     slowestTools: slowest.slice(0, 5),
@@ -379,17 +433,12 @@ function scaleSeconds(value: number | undefined): number | undefined {
 }
 
 /**
- * Tokens burned per minute of actual agent work, not wall-clock.
- *
- * Both halves must describe the same window. The meter's total is a lifetime
- * figure while the span digest only retains seven days, so pairing them would
- * report years of old burn as the throughput of this week's sessions. When the
- * span window has no token total of its own there is nothing honest to divide,
- * so the figure is omitted.
+ * Reported output per minute of model-call time within the same retained
+ * window. Never divide lifetime input/cache tokens by session elapsed time.
  */
-function tokenThroughput(input: SummaryInput, durationsMs: number[]): number {
-  const busyMs = durationsMs.reduce((a, b) => a + b, 0);
-  const windowTokens = input.spans.inputTokens + input.spans.outputTokens;
+function tokenThroughput(input: SummaryInput): number {
+  const busyMs = input.spans.llmDurationsMs.reduce((a, b) => a + b, 0);
+  const windowTokens = input.spans.outputTokens;
   if (busyMs <= 0 || windowTokens <= 0) {
     return 0;
   }
@@ -463,6 +512,7 @@ export function buildQuality(input: SummaryInput): QualitySection {
       survivalNoRevert !== undefined ||
       cloudSessions > 0 ||
       editResponseErrors > 0 ||
+      chatEditsAccepted + chatEditsRejected + chatEditsSaved > 0 ||
       summarizationsApplied + summarizationsFailed > 0,
     editsAccepted,
     editsRejected,
@@ -500,7 +550,8 @@ export function buildSnapshot(input: SummaryInput): DashboardSnapshot {
     feed: input.feed,
     cost: buildCost(input),
     speed: buildSpeed(input),
-    quality: buildQuality(input)
+    quality: buildQuality(input),
+    session: selectedSession(input)
   };
 }
 
@@ -529,18 +580,18 @@ export function redactUrl(raw: string | undefined): string {
 }
 
 /** Compares what each source saw over the window in which both were running. */
-export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
-  const pending = otelObserved === 0 || transcriptObserved === 0;
-  const delta = otelObserved - transcriptObserved;
-  const base = Math.max(otelObserved, transcriptObserved) || 1;
+export function computeDrift(otelObserved: number, spanObserved: number): DriftReport {
+  const pending = otelObserved === 0 || spanObserved === 0;
+  const delta = otelObserved - spanObserved;
+  const base = Math.max(otelObserved, spanObserved) || 1;
   const percent = (delta / base) * 100;
   return {
     otelObserved,
-    transcriptObserved,
+    spanObserved,
     deltaTokens: delta,
     deltaPercent: percent,
-    // Transcripts round differently and miss cache/reasoning tokens entirely,
-    // so exact equality is not the bar. Within 2% is agreement.
+    // Export intervals and initial baselines can differ; this is a diagnostic,
+    // not a claim of billing reconciliation or request-identity matching.
     agreeing: pending || Math.abs(percent) <= 2,
     pending
   };

@@ -72,11 +72,11 @@ class HabitatHost implements vscode.Disposable {
   <div id="hud">
     <div class="row">
       <span id="bearName" class="name">Nanuq</span>
-      <span id="pct" class="pct">100%</span>
+      <span id="pct" class="pct">—</span>
     </div>
     <div class="bar" title="Ice remaining"><div id="fill"></div></div>
     <div class="row sub">
-      <span id="basis">local budget remaining</span>
+      <span id="basis">ice unscaled</span>
       <span id="split">local in 0 · out 0</span>
     </div>
     <div class="row sub">
@@ -86,7 +86,7 @@ class HabitatHost implements vscode.Disposable {
       <span id="source" class="source" title="Where the numbers come from">—</span>
       <button id="btnDashboard" type="button" title="Open the cost, speed and quality dashboard">Dashboard →</button>
     </div>
-    <p class="note">Local token usage, not your Copilot credit balance. The budget is a visual target, not a spending cap.</p>
+    <p class="note">A usage metaphor, not measured energy or ice loss. No default token target; not your Copilot credit balance.</p>
   </div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>

@@ -79,11 +79,11 @@
       <div id="hud">
         <div class="row">
           <span id="bearName" class="name">Nanuq</span>
-          <span id="pct" class="pct">100%</span>
+          <span id="pct" class="pct">&mdash;</span>
         </div>
         <div class="bar" title="Ice remaining"><div id="fill"></div></div>
         <div class="row sub">
-          <span id="basis">local budget remaining</span>
+          <span id="basis">ice unscaled</span>
           <span id="split">local in 0 &middot; out 0</span>
         </div>
         <div class="row sub">
@@ -93,7 +93,7 @@
           <span id="source" class="source">metered by OpenTelemetry</span>
           <button id="btnDashboard" type="button">Dashboard &rarr;</button>
         </div>
-        <p class="note">Local token usage, not your Copilot credit balance. The budget is a visual target, not a spending cap.</p>
+        <p class="note">A usage metaphor, not measured energy or ice loss. No default token target; not your Copilot credit balance.</p>
       </div>
     </div>
     <div id="statusbar"><span id="sb">&#10052; 100%</span></div>
@@ -103,7 +103,8 @@
     (function () {
       var q = new URLSearchParams(location.search);
       var health = parseFloat(q.get('health') || '1');
-      var budget = parseInt(q.get('budget') || '5000000', 10);
+      var budget = parseInt(q.get('budget') || '0', 10);
+      var demo = q.has('health') && !q.has('context') && !budget;
 
       document.documentElement.setAttribute('data-compact', String(q.get('compact') !== '0'));
       if (q.get('hud') === '0') document.getElementById('hud').style.display = 'none';
@@ -115,10 +116,9 @@
         document.getElementById('frame').style.border = 'none';
       }
 
-      // Roughly the real-world split: agent mode resends context every turn, so
-      // prompt tokens dominate about 10:1.
+      // Illustrative fixtures, not measured usage or a default token allowance.
       var context = q.has('context')
-        ? { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now() }
+        ? { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now(), sessionId: 'example-session' }
         : undefined;
       var total = context ? 2100000 : Math.round(budget * (1 - health));
       if (context) health = 1 - context.used / context.limit;
@@ -131,12 +131,12 @@
           output: total - input,
           total: total,
           budget: budget,
-          basis: context ? 'context' : 'budget',
+          basis: context ? 'context' : demo ? 'demo' : budget ? 'budget' : 'unavailable',
           context: context,
           source: 'otel',
           requests: Math.max(1, Math.round((1 - health) * 140)),
           credits: Math.round((1 - health) * 3200) / 10,
-          meltdownDemo: false,
+          meltdownDemo: demo,
           bearName: q.get('bear') || 'Nanuq',
           animate: true,
           pixelScale: parseInt(q.get('pixelScale') || '0', 10)

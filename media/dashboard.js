@@ -44,9 +44,13 @@
     return isFinite(n) ? Math.round(n).toLocaleString('en-US') : '0';
   }
 
+  function credits(n) {
+    return Number(n.toFixed(1)).toLocaleString('en-US', { maximumFractionDigits: 1 });
+  }
+
   /** Durations read best in the largest unit that keeps a leading digit. */
   function duration(ms) {
-    if (ms === undefined || ms === null || !isFinite(ms) || ms <= 0) return '—';
+    if (ms === undefined || ms === null || !isFinite(ms) || ms < 0) return '—';
     if (ms < 1000) return Math.round(ms) + 'ms';
     if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + 's';
     const minutes = ms / 60000;
@@ -258,6 +262,15 @@
   function renderGauge(cost) {
     const prompt = cost.basis === 'context' && cost.context;
     const gauge = el('div', 'gauge');
+    if (cost.basis === 'unavailable' || cost.basis === 'demo') {
+      gauge.append(el('h3', null, cost.basis === 'demo' ? 'Ice gauge · demo' : 'Ice gauge · unscaled'));
+      gauge.append(el('p', 'gauge-remaining', cost.basis === 'demo'
+        ? percent(cost.health) + ' synthetic demo ice; no tokens recorded'
+        : 'No reported prompt limit. No default token target.'));
+      gauge.append(el('p', 'viz-caption',
+        'The ice is a usage metaphor, not a measurement of energy, CO2 or ice loss.'));
+      return gauge;
+    }
     gauge.append(el('h3', null, prompt ? 'Ice gauge · prompt tokens' : 'Ice gauge · local token budget'));
     gauge.append(stats([
       { label: prompt ? 'Prompt used' : 'Counted tokens', value: count(prompt ? prompt.used : cost.countedTokens) },
@@ -267,15 +280,21 @@
       (prompt ? ' latest prompt allowance free' : ' local budget remaining')));
     gauge.append(el('p', 'viz-caption', prompt
       ? 'Latest observed prompt / max_prompt_tokens, not the selected chat\'s full context window. ' +
+        (prompt.sessionId ? 'Session ' + prompt.sessionId + ' · ' : '') +
         (prompt.model ? prompt.model + ' · ' : '') + ago(prompt.atMs) + '.'
       : 'iceberg.tokenBudget: a visual target, not a Copilot spending cap. Only enabled token dimensions count.'));
     return gauge;
   }
 
-  function renderCost(cost) {
+  function renderCost(cost, session) {
     const node = section('cost', 'Cost', 'Local usage · not a bill');
+    node.append(renderSession(session));
     node.append(el('p', 'headline-note',
       'Local usage across sessions and workspaces, not the selected chat.'));
+    if (cost.legacyTokens > 0) {
+      node.append(el('p', 'missing',
+        count(cost.legacyTokens) + ' pre-upgrade estimated tokens preserved separately and excluded from this meter.'));
+    }
 
     if (!cost.available) {
       node.append(
@@ -294,7 +313,7 @@
         'local tokens',
         'Meter since ' + new Date(cost.meterSinceMs).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' +
           ' · ' +
-          (cost.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts')
+          (cost.source === 'otel' ? 'metered by OpenTelemetry' : 'manual reports; awaiting telemetry')
       )
     );
     node.append(stats([
@@ -303,12 +322,17 @@
     ]));
     node.append(renderGauge(cost));
     node.append(stats([
-      { label: 'Reported credits', value: cost.credits > 0 ? cost.credits.toFixed(1) : '—' },
+      { label: 'Reported credits', value: cost.credits > 0 ? credits(cost.credits) : '—' },
       { label: 'Account credit limit', value: 'Not read' }
     ]));
     node.append(el('p', 'headline-note',
       'Credits: local transcript growth, not the selected chat\'s Session Cost. ' +
       'Account usage and monthly credit allowance are not read. Tokens are not credits.'));
+    node.append(el('p', 'headline-note',
+      'Transcript prompt snapshots are not consumed-token totals. Only reported model-call usage is metered.'));
+    if (cost.manualTokens > 0) {
+      node.append(el('p', 'headline-note', count(cost.manualTokens) + ' tokens supplied by explicit manual reports.'));
+    }
 
     const telemetryRows = [];
     if (cost.cachedTokens > 0) telemetryRows.push({ label: 'Trace cache read', value: tokens(cost.cachedTokens) });
@@ -356,6 +380,50 @@
     return node;
   }
 
+  function renderSession(session) {
+    const block = el('div', 'gauge');
+    block.append(el('h3', null, 'Compare a Copilot session'));
+    const button = el('button', 'secondary', 'Select session…');
+    button.addEventListener('click', () => post('session'));
+    block.append(button);
+    if (!session) {
+      block.append(el('p', 'missing', 'No session metadata yet. Session cost and account allowance are not interchangeable.'));
+      return block;
+    }
+    block.append(el('p', 'headline-note',
+      (session.pinned ? 'Pinned: ' : 'Latest observed: ') + session.sessionId +
+      '. Not automatically the active VS Code chat.'));
+    const transcript = session.transcript;
+    const trace = session.trace;
+    block.append(stats([
+      { label: 'Session Cost · transcript', value: transcript && transcript.credits !== undefined ? credits(transcript.credits) : '—', qualifier: 'credits' },
+      { label: 'Model-call credits · traces', value: trace && trace.credits !== undefined ? credits(trace.credits) : '—', qualifier: 'credits' }
+    ]));
+    if (transcript && transcript.latestPromptTokens !== undefined) {
+      block.append(stats([{ label: 'Latest stored prompt', value: count(transcript.latestPromptTokens), qualifier: 'tokens, not cumulative' }]));
+    }
+    if (trace) {
+      block.append(stats([
+        { label: 'Session input · traces', value: trace.tokenCalls === 0 ? '—' : count(trace.inputTokens) },
+        { label: 'Session output · traces', value: trace.tokenCalls === 0 ? '—' : count(trace.outputTokens) },
+        { label: 'Model calls', value: count(trace.llmCalls) },
+        { label: 'Elapsed session', value: duration(trace.durationMs) }
+      ]));
+      block.append(el('p', 'viz-caption',
+        count(trace.creditCalls || 0) + ' / ' + count(trace.llmCalls) +
+        ' model calls reported credits. Traces cover retained calls only; no token-to-credit estimate. ' +
+        'Elapsed session includes idle gaps.'));
+      if (trace.tokenCalls !== undefined && trace.tokenCalls < trace.llmCalls) {
+        block.append(el('p', 'missing', count(trace.tokenCalls) + ' / ' + count(trace.llmCalls) +
+          ' calls reported both token dimensions; session token coverage is incomplete.'));
+      }
+    }
+    block.append(el('p', 'viz-caption',
+      'Compare the same session ID in Copilot. Transcript Session Cost uses max(sum of turn credits, reported session total). ' +
+      'Trace credits are a separate diagnostic, never added to it.'));
+    return block;
+  }
+
   /** States plainly whether the ice agrees with the telemetry. */
   function driftNote(drift, source) {
     if (source !== 'otel') {
@@ -372,11 +440,11 @@
     return el(
       'p',
       'missing',
-      (drift.agreeing ? '✓ agrees with the chat transcripts' : '⚠ differs from the chat transcripts') +
-        ' — OTel ' +
+      (drift.agreeing ? '✓ metrics agree with spans' : '⚠ metrics differ from spans') +
+        ' — metrics ' +
         tokens(drift.otelObserved) +
-        ' vs transcripts ' +
-        tokens(drift.transcriptObserved) +
+        ' vs spans ' +
+        tokens(drift.spanObserved) +
         ' (' +
         sign +
         tokens(Math.abs(drift.deltaTokens)) +
@@ -420,17 +488,18 @@
     const p95 = measure(speed.sessionP95Ms, duration);
     const llm = measure(speed.llmMedianMs, duration);
     const ttft = measure(speed.ttftMedianMs, duration);
-    const turns = measure(speed.turnsPerSession, (v) => v.toFixed(1));
+    const turns = measure(speed.turnsPerInvocation, (v) => v.toFixed(1));
     node.append(
       stats([
         { label: 'Slowest 5%', value: p95.value, estimate: p95.estimate },
         { label: 'Model call', value: llm.value, estimate: llm.estimate },
         { label: 'First token', value: ttft.value, estimate: ttft.estimate },
-        { label: 'Turns / session', value: turns.value, estimate: turns.estimate },
+        { label: 'Calls / agent invocation', value: turns.value, estimate: turns.estimate },
+        { label: 'Agent invocation', ...measure(speed.agentMedianMs, duration) },
         {
-          label: 'Throughput',
+          label: 'Output throughput',
           value: speed.tokensPerMinute > 0 ? tokens(speed.tokensPerMinute) : '—',
-          qualifier: speed.tokensPerMinute > 0 ? '/min busy' : undefined
+          qualifier: speed.tokensPerMinute > 0 ? '/min model time' : undefined
         },
         {
           label: 'Tool latency',
@@ -439,6 +508,9 @@
         }
       ])
     );
+    node.append(el('p', 'viz-caption',
+      'Session elapsed time includes idle gaps; agent invocation and model-call latency do not. ' +
+      'Output throughput divides reported output tokens by matching model-call time, not lifetime input tokens.'));
 
     if (speed.slowestTools.length) {
       const viz = el('div', 'viz');
@@ -466,6 +538,8 @@
 
   function renderQuality(quality, feed) {
     const node = section('quality', 'Quality', 'PR + IDE signals');
+    node.append(el('p', 'headline-note',
+      'Observed acceptance and feedback, not a correctness score. Aggregate feed history, not the comparison session.'));
 
     if (!quality.available) {
       if (!feed.watching) {
@@ -513,6 +587,11 @@
     }
 
     const rows = [];
+    if (quality.chatEditsAccepted + quality.chatEditsRejected + quality.chatEditsSaved > 0) {
+      rows.push({ label: 'Files accepted', value: count(quality.chatEditsAccepted) });
+      rows.push({ label: 'Files rejected', value: count(quality.chatEditsRejected) });
+      rows.push({ label: 'Files saved', value: count(quality.chatEditsSaved) });
+    }
     if (quality.survivalFourGram !== undefined) {
       rows.push({ label: 'Code survives', value: percent(quality.survivalFourGram) });
     }
@@ -610,7 +689,7 @@
       show(
         'Copilot Chat telemetry is switched off',
         [
-          'Nothing is being emitted, so the iceberg is still metering from chat transcripts. Connecting turns on OpenTelemetry and points it at a local file only this machine can read.'
+          'No automatic token usage is counted without telemetry. Transcript credits remain available. Connect a local source to observe model-call usage.'
         ],
         'connect'
       );
@@ -637,7 +716,7 @@
       );
       return;
     }
-      if (feed.jsonlPath && !feed.sqliteActive && feed.records.metrics === 0) {
+      if (feed.jsonlPath && !feed.sqliteActive && !feed.jsonlActive) {
         show(
           'Connected, waiting for the first record',
           [
@@ -680,7 +759,7 @@
 
   function renderProvenance(feed) {
     const parts = [];
-    parts.push(feed.sqliteActive ? 'spans: local trace store' : 'spans: unavailable');
+    parts.push(feed.sqliteActive ? 'spans: local trace store / file feed' : 'spans: file feed when serialized');
     parts.push(feed.jsonlActive ? 'metrics + events: file feed' : 'metrics + events: unavailable');
     parts.push('last record ' + ago(feed.lastRecordAtMs));
     parts.push(
@@ -689,7 +768,7 @@
         count(feed.records.logs) +
         ' events · ' +
         count(feed.records.spans) +
-        ' spans skipped'
+        ' span records (older SDKs may export empty objects)'
     );
     provenance.textContent = parts.join('  ·  ');
   }
@@ -699,7 +778,7 @@
   function apply(snapshot) {
     renderBanner(snapshot.feed);
     root.replaceChildren(
-      renderCost(snapshot.cost),
+      renderCost(snapshot.cost, snapshot.session),
       renderSpeed(snapshot.speed),
       renderQuality(snapshot.quality, snapshot.feed)
     );
