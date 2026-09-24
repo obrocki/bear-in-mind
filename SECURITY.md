@@ -28,9 +28,8 @@ explicit about what it does and does not do:
   responses, tool arguments and file contents. Bear in Mind discards
   `gen_ai.input.messages`, `gen_ai.output.messages`,
   `gen_ai.system_instructions`, `gen_ai.tool.call.arguments` and
-  `gen_ai.tool.call.result` as each record is parsed, so they are never attached
-  to anything it holds, never inspected, and never written anywhere. It has no
-  use for them and does not look.
+  `gen_ai.tool.call.result` while JSON is parsed, so they are never retained,
+  inspected, or written anywhere. It has no use for them and does not look.
 - **It sends nothing anywhere.** There is no network access of any kind. Usage
   totals live in VS Code's global state on your machine.
 - **It writes nothing outside its own storage.** The only thing persisted is the

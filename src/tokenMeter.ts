@@ -20,6 +20,7 @@ const CONTEXT_STALE_MS = 30 * 60 * 1000;
  * Comfortably more than one export interval, far less than a working session.
  */
 const OVERLAP_WINDOW_MS = 5 * 60 * 1000;
+const MAX_RECENT_TRANSCRIPT = 1000;
 
 /** Which watcher the meter is currently taking its numbers from. */
 export type UsageSource = 'otel' | 'transcripts';
@@ -49,6 +50,26 @@ export interface UsageSnapshot {
   context?: ContextWindow;
   /** Agreement between the two watchers since they started overlapping. */
   drift: DriftReport;
+}
+
+function sanitiseRecentTranscript(value: unknown): Array<{ at: number; input: number; output: number }> {
+  const cutoff = Date.now() - OVERLAP_WINDOW_MS;
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(
+      (entry): entry is { at: number; input: number; output: number } =>
+        !!entry &&
+        typeof entry === 'object' &&
+        Number.isFinite((entry as { at?: unknown }).at) &&
+        Number.isFinite((entry as { input?: unknown }).input) &&
+        Number.isFinite((entry as { output?: unknown }).output) &&
+        (entry as { at: number }).at >= cutoff &&
+        (entry as { input: number }).input >= 0 &&
+        (entry as { output: number }).output >= 0
+    )
+    .slice(-MAX_RECENT_TRANSCRIPT);
 }
 
 interface Ledger {
@@ -163,7 +184,7 @@ export class TokenMeter implements vscode.Disposable {
           transcripts: Math.max(0, stored.sinceHandover?.transcripts ?? 0)
         },
 
-        recentTranscript: Array.isArray(stored.recentTranscript) ? stored.recentTranscript : []
+        recentTranscript: sanitiseRecentTranscript(stored.recentTranscript)
       };
     }
 
@@ -380,8 +401,10 @@ export class TokenMeter implements vscode.Disposable {
         // pruning solely on read would let it grow for the life of the
         // extension and carry that growth into global state.
         const cutoff = Date.now() - OVERLAP_WINDOW_MS;
-        this.state.recentTranscript = this.state.recentTranscript.filter((e) => e.at >= cutoff);
-        this.state.recentTranscript.push({ at: Date.now(), input: i, output: o });
+        this.state.recentTranscript = sanitiseRecentTranscript([
+          ...this.state.recentTranscript.filter((e) => e.at >= cutoff),
+          { at: Date.now(), input: i, output: o }
+        ]);
       }
     }
 
@@ -434,8 +457,7 @@ export class TokenMeter implements vscode.Disposable {
     if (!this.config.get<boolean>('trackCopilotChat', true)) {
       return { input: 0, output: 0 };
     }
-    const cutoff = Date.now() - OVERLAP_WINDOW_MS;
-    this.state.recentTranscript = this.state.recentTranscript.filter((e) => e.at >= cutoff);
+    this.state.recentTranscript = sanitiseRecentTranscript(this.state.recentTranscript);
     return this.state.recentTranscript.reduce(
       (sum, e) => ({ input: sum.input + e.input, output: sum.output + e.output }),
       { input: 0, output: 0 }

@@ -134,12 +134,9 @@ text, even when `captureContent` puts it in the feed.
 | Time to first token | `copilot_chat.time_to_first_token` | Both | 02 |
 | Turns per session | `copilot_chat.agent.turn.count` | Both | 02 |
 | Tool calls and latency | `copilot_chat.tool.call.count`, `…duration` | Both | 02, 03 |
-| Edit accept / reject | `copilot_chat.edit.acceptance.count` | File feed | 03 |
+| Edit accept / reject | `copilot_chat.edit.acceptance.count` or edit-feedback log events | File feed | 03 |
 | Lines added / removed | `copilot_chat.lines_of_code.count` | File feed | 03 |
-| Edit survival | `copilot_chat.edit.survival.four_gram`, `…no_revert` | File feed | 03 |
-| Pull requests | `copilot_chat.pull_request.count` | File feed | 03 |
-| Thumbs up / down | `copilot_chat.user.feedback.count` | File feed | 03 |
-| Copy / insert / apply | `copilot_chat.user.action.count` | File feed | 03 |
+| Edit survival, PRs, cloud sessions, feedback and tool calls | Their matching metric or log event | File feed | 03 |
 
 > [!NOTE]
 > **Spans in the file feed are deliberately skipped.** Since OpenTelemetry JS SDK
@@ -195,14 +192,11 @@ come from the transcripts.
   dominate roughly 10:1 and a heavy session can be 2M+ tokens.
 - **Nothing leaves your machine.** See [SECURITY.md](SECURITY.md).
 
-### Other ways to burn ice
+### Reporting usage
 
-| Source | What it counts |
-| --- | --- |
-| **`@iceberg` chat participant** | Real prompt + completion tokens via the model's own `countTokens`. Ask the bear anything. |
-| **Extension API** | Other extensions call `reportUsage({ input, output })`. |
-| **`iceberg.report` command** | Usable from tasks, scripts, or other extensions. |
-| **Iceberg: Toggle Meltdown Demo** | Burns the whole budget over ~60s so you can watch the melt. |
+The extension API and `iceberg.report` command share one typed report:
+`{ input?: number, output?: number }`. Use either route; reported usage is kept
+separate from Copilot telemetry and is not reconciled with it.
 
 ```ts
 const bear = vscode.extensions.getExtension('obrocki.bear-in-mind');
@@ -212,7 +206,7 @@ api?.reportUsage({ input: 1843, output: 512 });
 api?.onDidChangeUsage((s) => console.log(s.health)); // 1 = pristine, 0 = melted
 ```
 
-Or without depending on the API shape:
+Or from a task, script, or another extension:
 
 ```ts
 vscode.commands.executeCommand('iceberg.report', { input: 1200, output: 340 });

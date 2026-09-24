@@ -579,6 +579,18 @@ describe('log events', () => {
     const [survival] = rollup.recentEvents('copilot_chat.edit.survival');
     assert.equal(survival.attributes.survival_rate_four_gram, 0.82);
   });
+
+  it('keeps compact event totals after detailed events are evicted', () => {
+    const rollup = new OtelRollup();
+    for (let i = 0; i < 2001; i++) {
+      rollup.ingest({
+        attributes: { 'event.name': 'copilot_chat.user.feedback', rating: 'positive' },
+        _body: 'copilot_chat.user.feedback'
+      });
+    }
+    assert.equal(rollup.recentEvents('copilot_chat.user.feedback').length, 50);
+    assert.equal(rollup.countEvents('copilot_chat.user.feedback'), 2001);
+  });
 });
 
 describe('summary sections', () => {
@@ -674,10 +686,81 @@ describe('summary sections', () => {
     assert.ok(quality.missing.includes('pull requests'));
   });
 
+  it('uses log events when their matching quality metric is absent', () => {
+    const rollup = new OtelRollup();
+    const event = (name, attributes) =>
+      rollup.ingest({ attributes: { 'event.name': name, ...attributes }, _body: name });
+    event('copilot_chat.edit.feedback', { outcome: 'accepted' });
+    event('copilot_chat.edit.feedback', { outcome: 'rejected' });
+    event('copilot_chat.edit.survival', { survival_rate_four_gram: 0.8, survival_rate_no_revert: 0.9 });
+    event('copilot_chat.user.feedback', { rating: 'positive' });
+    event('copilot_chat.cloud.session', {});
+    event('copilot_chat.tool.call', { success: 'true' });
+    event('copilot_chat.tool.call', { success: 'false' });
+
+    const quality = buildQuality(base(rollup));
+    assert.equal(quality.editsAccepted, 1);
+    assert.equal(quality.editsRejected, 1);
+    assert.equal(quality.survivalFourGram, 0.8);
+    assert.equal(quality.survivalNoRevert, 0.9);
+    assert.equal(quality.feedbackPositive, 1);
+    assert.equal(quality.cloudSessions, 1);
+    assert.equal(quality.toolCalls, 2);
+    assert.equal(quality.toolFailures, 1);
+  });
+
+  it('prefers cumulative quality metrics over matching log events', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest({
+      resource: { _rawAttributes: [] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: EDIT_ACCEPTANCE },
+              dataPoints: [
+                {
+                  attributes: { 'copilot_chat.edit.outcome': 'accepted' },
+                  endTime: [1, 0],
+                  value: 3
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+    rollup.ingest({
+      attributes: {
+        'event.name': 'copilot_chat.edit.feedback',
+        'copilot_chat.edit.outcome': 'accepted'
+      },
+      _body: 'copilot_chat.edit.feedback'
+    });
+    rollup.ingest({
+      attributes: {
+        'event.name': 'copilot_chat.edit.feedback',
+        'copilot_chat.edit.outcome': 'rejected'
+      },
+      _body: 'copilot_chat.edit.feedback'
+    });
+
+    const quality = buildQuality(base(rollup));
+    assert.equal(quality.editsAccepted, 3);
+    assert.equal(quality.editsRejected, 0);
+  });
+
   it('reports nothing as unavailable rather than as zero', () => {
     const quality = buildQuality(base(new OtelRollup()));
     assert.equal(quality.available, false);
+    assert.equal(quality.connected, false);
     assert.equal(quality.acceptRate, undefined);
+  });
+
+  it('keeps a connected quality feed distinct from missing telemetry', () => {
+    const input = base(new OtelRollup());
+    input.feed = { jsonlActive: true };
+    assert.equal(buildQuality(input).connected, true);
   });
 });
 
@@ -709,6 +792,8 @@ describe('redacting endpoints', () => {
 describe('drift', () => {
   it('is pending until both sources have seen something', () => {
     assert.equal(computeDrift(0, 0).pending, true);
+    assert.equal(computeDrift(1000, 0).pending, true);
+    assert.equal(computeDrift(0, 1000).pending, true);
   });
 
   it('tolerates the difference cache and reasoning tokens create', () => {

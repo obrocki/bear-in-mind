@@ -7,11 +7,11 @@ import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, type DashboardSnapshot } from './otelSummary';
+import { createReportingAdapter, type ReportingAdapter, type UsageReport } from './reportingAdapter';
 import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
 
 /** Public API other extensions can use: `exports.reportUsage({ input, output })`. */
-export interface IcebergApi {
-  reportUsage(usage: { input?: number; output?: number }): void;
+export interface IcebergApi extends ReportingAdapter {
   getUsage(): UsageSnapshot;
   onDidChangeUsage: vscode.Event<UsageSnapshot>;
 }
@@ -25,6 +25,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   }
 
   const meter = new TokenMeter(context.globalState);
+  const reporting = createReportingAdapter((input, output) => meter.report(input, output));
   context.subscriptions.push(meter);
 
   const output = vscode.window.createOutputChannel('Iceberg');
@@ -164,11 +165,11 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
     vscode.commands.registerCommand(
       'iceberg.report',
-      (usage: { input?: number; output?: number } | number) => {
+      (usage: UsageReport | number) => {
         if (typeof usage === 'number') {
-          meter.report(usage, 0);
+          reporting.reportUsage({ input: usage });
         } else {
-          meter.report(usage?.input ?? 0, usage?.output ?? 0);
+          reporting.reportUsage(usage);
         }
       }
     ),
@@ -207,7 +208,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   registerChatParticipant(context, meter);
 
   return {
-    reportUsage: (u) => meter.report(u?.input ?? 0, u?.output ?? 0),
+    ...reporting,
     getUsage: () => meter.snapshot(),
     onDidChangeUsage: meter.onDidChange
   };

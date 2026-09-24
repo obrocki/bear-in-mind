@@ -291,6 +291,12 @@ describe('drift', () => {
     assert.equal(m.snapshot().drift.pending, true);
   });
 
+  it('stays pending when only telemetry has observed the overlap window', () => {
+    const { meter: m } = meter();
+    m.observe('otel', 5000, 0);
+    assert.equal(m.snapshot().drift.pending, true);
+  });
+
   it('reports agreement when both see the same traffic', () => {
     const { meter: m } = meter();
     m.observe('transcripts', 1000, 0);
@@ -321,6 +327,26 @@ describe('health', () => {
 });
 
 describe('migration', () => {
+  it('drops invalid and caps persisted overlap evidence', () => {
+    const mem = memento();
+    const now = Date.now();
+    mem.store.set('iceberg.usage.v3', {
+      otel: {},
+      transcripts: {},
+      manual: {},
+      recentTranscript: [
+        ...Array.from({ length: 1002 }, () => ({ at: now, input: 1, output: 0 })),
+        { at: now, input: 1, output: 0 },
+        { at: 'bad', input: 1, output: 0 },
+        { at: now, input: -1, output: 0 },
+        { at: now - 10 * 60 * 1000, input: 1, output: 0 }
+      ]
+    });
+    const m = new TokenMeter(mem);
+    m.observe('otel', 1001, 0);
+    assert.equal(m.snapshot().total, 1, 'only the capped recent transcript evidence is absorbed');
+  });
+
   it('carries a v2 meter forward without losing or re-charging anything', () => {
     const mem = memento();
     mem.store.set('iceberg.usage.v2', {

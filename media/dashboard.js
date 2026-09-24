@@ -447,6 +447,15 @@
     const node = section('quality', 'Quality', 'PR + IDE signals');
 
     if (!quality.available) {
+      if (quality.connected) {
+        node.append(
+          emptyState([
+            'Telemetry is connected. No quality signals recorded yet.',
+            'Accept or reject a Copilot edit, or rate a response. Signals appear after the next export.'
+          ], { label: 'Diagnostics', command: 'diagnostics' })
+        );
+        return node;
+      }
       node.append(
         emptyState([
           'No quality signals yet. Accept and reject decisions, edit survival, pull requests and feedback votes arrive as OpenTelemetry log records.',

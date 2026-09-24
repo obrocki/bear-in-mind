@@ -242,6 +242,13 @@ interface Series {
   updatedAtMs: number;
 }
 
+interface EventTotal {
+  name: string;
+  attributes: Record<string, unknown>;
+  count: number;
+  numeric: Map<string, { sum: number; count: number }>;
+}
+
 function newSeries(metric: string, attributes: Record<string, unknown>, atMs: number): Series {
   return {
     metric,
@@ -325,6 +332,8 @@ export class OtelRollup {
   private readonly sealed = new Map<string, Series>();
   private readonly sealedMarks = new Map<string, { value: number; count: number; aggKey: string }>();
   private readonly events: LogEvent[] = [];
+  /** Compact all-time totals; detailed events above are deliberately short-lived. */
+  private readonly eventTotals = new Map<string, EventTotal>();
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
 
@@ -364,6 +373,7 @@ export class OtelRollup {
         const event = toLogEvent(record);
         if (event) {
           this.events.push(event);
+          this.recordEvent(event);
           if (this.events.length > MAX_EVENTS) {
             this.events.splice(0, this.events.length - MAX_EVENTS);
           }
@@ -379,6 +389,26 @@ export class OtelRollup {
         break;
     }
     return kind;
+  }
+
+  private recordEvent(event: LogEvent): void {
+    const key = `${event.name}\u0000${attrKey(event.attributes)}`;
+    let total = this.eventTotals.get(key);
+    if (!total) {
+      total = { name: event.name, attributes: event.attributes, count: 0, numeric: new Map() };
+      this.eventTotals.set(key, total);
+    }
+    total.count++;
+    for (const [attribute, value] of Object.entries(event.attributes)) {
+      const valueNumber = typeof value === 'number' ? value : Number(value);
+      if (!Number.isFinite(valueNumber)) {
+        continue;
+      }
+      const numeric = total.numeric.get(attribute) ?? { sum: 0, count: 0 };
+      numeric.sum += valueNumber;
+      numeric.count++;
+      total.numeric.set(attribute, numeric);
+    }
   }
 
   private absorbMetrics(record: unknown): void {
@@ -708,12 +738,28 @@ export class OtelRollup {
 
   countEvents(name: string, predicate?: (e: LogEvent) => boolean): number {
     let n = 0;
-    for (const e of this.events) {
+    for (const e of this.eventTotals.values()) {
       if (e.name === name && (!predicate || predicate(e))) {
-        n++;
+        n += e.count;
       }
     }
     return n;
+  }
+
+  meanEventAttribute(name: string, attribute: string, predicate?: (e: LogEvent) => boolean): number | undefined {
+    let sum = 0;
+    let count = 0;
+    for (const event of this.eventTotals.values()) {
+      if (event.name !== name || (predicate && !predicate(event))) {
+        continue;
+      }
+      const numeric = event.numeric.get(attribute);
+      if (numeric) {
+        sum += numeric.sum;
+        count += numeric.count;
+      }
+    }
+    return count > 0 ? sum / count : undefined;
   }
 
   // ----------------------------------------------------------- token view ----

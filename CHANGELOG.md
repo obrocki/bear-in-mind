@@ -1,5 +1,14 @@
 # Change Log
 
+## 0.5.1
+
+- Quality now recognises the documented edit, survival, feedback, cloud-session
+  and tool-call log events when their matching cumulative metric is absent.
+  Metrics take precedence, and compact event totals survive recent-event eviction.
+- Quality distinguishes a connected feed with no signals from missing telemetry.
+  Reconciliation stays pending until both watchers have observed traffic.
+- The extension API and `iceberg.report` now share one typed usage-report adapter.
+
 ## 0.5.0
 
 **Metering moved onto OpenTelemetry.** Copilot Chat emits traces, metrics and

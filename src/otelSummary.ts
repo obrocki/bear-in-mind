@@ -170,6 +170,8 @@ export interface SpeedSection {
 
 export interface QualitySection {
   available: boolean;
+  /** A file feed is live, even when it has not emitted a quality signal yet. */
+  connected: boolean;
   editsAccepted: number;
   editsRejected: number;
   acceptRate?: number;
@@ -395,41 +397,82 @@ function tokenThroughput(input: SummaryInput, durationsMs: number[]): number {
 export function buildQuality(input: SummaryInput): QualitySection {
   const { rollup } = input;
 
-  const editsAccepted = Math.round(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }));
-  const editsRejected = Math.round(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'rejected' }));
+  const eventMatches = (attributes: Record<string, unknown>, where?: Record<string, string>) =>
+    !where ||
+    Object.entries(where).every(([key, value]) => {
+      const eventKey = key.startsWith('copilot_chat.') ? key.slice('copilot_chat.'.length).split('.').at(-1)! : key;
+      return String(attributes[key] ?? attributes[eventKey]) === value;
+    });
+  const eventCount = (name: string, where?: Record<string, string>) =>
+    rollup.countEvents(name, (event) => eventMatches(event.attributes, where));
+  const totalOrEvents = (metric: string, event: string, where?: Record<string, string>) =>
+    rollup.observations(metric) > 0 ? rollup.total(metric, where) : eventCount(event, where);
+  const meanOrEvents = (metric: string, event: string, attribute: string) =>
+    rollup.observations(metric) > 0 ? rollup.mean(metric) : rollup.meanEventAttribute(event, attribute);
+
+  const editsAccepted = Math.round(
+    totalOrEvents(EDIT_ACCEPTANCE, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'accepted' })
+  );
+  const editsRejected = Math.round(
+    totalOrEvents(EDIT_ACCEPTANCE, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'rejected' })
+  );
   const decided = editsAccepted + editsRejected;
 
-  const chatEditsAccepted = Math.round(rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'accepted' }));
-  const chatEditsRejected = Math.round(rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'rejected' }));
-  const chatEditsSaved = Math.round(rollup.total(CHAT_EDIT_OUTCOME, { 'copilot_chat.edit.outcome': 'saved' }));
+  const chatEditsAccepted = Math.round(
+    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'accepted' })
+  );
+  const chatEditsRejected = Math.round(
+    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'rejected' })
+  );
+  const chatEditsSaved = Math.round(
+    totalOrEvents(CHAT_EDIT_OUTCOME, 'copilot_chat.edit.feedback', { 'copilot_chat.edit.outcome': 'saved' })
+  );
 
   const linesAdded = Math.round(rollup.total(LINES_OF_CODE, { type: 'added' }));
   const linesRemoved = Math.round(rollup.total(LINES_OF_CODE, { type: 'removed' }));
 
-  const survivalFourGram = rollup.mean(SURVIVAL_FOUR_GRAM);
-  const survivalNoRevert = rollup.mean(SURVIVAL_NO_REVERT);
+  const survivalFourGram = meanOrEvents(
+    SURVIVAL_FOUR_GRAM,
+    'copilot_chat.edit.survival',
+    'survival_rate_four_gram'
+  );
+  const survivalNoRevert = meanOrEvents(
+    SURVIVAL_NO_REVERT,
+    'copilot_chat.edit.survival',
+    'survival_rate_no_revert'
+  );
 
-  const pullRequests = Math.round(rollup.total(PULL_REQUESTS));
-  const cloudSessions = Math.round(rollup.total(CLOUD_SESSIONS));
+  const pullRequests = Math.round(totalOrEvents(PULL_REQUESTS, 'copilot_chat.pull_request'));
+  const cloudSessions = Math.round(totalOrEvents(CLOUD_SESSIONS, 'copilot_chat.cloud.session'));
 
-  const feedbackPositive = Math.round(rollup.total(USER_FEEDBACK, { rating: 'positive' }));
-  const feedbackNegative = Math.round(rollup.total(USER_FEEDBACK, { rating: 'negative' }));
+  const feedbackPositive = Math.round(
+    totalOrEvents(USER_FEEDBACK, 'copilot_chat.user.feedback', { rating: 'positive' })
+  );
+  const feedbackNegative = Math.round(
+    totalOrEvents(USER_FEEDBACK, 'copilot_chat.user.feedback', { rating: 'negative' })
+  );
   const votes = feedbackPositive + feedbackNegative;
 
   // What the user did with a response is an IDE-side quality signal in its own
   // right: copying or applying an answer is a stronger endorsement than a
   // thumbs up, because it costs something.
-  const actionCopy = Math.round(rollup.total(USER_ACTIONS, { action: 'copy' }));
-  const actionInsert = Math.round(rollup.total(USER_ACTIONS, { action: 'insert' }));
-  const actionApply = Math.round(rollup.total(USER_ACTIONS, { action: 'apply' }));
-  const actionFollowup = Math.round(rollup.total(USER_ACTIONS, { action: 'followup' }));
+  const actionCopy = Math.round(totalOrEvents(USER_ACTIONS, 'copilot_chat.user.action', { action: 'copy' }));
+  const actionInsert = Math.round(totalOrEvents(USER_ACTIONS, 'copilot_chat.user.action', { action: 'insert' }));
+  const actionApply = Math.round(totalOrEvents(USER_ACTIONS, 'copilot_chat.user.action', { action: 'apply' }));
+  const actionFollowup = Math.round(totalOrEvents(USER_ACTIONS, 'copilot_chat.user.action', { action: 'followup' }));
 
-  const toolCalls = Math.round(rollup.total(TOOL_CALL_COUNT));
-  const toolFailures = Math.round(rollup.total(TOOL_CALL_COUNT, { success: 'false' }));
+  const toolCalls = Math.round(totalOrEvents(TOOL_CALL_COUNT, 'copilot_chat.tool.call'));
+  const toolFailures = Math.round(totalOrEvents(TOOL_CALL_COUNT, 'copilot_chat.tool.call', { success: 'false' }));
 
-  const editResponseErrors = Math.round(rollup.total(EDIT_RESPONSES, { outcome: 'error' }));
-  const summarizationsApplied = Math.round(rollup.total(SUMMARIZATIONS, { outcome: 'applied' }));
-  const summarizationsFailed = Math.round(rollup.total(SUMMARIZATIONS, { outcome: 'failed' }));
+  const editResponseErrors = Math.round(
+    totalOrEvents(EDIT_RESPONSES, 'copilot_chat.agent.edit_response', { outcome: 'error' })
+  );
+  const summarizationsApplied = Math.round(
+    totalOrEvents(SUMMARIZATIONS, 'copilot_chat.agent.summarization', { outcome: 'applied' })
+  );
+  const summarizationsFailed = Math.round(
+    totalOrEvents(SUMMARIZATIONS, 'copilot_chat.agent.summarization', { outcome: 'failed' })
+  );
 
   const missing: string[] = [];
   if (decided === 0) {
@@ -455,6 +498,7 @@ export function buildQuality(input: SummaryInput): QualitySection {
       votes > 0 ||
       engagement > 0 ||
       toolCalls > 0,
+    connected: !!input.feed.jsonlActive,
     editsAccepted,
     editsRejected,
     acceptRate: decided > 0 ? editsAccepted / decided : undefined,
@@ -521,7 +565,7 @@ export function redactUrl(raw: string | undefined): string {
 
 /** Compares what each source saw over the window in which both were running. */
 export function computeDrift(otelObserved: number, transcriptObserved: number): DriftReport {
-  if (otelObserved === 0 && transcriptObserved === 0) {
+  if (otelObserved === 0 || transcriptObserved === 0) {
     return {
       otelObserved: 0,
       transcriptObserved: 0,
