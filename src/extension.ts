@@ -292,14 +292,32 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
     wanted.push(['dbSpanExporter', true]);
   }
   if (picked.id === 'file' || picked.id === 'both') {
-    const feed = otel.defaultFeedPath();
+    // If the user has pinned `iceberg.otel.feedPath`, that is the file the
+    // watcher will tail. Pointing Copilot at our default instead would report a
+    // successful connection while the dashboard stayed empty for ever.
+    const override = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
+    const feed = override || otel.defaultFeedPath();
+
     // Copilot Chat's file exporter opens a write stream without creating the
     // directory first, so pointing it at a folder that does not exist yet means
     // nothing is ever written and the feed stays silently empty.
     try {
       fs.mkdirSync(path.dirname(feed), { recursive: true });
     } catch (err) {
+      // Carrying on here would do the precise damage this guard exists to
+      // prevent: replace a working collector and leave a feed that can never be
+      // written to.
       output.appendLine(`[iceberg] could not create the feed directory: ${String(err)}`);
+      const show = 'Show Log';
+      const choice = await vscode.window.showErrorMessage(
+        `Could not create the folder for the telemetry feed (${path.dirname(feed)}). ` +
+          'Nothing has been changed.',
+        show
+      );
+      if (choice === show) {
+        output.show(true);
+      }
+      return;
     }
     wanted.push(['outfile', feed], ['exporterType', 'file']);
   }
