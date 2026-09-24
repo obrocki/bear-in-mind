@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<!-- Screenshot harness for the dashboard. Loads the real stylesheet and the
+     real renderer, then feeds it one representative snapshot, so the images in
+     docs/media are the actual UI rather than a mock-up.
+
+       ?empty   the not-yet-connected state
+       ?narrow  sidebar width (the CSS breakpoint does the rest)
+-->
+<link href="../media/dashboard.css" rel="stylesheet" />
+<title>dashboard shot</title>
+<style>
+  /* The webview inherits these from VS Code; supply them so the shot matches. */
+  :root {
+    --vscode-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --vscode-editor-font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+    --vscode-button-background: #1f6feb;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-secondaryBackground: #21262d;
+    --vscode-button-secondaryForeground: #c9d1d9;
+  }
+</style>
+</head>
+<body>
+  <div id="banner"></div>
+  <div class="sections" id="sections"></div>
+  <footer>
+    <p class="provenance" id="provenance"></p>
+  </footer>
+
+<script>
+  window.acquireVsCodeApi = function () {
+    return { postMessage: function () {} };
+  };
+</script>
+<script src="../media/dashboard.js"></script>
+<script>
+  // Deterministic wobble, so re-running the tool does not churn the PNG.
+  function wave(i) {
+    return Math.sin(i / 3) * 0.42 + Math.sin(i / 7.3) * 0.28 + Math.cos(i / 2.1) * 0.14;
+  }
+
+  const snapshot = {
+    generatedAtMs: Date.now(),
+    bearName: 'Nanuq',
+    feed: {
+      watching: true,
+      copilotOtelEnabled: true,
+      jsonlPath: 'copilot-otel.jsonl',
+      jsonlActive: true,
+      sqlitePath: 'agent-traces.db',
+      sqliteActive: true,
+      lastRecordAtMs: Date.now() - 42000,
+      records: { metrics: 128, logs: 361, spans: 2044, unknown: 0, malformed: 0 },
+      notes: []
+    },
+    cost: {
+      available: true,
+      totalTokens: 3184920,
+      inputTokens: 2903118,
+      outputTokens: 281802,
+      cachedTokens: 1204553,
+      reasoningTokens: 18240,
+      credits: 37.5,
+      budget: 5000000,
+      health: 0.363,
+      burnPerHour: 412000,
+      byModel: [
+        { model: 'claude-sonnet-4.6', input: 1740000, output: 160000, total: 1900000, share: 0.6 },
+        { model: 'gpt-4o', input: 890000, output: 92000, total: 982000, share: 0.31 },
+        { model: 'gpt-5-mini', input: 273118, output: 29802, total: 302920, share: 0.09 }
+      ],
+      series: Array.from({ length: 40 }, (_, i) => ({
+        tMs: Date.now() - (40 - i) * 600000,
+        input: Math.round(46000 + wave(i) * 30000),
+        output: Math.round(5400 + wave(i + 5) * 2400)
+      })),
+      source: 'otel',
+      drift: {
+        otelObserved: 1284391,
+        transcriptObserved: 1281002,
+        deltaTokens: 3389,
+        deltaPercent: 0.26,
+        agreeing: true,
+        pending: false
+      }
+    },
+    speed: {
+      available: true,
+      sessions: 46,
+      sessionMedianMs: { value: 74200, source: 'spans' },
+      sessionP95Ms: { value: 396000, source: 'spans' },
+      llmCalls: 512,
+      llmMedianMs: { value: 3420, source: 'spans' },
+      llmP95Ms: { value: 11800, source: 'spans' },
+      ttftMedianMs: { value: 612, source: 'spans' },
+      turnsPerSession: { value: 6.4, source: 'spans' },
+      toolCalls: 1930,
+      toolMedianMs: { value: 148, source: 'spans' },
+      slowestTools: [
+        { name: 'runInTerminal', calls: 212, medianMs: 4200 },
+        { name: 'runTests', calls: 38, medianMs: 2600 },
+        { name: 'applyPatch', calls: 344, medianMs: 410 },
+        { name: 'readFile', calls: 908, medianMs: 42 }
+      ],
+      tokensPerMinute: 24800
+    },
+    quality: {
+      available: true,
+      editsAccepted: 284,
+      editsRejected: 61,
+      acceptRate: 284 / 345,
+      chatEditsAccepted: 190,
+      chatEditsRejected: 34,
+      chatEditsSaved: 12,
+      linesAdded: 8420,
+      linesRemoved: 3106,
+      survivalFourGram: 0.78,
+      survivalNoRevert: 0.91,
+      pullRequests: 9,
+      cloudSessions: 3,
+      feedbackPositive: 14,
+      feedbackNegative: 2,
+      feedbackRate: 14 / 16,
+      actionCopy: 61,
+      actionInsert: 24,
+      actionApply: 137,
+      actionFollowup: 18,
+      toolCalls: 1930,
+      toolFailures: 47,
+      toolSuccessRate: (1930 - 47) / 1930,
+      editResponseErrors: 4,
+      summarizationsApplied: 22,
+      summarizationsFailed: 1,
+      missing: []
+    }
+  };
+
+  if (location.search.includes('empty')) {
+    snapshot.feed.copilotOtelEnabled = false;
+    snapshot.feed.jsonlPath = undefined;
+    snapshot.feed.jsonlActive = false;
+    snapshot.feed.sqlitePath = undefined;
+    snapshot.feed.sqliteActive = false;
+    snapshot.feed.lastRecordAtMs = 0;
+    snapshot.feed.records = { metrics: 0, logs: 0, spans: 0, unknown: 0, malformed: 0 };
+    snapshot.cost.available = false;
+    snapshot.speed.available = false;
+    snapshot.quality.available = false;
+  }
+
+  window.postMessage({ type: 'snapshot', snapshot: snapshot }, '*');
+</script>
+</body>
+</html>

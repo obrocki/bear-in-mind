@@ -1,7 +1,12 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
+import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
+import { OtelWatcher } from './otelWatcher';
+import { buildSnapshot, redactUrl, type DashboardSnapshot } from './otelSummary';
 import { TokenMeter, countTokens, type UsageSnapshot } from './tokenMeter';
 
 /** Public API other extensions can use: `exports.reportUsage({ input, output })`. */
@@ -10,6 +15,8 @@ export interface IcebergApi {
   getUsage(): UsageSnapshot;
   onDidChangeUsage: vscode.Event<UsageSnapshot>;
 }
+
+const OTEL_SECTION = 'github.copilot.chat.otel';
 
 export function activate(context: vscode.ExtensionContext): IcebergApi {
   const conflict = findConflictingInstall(context.extension);
@@ -22,16 +29,38 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   const output = vscode.window.createOutputChannel('Iceberg');
   context.subscriptions.push(output);
+  const log = (message: string) => output.appendLine(`[${new Date().toISOString()}] ${message}`);
 
-  // Automatic metering: VS Code records exact per-request token counts in its
-  // chat transcripts, so regular Copilot Chat traffic melts the iceberg too.
+  // Automatic metering, from two independent observers of the same traffic.
+  // `TokenMeter.observe` decides which one is allowed to charge, so they can
+  // both run without double counting — see the comment on the meter itself.
   const watcher = new ChatUsageWatcher(
     context,
-    (delta) => meter.report(delta.input, delta.output, delta.requests, delta.credits),
-    (message) => output.appendLine(`[${new Date().toISOString()}] ${message}`)
+    (delta) => meter.observe('transcripts', delta.input, delta.output, delta.requests, delta.credits),
+    log
   );
   context.subscriptions.push(watcher);
   watcher.start();
+
+  const otel = new OtelWatcher(
+    context,
+    (delta) => meter.observe('otel', delta.input, delta.output, delta.requests),
+    log
+  );
+  context.subscriptions.push(otel);
+  otel.start();
+
+  // The ice tracks how full the model's context window is whenever telemetry
+  // reports it, and falls back to cumulative burn against the budget when it
+  // does not. Pushing it on every poll keeps the scene live, and keeps
+  // telemetry authoritative through idle spells when no tokens are moving.
+  context.subscriptions.push(
+    otel.onDidScan(() => {
+      meter.setContext(otel.spanDigest.context);
+      meter.noteOtelAlive(otel.producing);
+    })
+  );
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (
@@ -40,12 +69,46 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       ) {
         watcher.reconfigure();
       }
+      if (e.affectsConfiguration('iceberg.otel') || e.affectsConfiguration(OTEL_SECTION)) {
+        otel.reconfigure();
+      }
     })
   );
 
+  const snapshot = (): DashboardSnapshot => {
+    const usage = meter.snapshot();
+    return buildSnapshot({
+      rollup: otel.rollup,
+      spans: otel.spanDigest,
+      feed: otel.health(),
+      bearName: usage.bearName,
+      budget: usage.budget,
+      health: usage.health,
+      totals: { input: usage.input, output: usage.output, credits: usage.credits },
+      source: usage.source,
+      basis: usage.basis,
+      context: usage.context,
+      drift: usage.drift
+    });
+  };
+
+  // The dashboard has to follow the telemetry as well as the meter: quality and
+  // speed signals move without any token being charged, so a meter-only
+  // subscription would leave those two sections stale.
+  const changed = new vscode.EventEmitter<void>();
+  context.subscriptions.push(
+    changed,
+    meter.onDidChange(() => changed.fire()),
+    otel.onDidScan(() => changed.fire())
+  );
+
   const provider = new IcebergViewProvider(context.extensionUri, meter);
+  const dashboard = new DashboardViewProvider(context.extensionUri, snapshot, changed.event);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(IcebergViewProvider.viewType, provider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    }),
+    vscode.window.registerWebviewViewProvider(DashboardViewProvider.viewType, dashboard, {
       webviewOptions: { retainContextWhenHidden: true }
     })
   );
@@ -63,12 +126,18 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     status.text = `$(snowflake) ${pct}%`;
     status.tooltip = new vscode.MarkdownString(
       [
-        `**Bear in Mind** — ${pct}% ice remaining`,
+        s.basis === 'context' && s.context
+          ? `**Bear in Mind** — ${pct}% of the context window free`
+          : `**Bear in Mind** — ${pct}% ice remaining`,
         '',
+        ...(s.basis === 'context' && s.context
+          ? [`- Context: \`${fmt(s.context.used)}\` / \`${fmt(s.context.limit)}\`${s.context.model ? ` (${s.context.model})` : ''}`]
+          : []),
         `- Used: \`${fmt(s.total)}\` / \`${fmt(s.budget)}\` tokens`,
         `- Input: \`${fmt(s.input)}\` · Output: \`${fmt(s.output)}\``,
-          `- Requests counted: \`${s.requests}\`` +
-            (s.credits > 0 ? ` · Credits: \`${s.credits.toFixed(1)}\`` : ''),
+        `- Requests counted: \`${s.requests}\`` +
+          (s.credits > 0 ? ` · Credits: \`${s.credits.toFixed(1)}\`` : ''),
+        `- Source: ${s.source === 'otel' ? 'OpenTelemetry' : 'chat transcripts'}`,
         '',
         `${s.bearName} ${moodLine(s.health)}`,
         '',
@@ -89,6 +158,10 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   context.subscriptions.push(
     vscode.commands.registerCommand('iceberg.open', () => openHabitatPanel(context.extensionUri, meter)),
 
+    vscode.commands.registerCommand('iceberg.openDashboard', () =>
+      openDashboardPanel(context.extensionUri, snapshot, changed.event)
+    ),
+
     vscode.commands.registerCommand(
       'iceberg.report',
       (usage: { input?: number; output?: number } | number) => {
@@ -100,76 +173,26 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       }
     ),
 
-    vscode.commands.registerCommand('iceberg.addTokens', async () => {
-      const raw = await vscode.window.showInputBox({
-        title: 'Add tokens to the meter',
-        prompt: 'Number of tokens to burn (use "1200/350" for input/output)',
-        placeHolder: 'e.g. 2500 or 2000/500',
-        validateInput: (v) => (parseUsage(v) ? undefined : 'Enter a number, or input/output')
-      });
-      const parsed = raw ? parseUsage(raw) : undefined;
-      if (parsed) {
-        meter.report(parsed.input, parsed.output);
-      }
-    }),
-
-    vscode.commands.registerCommand('iceberg.countSelection', async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        void vscode.window.showWarningMessage('Iceberg: open a file and select some text first.');
-        return;
-      }
-      const text = editor.selection.isEmpty
-        ? editor.document.getText()
-        : editor.document.getText(editor.selection);
-      const n = await countTokens(text);
-      meter.report(n, 0);
-      void vscode.window.showInformationMessage(`Iceberg: burned ${fmt(n)} prompt tokens.`);
-    }),
-
-    vscode.commands.registerCommand('iceberg.setBudget', async () => {
-      const current = meter.budget;
-      const raw = await vscode.window.showInputBox({
-        title: 'Iceberg token budget',
-        value: String(current),
-        prompt: 'Total tokens that melt the iceberg completely',
-        validateInput: (v) => {
-          const n = Number(v.replace(/[_,\s]/g, ''));
-          return Number.isFinite(n) && n >= 1000 ? undefined : 'Enter a number >= 1000';
-        }
-      });
-      if (raw === undefined) {
-        return;
-      }
-      const n = Math.round(Number(raw.replace(/[_,\s]/g, '')));
-      await vscode.workspace
-        .getConfiguration('iceberg')
-        .update('tokenBudget', n, vscode.ConfigurationTarget.Global);
-    }),
-
     vscode.commands.registerCommand('iceberg.nameBear', () => pickBearName(meter.snapshot().bearName)),
 
-    vscode.commands.registerCommand('iceberg.reset', () => {
-      meter.reset();
-      watcher.rebaseline();
-      void vscode.window.showInformationMessage('Iceberg: refrozen. The bear is pleased. 🐻‍❄️');
-    }),
+    vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output)),
+
+    vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output)),
 
     vscode.commands.registerCommand('iceberg.showStats', async () => {
       const s = meter.snapshot();
-      const tracking = watcher.enabled ? 'auto-tracking Copilot Chat' : 'auto-tracking off';
+      const source = s.source === 'otel' ? 'metered by OpenTelemetry' : 'metered from chat transcripts';
       const pick = await vscode.window.showInformationMessage(
         `${Math.round(s.health * 100)}% ice left — ${fmt(s.total)} / ${fmt(s.budget)} tokens ` +
           `(in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} requests` +
-          `${s.credits > 0 ? `, ${s.credits.toFixed(1)} credits` : ''}) · ${tracking}.`,
-        'Open Habitat',
-        'Refreeze'
+          `${s.credits > 0 ? `, ${s.credits.toFixed(1)} credits` : ''}) · ${source}.`,
+        'Open Dashboard',
+        'Open Habitat'
       );
-      if (pick === 'Open Habitat') {
+      if (pick === 'Open Dashboard') {
+        openDashboardPanel(context.extensionUri, snapshot, changed.event);
+      } else if (pick === 'Open Habitat') {
         openHabitatPanel(context.extensionUri, meter);
-      } else if (pick === 'Refreeze') {
-        meter.reset();
-        watcher.rebaseline();
       }
     }),
 
@@ -192,6 +215,203 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
 export function deactivate(): void {
   /* disposables handle cleanup */
+}
+
+/**
+ * Switches Copilot Chat's telemetry on and points it somewhere readable.
+ *
+ * The two sources are not equally intrusive, and the difference matters enough
+ * to put in front of the user rather than decide for them:
+ *
+ * - The **local trace store** registers an extra span processor, so it runs
+ *   happily beside an existing OTLP exporter. It carries spans only.
+ * - The **file feed** *replaces* the exporter set entirely — setting `outfile`
+ *   forces `exporterType` to `file` upstream. Anyone already shipping to a
+ *   collector would silently stop. It is also the only source that carries the
+ *   log records the quality section is built from.
+ */
+async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel): Promise<void> {
+  const config = vscode.workspace.getConfiguration(OTEL_SECTION);
+  const endpoint = (config.get<string>('otlpEndpoint', '') || '').trim();
+  // Every user-facing mention of the endpoint uses this. The raw value is only
+  // ever used to decide *whether* a collector is configured, never displayed.
+  const endpointLabel = redactUrl(endpoint);
+  const exporterType = (config.get<string>('exporterType', '') || '').trim();
+  const collectorInUse = !!endpoint && exporterType !== 'file';
+
+  // `dbSpanExporter` only exists in newer Copilot Chat builds. Offering the
+  // trace store where the setting is unregistered would promise exact timings
+  // and context-window headroom that can never arrive, so check before offering.
+  const traceStoreAvailable = config.inspect('dbSpanExporter')?.defaultValue !== undefined;
+
+  const traceStore = {
+    label: 'Local trace store',
+    detail: 'Cost and speed, with exact session timings. Runs alongside any collector you already use.',
+    id: 'sqlite' as const
+  };
+  const fileFeed = {
+    label: 'File feed',
+    detail: collectorInUse
+      ? `Adds quality signals — but replaces your OTLP exporter, so ${endpointLabel} stops receiving data.`
+      : 'Adds quality signals: accept/reject, edit survival, pull requests and feedback.',
+    id: 'file' as const
+  };
+  const both = {
+    label: 'Both',
+    detail: collectorInUse
+      ? `Everything in all three sections — but ${endpointLabel} stops receiving data.`
+      : 'Everything in all three sections. Recommended.',
+    id: 'both' as const
+  };
+
+  const choices = traceStoreAvailable ? [traceStore, both, fileFeed] : [fileFeed];
+  const placeHolder = !traceStoreAvailable
+    ? 'This Copilot Chat has no local trace store, so the file feed is the only source'
+    : collectorInUse
+      ? `An OTLP endpoint is configured (${endpointLabel}) — only the trace store leaves it intact`
+      : 'Everything stays on this machine; nothing is sent anywhere';
+
+  const picked = await vscode.window.showQuickPick(choices, {
+    title: 'Connect Copilot telemetry to Bear in Mind',
+    placeHolder
+  });
+  if (!picked) {
+    return;
+  }
+
+  if (collectorInUse && picked.id !== 'sqlite') {
+    const proceed = await vscode.window.showWarningMessage(
+      `This replaces your OTLP exporter. Copilot Chat will stop sending telemetry to ${endpointLabel}.`,
+      { modal: true },
+      'Replace it'
+    );
+    if (proceed !== 'Replace it') {
+      return;
+    }
+  }
+
+  const wanted: Array<[string, unknown]> = [['enabled', true]];
+  if (picked.id === 'sqlite' || picked.id === 'both') {
+    wanted.push(['dbSpanExporter', true]);
+  }
+  if (picked.id === 'file' || picked.id === 'both') {
+    // If the user has pinned `iceberg.otel.feedPath`, that is the file the
+    // watcher will tail. Pointing Copilot at our default instead would report a
+    // successful connection while the dashboard stayed empty for ever.
+    const override = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
+    const feed = override || otel.defaultFeedPath();
+
+    // Copilot Chat's file exporter opens a write stream without creating the
+    // directory first, so pointing it at a folder that does not exist yet means
+    // nothing is ever written and the feed stays silently empty.
+    try {
+      fs.mkdirSync(path.dirname(feed), { recursive: true });
+    } catch (err) {
+      // Carrying on here would do the precise damage this guard exists to
+      // prevent: replace a working collector and leave a feed that can never be
+      // written to.
+      output.appendLine(`[iceberg] could not create the feed directory: ${String(err)}`);
+      const show = 'Show Log';
+      const choice = await vscode.window.showErrorMessage(
+        `Could not create the folder for the telemetry feed (${path.dirname(feed)}). ` +
+          'Nothing has been changed.',
+        show
+      );
+      if (choice === show) {
+        output.show(true);
+      }
+      return;
+    }
+    wanted.push(['outfile', feed], ['exporterType', 'file']);
+  }
+
+  const applied: string[] = [];
+  const failed: string[] = [];
+  for (const [key, value] of wanted) {
+    // A setting this build of Copilot Chat does not register cannot be written —
+    // `update` rejects. Writing them one at a time, and checking first, means one
+    // unknown key cannot abort the rest of the setup.
+    const known = config.inspect(key);
+    if (!known || known.defaultValue === undefined) {
+      failed.push(key);
+      output.appendLine(`[iceberg] ${OTEL_SECTION}.${key} is not a setting in this VS Code build; skipped.`);
+      continue;
+    }
+    try {
+      await config.update(key, value, vscode.ConfigurationTarget.Global);
+      applied.push(key);
+    } catch (err) {
+      failed.push(key);
+      output.appendLine(`[iceberg] could not set ${OTEL_SECTION}.${key}: ${String(err)}`);
+    }
+  }
+
+  otel.reconfigure();
+
+  if (applied.length === 0) {
+    const show = 'Show Log';
+    const choice = await vscode.window.showErrorMessage(
+      'Could not turn on Copilot telemetry — none of the settings could be written. ' +
+        'This usually means the installed Copilot Chat is older than the telemetry feature.',
+      show
+    );
+    if (choice === show) {
+      output.show(true);
+    }
+    return;
+  }
+
+  const reload = 'Reload Window';
+  const note =
+    failed.length > 0
+      ? ` (${failed.join(', ')} could not be set — see the Iceberg output channel)`
+      : '';
+  const choice = await vscode.window.showInformationMessage(
+    `Copilot telemetry connected${note}. Reload so Copilot Chat picks up the change, then send a chat ` +
+      'request to populate the dashboard.',
+    reload
+  );
+  if (choice === reload) {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
+}
+
+function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.OutputChannel): void {
+  const feed = otel.health();
+  const usage = meter.snapshot();
+  const drift = usage.drift;
+
+  output.appendLine('');
+  output.appendLine('── Telemetry diagnostics ──────────────────────────────');
+  output.appendLine(`  reading telemetry   ${feed.watching ? 'yes' : 'no'}`);
+  output.appendLine(`  copilot otel        ${feed.copilotOtelEnabled ? 'enabled' : 'disabled'}`);
+  output.appendLine(`  file feed           ${feed.jsonlPath ?? '(not configured)'}`);
+  output.appendLine(`  trace store         ${feed.sqlitePath ?? '(not found)'}`);
+  // Already redacted by `health()`, which is the single place that touches the
+  // raw value.
+  output.appendLine(`  otlp endpoint       ${feed.otlpEndpoint ?? '(none)'}`);
+  output.appendLine(
+    `  records             ${feed.records.metrics} metric exports · ${feed.records.logs} events · ` +
+      `${feed.records.spans} spans skipped · ${feed.records.unknown} unknown · ${feed.records.malformed} malformed`
+  );
+  output.appendLine(
+    `  last record         ${feed.lastRecordAtMs ? new Date(feed.lastRecordAtMs).toISOString() : 'never'}`
+  );
+  output.appendLine(`  charging source     ${usage.source}`);
+  output.appendLine(
+    `  reconciliation      ${
+      drift.pending
+        ? 'pending — the two sources have not overlapped yet'
+        : `otel ${fmt(drift.otelObserved)} vs transcripts ${fmt(drift.transcriptObserved)} ` +
+          `(${drift.deltaTokens >= 0 ? '+' : '-'}${fmt(Math.abs(drift.deltaTokens))}, ` +
+          `${drift.deltaPercent.toFixed(2)}%) — ${drift.agreeing ? 'agreeing' : 'DIVERGING'}`
+    }`
+  );
+  for (const note of feed.notes) {
+    output.appendLine(`  note                ${note}`);
+  }
+  output.appendLine('───────────────────────────────────────────────────────');
+  output.show(true);
 }
 
 /** The view and command ids an extension claims, read from its manifest. */
@@ -350,7 +570,17 @@ function standDown(
       meltdownDemo: false,
       bearName: '',
       animate: false,
-      pixelScale: 0
+      pixelScale: 0,
+      source: 'transcripts',
+      basis: 'budget',
+      drift: {
+        otelObserved: 0,
+        transcriptObserved: 0,
+        deltaTokens: 0,
+        deltaPercent: 0,
+        agreeing: true,
+        pending: true
+      }
     }),
     onDidChangeUsage: emitter.event
   };
@@ -418,23 +648,6 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
   }
 }
 
-function parseUsage(raw: string): { input: number; output: number } | undefined {
-  const cleaned = raw.replace(/[_,\s]/g, '');
-  if (!cleaned) {
-    return undefined;
-  }
-  const parts = cleaned.split('/');
-  const input = Number(parts[0]);
-  const output = parts.length > 1 ? Number(parts[1]) : 0;
-  if (!Number.isFinite(input) || input < 0 || !Number.isFinite(output) || output < 0) {
-    return undefined;
-  }
-  if (input === 0 && output === 0) {
-    return undefined;
-  }
-  return { input: Math.round(input), output: Math.round(output) };
-}
-
 function fmt(n: number): string {
   if (n >= 1_000_000) {
     return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
@@ -461,5 +674,5 @@ function moodLine(health: number): string {
   if (health > 0.02) {
     return 'can barely turn around up there.';
   }
-  return 'is treading water. Consider refreezing.';
+  return 'is treading water.';
 }

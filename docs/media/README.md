@@ -1,8 +1,9 @@
 # docs/media
 
 Everything in this folder is **generated**, not hand-drawn. If you change
-`media/main.js` or `media/style.css`, regenerate these so the README does not
-drift from what the extension actually looks like.
+`media/main.js`, `media/style.css`, `media/dashboard.js` or
+`media/dashboard.css`, regenerate these so the README does not drift from what
+the extension actually looks like.
 
 | File | What it is |
 | --- | --- |
@@ -11,10 +12,12 @@ drift from what the extension actually looks like.
 | `melt-progression.png` | Four panels at 100 / 60 / 28 / 0% ice. |
 | `panel-full.png`, `panel-mid.png`, `panel-low.png`, `panel-melted.png` | The sidebar view at four budget levels. |
 | `editor-view.png` | The wide editor-tab view. |
+| `dashboard.png` | The cost / speed / quality dashboard with representative data. |
+| `dashboard-empty.png` | The dashboard before any telemetry is connected. |
 
 ## How they are produced
 
-Two mechanisms, both headless and both driving the *real* renderer rather than
+Three mechanisms, all headless and all driving the *real* renderer rather than
 any mock of it:
 
 - **Stills** (`tools/make-screenshots.js`) load `media/style.css` and
@@ -23,6 +26,12 @@ any mock of it:
   DevTools protocol. Because it is a real browser, the HUD, fonts and CSS are
   genuine. A query string sets the health level, so each shot is just a
   different URL.
+
+- **Dashboard shots** use the same driver against `tools/dashboard.html`, which
+  loads the real `media/dashboard.css` and `media/dashboard.js` and posts one
+  representative snapshot into it. The sample figures are fixed and the
+  sparkline wobble is deterministic, so re-running the tool does not churn the
+  PNG. `?empty` renders the not-yet-connected state.
 
 - **`melt.gif`** (`tools/make-gif.js`) runs `media/main.js` inside a Node `vm`
   against a minimal Canvas2D shim, steps the animation clock by hand, captures
