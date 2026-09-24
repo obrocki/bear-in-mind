@@ -10,9 +10,12 @@ the extension actually looks like.
 | `hero.png` | Wide scene at 100% ice, no HUD. README banner. |
 | `melt.gif` | The full melt plus a refreeze, ~106 frames. |
 | `melt-progression.png` | Four panels at 100 / 60 / 28 / 0% ice. |
-| `panel-full.png`, `panel-mid.png`, `panel-low.png`, `panel-melted.png` | The sidebar view at four budget levels. |
+| `panel-full.png`, `panel-mid.png`, `panel-low.png`, `panel-melted.png` | Synthetic demo ice at four levels, without recording usage. |
+| `panel-context.png` | Illustrative reported prompt allowance, separate from cumulative tokens. |
 | `editor-view.png` | The wide editor-tab view. |
-| `dashboard.png` | The cost / speed / quality dashboard with representative data. |
+| `dashboard.png` | Representative session comparisons with the default unscaled ice gauge. |
+| `dashboard-context.png` | The same dashboard with a reported prompt allowance. |
+| `dashboard-waiting.png` | A flowing telemetry feed awaiting quality signals. |
 | `dashboard-empty.png` | The dashboard before any telemetry is connected. |
 
 ## How they are produced
@@ -46,4 +49,3 @@ npm run media
 ```
 
 See [`tools/README.md`](../../tools/README.md) for the details.
-

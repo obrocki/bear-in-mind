@@ -135,3 +135,77 @@ it('rebuilds quality event totals once after restart without charging tokens', (
   assert.equal(restarted.rollup.total('copilot_chat.user.feedback.count', { rating: 'positive' }), 2);
   assert.deepEqual(deltas, [], 'quality events never feed the token ledger');
 });
+
+function spanRecord(id, now, operation = 'chat') {
+  return {
+    spanId: id, ended: true,
+    startTime: [Math.floor(now / 1000), (now % 1000) * 1e6],
+    endTime: [Math.floor(now / 1000) + 1, (now % 1000) * 1e6],
+    attributes: {
+      'gen_ai.operation.name': operation, 'gen_ai.conversation.id': 's',
+      'gen_ai.usage.input_tokens': 1000, 'gen_ai.usage.output_tokens': 100,
+      'gen_ai.usage.cache_read.input_tokens': 500,
+      'copilot_chat.copilot_usage_nano_aiu': 2000000000,
+      'copilot_chat.request.max_prompt_tokens': 128000
+    }
+  };
+}
+
+it('meters modern serialized file spans without metrics and never repeats them after restart', (t) => {
+  let now = Date.UTC(2026, 8, 24, 12);
+  t.mock.method(Date, 'now', () => now);
+  const { file, watcher, deltas, create } = fixture(t);
+  const history = spanRecord('old', now - 10000);
+  fs.writeFileSync(file, JSON.stringify(history) + '\n');
+  watcher.scan();
+  assert.equal(deltas.length, 0);
+  now += 2000;
+  const live = JSON.stringify(spanRecord('new', now - 1000)) + '\n';
+  fs.appendFileSync(file, live + live + JSON.stringify(spanRecord('root', now - 1000, 'invoke_agent')) + '\n');
+  watcher.scan();
+  assert.deepEqual(deltas, [{ input: 1000, output: 100, requests: 1, source: 'traces' }]);
+  assert.equal(watcher.spanDigest.sessions[0].credits, 4);
+  assert.equal(watcher.spanDigest.cachedTokens, 1000);
+  assert.equal(watcher.health().jsonlActive, true);
+  watcher.dispose();
+  const restarted = create();
+  restarted.scan();
+  assert.equal(deltas.length, 1);
+  assert.equal(restarted.spanDigest.sessions[0].llmCalls, 2);
+});
+
+it('reads real SQLite spans, aliases and credits; deduplicates the same file-exported span', (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  let now = Date.UTC(2026, 8, 24, 12);
+  t.mock.method(Date, 'now', () => now);
+  const { dir, file, watcher, deltas } = fixture(t);
+  const dbFile = path.join(dir, 'agent-traces.db');
+  const db = new DatabaseSync(dbFile);
+  db.exec(`
+    CREATE TABLE spans (
+      span_id TEXT, operation_name TEXT, tool_name TEXT, start_time_ms INTEGER, end_time_ms INTEGER,
+      ttft_ms REAL, conversation_id TEXT, chat_session_id TEXT, request_model TEXT, response_model TEXT,
+      input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER, reasoning_tokens INTEGER
+    );
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+  `);
+  now += 2000;
+  const record = spanRecord('shared', now - 1000);
+  db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    'shared', 'chat', null, now - 1000, now, 250, 's', null, 'auto', 'resolved', 1000, 100, 500, 20
+  );
+  const insert = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  insert.run('shared', 'copilot_chat.request.max_prompt_tokens', '128000');
+  insert.run('shared', 'copilot_chat.copilot_usage_nano_aiu', '293200000000');
+  insert.run('shared', 'gen_ai.usage.reasoning.output_tokens', '30');
+  db.close();
+  fs.writeFileSync(file, JSON.stringify(record) + '\n');
+  globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = dbFile;
+  watcher.scan();
+  assert.equal(watcher.spanDigest.sessions[0].credits, 293.2);
+  assert.equal(watcher.spanDigest.sessions[0].llmCalls, 1);
+  assert.equal(watcher.spanDigest.reasoningTokens, 30);
+  assert.equal(watcher.spanDigest.context.limit, 128000);
+  assert.deepEqual(deltas, [{ input: 1000, output: 100, requests: 1, source: 'traces' }]);
+  assert.equal(watcher.health().sqliteActive, true);
+});

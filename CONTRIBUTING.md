@@ -1,6 +1,7 @@
 # Contributing
 
-Run `npm ci`, then press `F5` for an Extension Development Host.
+Use Node 22 (including `node:sqlite` for the trace-store regression), run `npm ci`,
+then press `F5` for an Extension Development Host.
 
 | Command | Purpose |
 | --- | --- |
@@ -17,7 +18,7 @@ Run `npm ci`, then press `F5` for an Extension Development Host.
 | `src/api.ts`, `src/extension.ts` | Public contract, shared reporting adapter, activation and commands. |
 | `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
-| `src/otelParse.ts`, `src/otelSummary.ts` | Pure parsing, aggregation and dashboard snapshots. |
+| `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
 
 Watchers → meter/summary → snapshots → webviews. Renderers format data; they do
@@ -26,27 +27,35 @@ Node's test runner; feed tests use temporary files and renderer tests use a DOM 
 
 ## Accounting invariants
 
-- Reconcile cumulative watcher totals with `max()` per dimension, never by
-  summing the sources. Manual reports add separately; credits come from transcripts.
-- Promotion estimates overlap from up to 1,024 transcript observations within five
-  minutes. Validate/prune on load and append. There is no shared request ID:
-  unrelated usage can be absorbed, and recovery is not guaranteed.
-- Adopt pre-existing history without charging it. Transcript snapshots replay
-  history; reused slots and restarted metric counters must preserve earlier usage.
+- Never meter transcript `promptTokens` as consumed input. Replay snapshot, set,
+  push/splice and delete records for session credit comparison. Use VS Code's
+  `max(sum(turn credits), reported session credits)` formula.
+- Reconcile metrics and spans with `max()` per dimension, not addition. No
+  promotion/idle rebasing. This is conservative when coverage/baselines differ.
+- Deduplicate file/SQLite spans by span ID; count tokens/credits on `chat` only,
+  not their enclosing agent totals. Cache/reasoning are subsets. Nano-AIU credits
+  divide by 1e9; missing is unknown, including when other calls report zero.
+- Adopt existing metric history; meter spans starting after observation began.
+  Preserve legacy estimates separately rather than relabeling them as measured.
+  Demo and text-tokenizer estimates must not contaminate the real ledger.
 - Tie feed offsets and missing-file observations to their path. Keep the initial
   backlog boundary fixed while catching up; a partial final record must not wedge
   seeding. Charge it once completed. Bound reads and skip oversized records.
 - Cumulative exports are snapshots, not increments. Preserve high-water marks
   across eviction and rebuild the rollup after restart without recharging history.
-- Drop known content-bearing attributes at the parser boundary. Feed spans can
-  serialize as `{}`; use the read-only trace store for exact timings.
+- Drop content-bearing attributes; retain only span usage metadata. Support
+  current serialized file spans as well as legacy `{}` exports. Use read-only
+  SQLite and an attribute allowlist; do not select captured content.
 - Quality falls back to documented log events per instrument only when metrics
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.
-- Keep billing credits, local cumulative tokens and latest-prompt occupancy
-  separate. The gauge fraction must use the same basis as its percentage,
-  including input/output counting settings. Never imply active-chat filtering,
-  monthly resets or account quota access that the data sources do not provide.
+- Keep elapsed session duration (idle-inclusive), agent invocation latency and
+  model latency separate. Throughput uses output tokens and matching model-call
+  time. Turn index is not an LLM round-trip count.
+- Keep billing credits, cumulative tokens and prompt occupancy separate. Pin a
+  comparison session explicitly; do not imply active-chat detection. Without a
+  reported prompt allowance or explicit personal target, render unscaled ice
+  and no percentage. Never imply measured emissions or actual ice loss.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.
@@ -69,13 +78,16 @@ Use `node tools/build-vsix.js --help` for options.
 
 | Workflow | Result |
 | --- | --- |
-| `ci.yml` | Tests and VSIX builds on Linux, Windows and macOS; PR artifact on Linux. |
+| `ci.yml` | Tests and VSIX builds on Linux, Windows and macOS using Node 22; PR artifact on Linux; stable release after all main-branch jobs pass. |
 | `build-vsix.yml` | Build artifact and rolling `dev` release on merge or manual run. |
-| `release.yml` | Tagged release; Marketplace publication when `VSCE_PAT` is configured. |
+| `release.yml` | Reusable post-merge release, also callable manually or by tag; skips published versions; Marketplace publication when `VSCE_PAT` is configured. |
 
 For a release, run `npm version patch --no-git-tag-version` (or the intended
-version), update `CHANGELOG.md`, commit, and tag `vX.Y.Z`. Keep `package.json` and
-`package-lock.json` in sync.
+version), update `CHANGELOG.md`, and merge the PR. Keep `package.json` and
+`package-lock.json` in sync. After the main-branch CI matrix succeeds, Release
+builds and verifies the VSIX, creates `vX.Y.Z` at that exact tested commit, and
+publishes the GitHub release. No pre-merge tag or second workflow dispatch is
+required. A tag pointing to a different commit fails rather than being moved.
 
 ## Pull requests and bugs
 

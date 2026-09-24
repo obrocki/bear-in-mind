@@ -2,7 +2,7 @@
   "name": "bear-in-mind",
   "displayName": "Bear in Mind — Copilot Token Meter",
   "description": "A polar bear's iceberg melts with Copilot token usage. Track tokens, speed and quality — not a spending cap.",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -75,11 +75,15 @@
         "id": "iceberg.bear",
         "name": "iceberg",
         "fullName": "Polar Bear",
-        "description": "Ask the bear about your token budget (every request you send it is counted).",
+        "description": "Ask the bear about usage. Reported model-call telemetry is counted when available.",
         "isSticky": false
       }
     ],
     "commands": [
+      {
+        "command": "iceberg.selectSession",
+        "title": "Iceberg: Select Comparison Session"
+      },
       {
         "command": "iceberg.open",
         "title": "Iceberg: Open Habitat in Editor",
@@ -155,14 +159,14 @@
       "properties": {
         "iceberg.tokenBudget": {
           "type": "number",
-          "default": 5000000,
-          "minimum": 1000,
-          "description": "Local visual token budget for the fallback melt (enabled input/output dimensions). Not your Copilot credit allowance, context-window limit or an enforced spending cap; does not reset with billing."
+          "default": 0,
+          "minimum": 0,
+          "description": "Optional personal visual token target. 0 (default) disables this fallback: without a reported prompt limit the ice stays unscaled. Not a Copilot allowance, context limit, environmental measurement or spending cap."
         },
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Read Copilot Chat token counts and reported credits across local transcripts. Not the selected chat's Session Cost or account billing usage."
+          "description": "Read session IDs and reported credits from local Copilot transcripts for comparison with Session Cost. Prompt snapshots are not counted as consumed tokens. No account quota is read."
         },
         "iceberg.otel.enabled": {
           "type": "boolean",

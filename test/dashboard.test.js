@@ -156,6 +156,37 @@ it('does not turn missing transcript credits into a zero-cost claim', () => {
   assert.doesNotMatch(d.nodes.sections.textContent, /Reported credits 0/);
 });
 
+it('shows unscaled ice without inventing a denominator and preserves the old meter warning', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'unavailable', budget: 0, legacyTokens: 5000000,
+    totals: { input: 0, output: 0, credits: 0 }
+  });
+  assert.match(d.nodes.sections.textContent, /Ice gauge · unscaled/);
+  assert.match(d.nodes.sections.textContent, /No default token target/);
+  assert.match(d.nodes.sections.textContent, /not a measurement of energy, CO2 or ice loss/);
+  assert.match(d.nodes.sections.textContent, /pre-upgrade estimated tokens preserved separately/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /100%|Visual target/);
+});
+
+it('shows the chosen session cost separately from trace credits and account allowance', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    selectedSessionId: 's',
+    transcripts: [{ sessionId: 's', updatedAt: 1000, credits: 293.2 }],
+    spans: { ...emptySpanDigest(), sessions: [{
+      sessionId: 's', endedAt: 1000, durationMs: 13000, llmCalls: 2, toolCalls: 1,
+      inputTokens: 100000, outputTokens: 1000, credits: 12.5, creditCalls: 1
+    }] }
+  });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /Pinned: s/);
+  assert.match(text, /Session Cost · transcript 293\.2/);
+  assert.match(text, /Model-call credits · traces 12\.5/);
+  assert.match(text, /1 \/ 2 model calls reported credits/);
+  assert.match(text, /never added/);
+});
+
 it('identifies speed as aggregate telemetry rather than the selected session', () => {
   const d = dashboard();
   const spans = emptySpanDigest();
@@ -240,9 +271,9 @@ it('shows one-sided reconciliation as pending and later surfaces real divergence
   const feed = { jsonlPath: 'feed.jsonl', jsonlActive: true };
   d.render(feed, new OtelRollup(), computeDrift(9961, 0));
   assert.match(d.nodes.sections.textContent, /Reconciliation pending/);
-  assert.doesNotMatch(d.nodes.sections.textContent, /differs from the chat transcripts/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /metrics differ from spans/);
   d.render(feed, new OtelRollup(), computeDrift(9961, 100));
-  assert.match(d.nodes.sections.textContent, /differs from the chat transcripts/);
+  assert.match(d.nodes.sections.textContent, /metrics differ from spans/);
 });
 
 it('renders standalone quality metrics instead of the empty state, including zero survival', () => {

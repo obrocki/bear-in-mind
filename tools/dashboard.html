@@ -66,11 +66,13 @@
       cachedTokens: 1204553,
       reasoningTokens: 18240,
       credits: 37.5,
-      budget: 5000000,
+      budget: 0,
       countedTokens: 3184920,
       meterSinceMs: Date.UTC(2026, 8, 24, 12),
-      basis: 'budget',
-      health: 0.363,
+      basis: 'unavailable',
+      health: 1,
+      manualTokens: 0,
+      legacyTokens: 0,
       burnPerHour: 412000,
       byModel: [
         { model: 'claude-sonnet-4.6', input: 1740000, output: 160000, total: 1900000, share: 0.6 },
@@ -85,7 +87,7 @@
       source: 'otel',
       drift: {
         otelObserved: 1284391,
-        transcriptObserved: 1281002,
+        spanObserved: 1281002,
         deltaTokens: 3389,
         deltaPercent: 0.26,
         agreeing: true,
@@ -97,11 +99,12 @@
       sessions: 46,
       sessionMedianMs: { value: 74200, source: 'spans' },
       sessionP95Ms: { value: 396000, source: 'spans' },
+      agentMedianMs: { value: 15300, source: 'spans' },
       llmCalls: 512,
       llmMedianMs: { value: 3420, source: 'spans' },
       llmP95Ms: { value: 11800, source: 'spans' },
       ttftMedianMs: { value: 612, source: 'spans' },
-      turnsPerSession: { value: 6.4, source: 'spans' },
+      turnsPerInvocation: { value: 6.4, source: 'spans' },
       toolCalls: 1930,
       toolMedianMs: { value: 148, source: 'spans' },
       slowestTools: [
@@ -111,6 +114,14 @@
         { name: 'readFile', calls: 908, medianMs: 42 }
       ],
       tokensPerMinute: 24800
+    },
+    session: {
+      sessionId: 'example-session', pinned: true, updatedAt: Date.now(),
+      transcript: { credits: 293.2, latestPromptTokens: 136600 },
+      trace: {
+        credits: 293.2, creditCalls: 32, llmCalls: 32,
+        inputTokens: 2100000, outputTokens: 85000, durationMs: 74200
+      }
     },
     quality: {
       available: true,
@@ -145,7 +156,7 @@
 
   if (location.search.includes('context')) {
     snapshot.cost.basis = 'context';
-    snapshot.cost.context = { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now() };
+    snapshot.cost.context = { used: 136600, limit: 1000000, model: 'gpt-5.6-sol', atMs: Date.now(), sessionId: 'example-session' };
     snapshot.cost.health = 1 - snapshot.cost.context.used / snapshot.cost.context.limit;
   }
 
@@ -153,7 +164,7 @@
     snapshot.quality.available = false;
     snapshot.cost.drift = {
       otelObserved: 1284391,
-      transcriptObserved: 0,
+      spanObserved: 0,
       deltaTokens: 1284391,
       deltaPercent: 100,
       agreeing: true,
@@ -170,6 +181,7 @@
     snapshot.cost.available = false;
     snapshot.speed.available = false;
     snapshot.quality.available = false;
+    snapshot.session = undefined;
   }
 
   window.postMessage({ type: 'snapshot', snapshot: snapshot }, '*');

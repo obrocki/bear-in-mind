@@ -159,6 +159,11 @@ body {
   margin-bottom: 10px;
 }
 
+.gauge .stat dt {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .gauge-remaining {
   margin: 0;
   font: 600 11px/1.4 var(--mono);

@@ -33,6 +33,9 @@ class DashboardHost implements vscode.Disposable {
           case 'diagnostics':
             void vscode.commands.executeCommand('iceberg.telemetryDiagnostics');
             break;
+          case 'session':
+            void vscode.commands.executeCommand('iceberg.selectSession');
+            break;
           default:
             break;
         }

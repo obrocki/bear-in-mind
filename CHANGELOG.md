@@ -1,5 +1,25 @@
 # Change Log
 
+## 0.6.0
+
+- Removed the default 5M-token target: ice is unscaled without a reported prompt
+  allowance or an explicitly configured personal target. Demo animation no
+  longer records usage; the ice is labeled as a metaphor, not environmental data.
+- Stopped counting transcript context snapshots as cumulative token consumption.
+  Preserved legacy estimates separately and started a measured-token ledger.
+- Added comparison-session selection and VS Code's transcript Session Cost
+  formula, including reported backend session totals and JSONL splice/delete replay.
+- Added current serialized OTel file spans and nano-AIU credit reporting,
+  deduplicated with SQLite by span ID. Only model-call spans count tokens, cache,
+  reasoning and credits; parent agent totals are excluded.
+- Separated idle-inclusive sessions from agent/model latency; throughput now uses
+  output tokens over matching model-call time. Round trips use explicit turn counts.
+- Documented stable/proposed API boundaries and verified native popup formulas.
+  Account quotas and automatic active-chat selection remain unavailable.
+- Added restart, credit coverage, real SQLite, export timing and unscaled UI regressions.
+- Stable releases now run after all main-branch CI platforms pass, tagging the
+  tested commit and attaching its verified VSIX. Already released versions are skipped.
+
 ## 0.5.2
 
 - Distinguished local cumulative tokens, reported transcript credits and aggregate

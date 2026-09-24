@@ -136,6 +136,45 @@ describe('ingestion', () => {
 });
 
 describe('cumulative metrics', () => {
+  function timed(sum, start, end) {
+    return {
+      resource: { attributes: { 'session.id': 'window' } },
+      scopeMetrics: [{ metrics: [{
+        descriptor: { name: TOKEN_USAGE },
+        dataPoints: [{
+          attributes: { 'gen_ai.token.type': 'input' }, startTime: [start, 0], endTime: [end, 0],
+          value: { sum, count: 1 }
+        }]
+      }] }]
+    };
+  }
+
+  it('ignores delayed or lower cumulative exports from the same process run', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest(timed(200, 1, 5));
+    rollup.ingest(timed(100, 1, 4));
+    rollup.ingest(timed(100, 1, 6));
+    rollup.ingest(timed(250, 1, 7));
+    assert.equal(rollup.tokenTotals().input, 250);
+  });
+
+  it('recognizes a new cumulative start timestamp even when its value exceeds the old peak', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest(timed(200, 1, 5));
+    rollup.ingest(timed(300, 6, 7));
+    rollup.ingest(timed(300, 6, 7));
+    assert.equal(rollup.tokenTotals().input, 500);
+  });
+
+  it('rejects malformed token counts without resetting or inflating the series', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest(timed(200, 1, 5));
+    rollup.ingest(timed(-1, 1, 6));
+    rollup.ingest(timed(Infinity, 1, 7));
+    assert.equal(rollup.tokenTotals().input, 200);
+    assert.equal(rollup.stats.malformed, 2);
+  });
+
   it('reads token totals from the histogram sums', () => {
     const totals = loaded().tokenTotals();
     // 1500 + 880 input to gpt-4o, plus 4200 to claude; 250 + 140 output.
@@ -457,7 +496,7 @@ describe('cumulative metrics', () => {
 
   it('splits tokens by model', () => {
     const byModel = loaded().tokensByModel();
-    const gpt = byModel.find((m) => m.model === 'gpt-4o');
+    const gpt = byModel.find((m) => m.model === 'gpt-4o-2024-08-06');
     const claude = byModel.find((m) => m.model === 'claude-sonnet-4.6');
     assert.equal(gpt.input, 2380);
     assert.equal(gpt.output, 390);
@@ -626,17 +665,33 @@ describe('summary sections', () => {
     assert.equal(cost.byModel.length, 2);
   });
 
-  it('falls back to the meter totals when transcripts hold the meter', () => {
+  it('excludes the initial cumulative snapshot from burn rate and includes idle export intervals', () => {
+    const rollup = new OtelRollup();
+    const record = (sum, end) => ({
+      scopeMetrics: [{ metrics: [{
+        descriptor: { name: TOKEN_USAGE },
+        dataPoints: [{ attributes: { 'gen_ai.token.type': 'input' },
+          startTime: [1, 0], endTime: [end, 0], value: { sum, count: 1 } }]
+      }] }]
+    });
+    rollup.ingest(record(1000000, 10));
+    rollup.ingest(record(1000100, 20));
+    rollup.ingest(record(1000100, 30));
+    assert.equal(buildCost(base(rollup)).burnPerHour, 18000, '100 new tokens over 20 seconds');
+  });
+
+  it('shows explicit reports when telemetry has not supplied usage', () => {
     const input = base(new OtelRollup());
-    input.source = 'transcripts';
+    input.source = 'none';
     const cost = buildCost(input);
     assert.equal(cost.inputTokens, 6580);
-    assert.equal(cost.source, 'transcripts');
+    assert.equal(cost.source, 'none');
   });
 
   it('marks histogram-derived timings as estimates', () => {
     const speed = buildSpeed(base(loaded()));
-    assert.equal(speed.sessionMedianMs.source, 'metrics');
+    assert.equal(speed.agentMedianMs.source, 'metrics');
+    assert.equal(speed.sessionMedianMs.source, 'none', 'an invocation is not a whole session');
   });
 
   it('prefers exact span timings when they exist', () => {
@@ -725,7 +780,7 @@ describe('drift', () => {
       assert.equal(drift.pending, true);
       assert.equal(drift.agreeing, true, 'missing observations must not flag divergence');
       assert.equal(drift.otelObserved, otel);
-      assert.equal(drift.transcriptObserved, transcripts);
+      assert.equal(drift.spanObserved, transcripts);
     }
   });
 
@@ -736,7 +791,7 @@ describe('drift', () => {
     assert.equal(drift.deltaTokens, 9861);
   });
 
-  it('tolerates the difference cache and reasoning tokens create', () => {
+  it('flags relative metric/span divergence beyond the diagnostic tolerance', () => {
     assert.equal(computeDrift(1000, 990).agreeing, true);
     assert.equal(computeDrift(1000, 800).agreeing, false);
   });

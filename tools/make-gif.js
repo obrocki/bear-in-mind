@@ -14,7 +14,6 @@ const VIEW_W = 420;
 const VIEW_H = 240;
 const ZOOM = 2;
 const DELAY = 7; // hundredths of a second per frame
-const BUDGET = 5000000;
 const TRANSPARENT = 255; // palette slot reserved for "unchanged since last frame"
 
 // --------------------------------------------------------------- storyboard --
@@ -26,16 +25,16 @@ const STORYBOARD = [
 ];
 
 function stateFor(health) {
-  const total = Math.round(BUDGET * (1 - health));
-  const input = Math.round(total * 0.92);
   return {
     health,
-    input,
-    output: total - input,
-    total,
-    budget: BUDGET,
-    requests: 40,
-    meltdownDemo: false,
+    input: 0,
+    output: 0,
+    total: 0,
+    budget: 0,
+    requests: 0,
+    basis: 'demo',
+    source: 'none',
+    meltdownDemo: true,
     bearName: 'Nanuq',
     animate: true,
     pixelScale: 0
