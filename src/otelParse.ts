@@ -249,8 +249,6 @@ interface EventTotal {
   numeric: Map<string, { sum: number; count: number }>;
 }
 
-type EventQuery = Pick<LogEvent, 'name' | 'attributes'>;
-
 /** Only attributes used to group Quality signals belong in the compact totals. */
 const EVENT_TOTAL_ATTRIBUTES = new Set([
   'outcome',
@@ -753,11 +751,11 @@ export class OtelRollup {
     return matched.slice(-limit);
   }
 
-  /** Counts all-time compact totals; predicates may use only grouped attributes. */
-  countEvents(name: string, predicate?: (event: EventQuery) => boolean): number {
+  /** Counts all-time compact totals, optionally filtered by grouped attributes. */
+  countEvents(name: string, where?: Record<string, string>): number {
     let n = 0;
     for (const e of this.eventTotals.values()) {
-      if (e.name === name && (!predicate || predicate(e))) {
+      if (e.name === name && (!where || Object.entries(where).every(([key, value]) => String(e.attributes[key]) === value))) {
         n += e.count;
       }
     }
@@ -767,12 +765,15 @@ export class OtelRollup {
   meanEventAttribute(
     name: string,
     attribute: string,
-    predicate?: (event: EventQuery) => boolean
+    where?: Record<string, string>
   ): number | undefined {
     let sum = 0;
     let count = 0;
     for (const event of this.eventTotals.values()) {
-      if (event.name !== name || (predicate && !predicate(event))) {
+      if (
+        event.name !== name ||
+        (where && !Object.entries(where).every(([key, value]) => String(event.attributes[key]) === value))
+      ) {
         continue;
       }
       const numeric = event.numeric.get(attribute);

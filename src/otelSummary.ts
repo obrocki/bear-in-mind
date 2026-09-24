@@ -397,17 +397,14 @@ function tokenThroughput(input: SummaryInput, durationsMs: number[]): number {
 export function buildQuality(input: SummaryInput): QualitySection {
   const { rollup } = input;
 
-  // Metrics use namespaced attributes; matching log events use their final
-  // segment (for example, `copilot_chat.edit.outcome` becomes `outcome`).
-  const eventMatches = (attributes: Record<string, unknown>, where?: Record<string, string>) =>
-    !where ||
-    Object.entries(where).every(([key, value]) => {
-      const eventKey = key.split('.').at(-1)!;
-      const actual = attributes[key] ?? attributes[eventKey];
-      return actual !== undefined && actual !== null && String(actual) === value;
-    });
+  const eventAttributes: Record<string, string> = {
+    'copilot_chat.edit.outcome': 'outcome'
+  };
   const eventCount = (name: string, where?: Record<string, string>) =>
-    rollup.countEvents(name, (event) => eventMatches(event.attributes, where));
+    rollup.countEvents(
+      name,
+      where && Object.fromEntries(Object.entries(where).map(([key, value]) => [eventAttributes[key] ?? key, value]))
+    );
   const totalOrEvents = (metric: string, event: string, where?: Record<string, string>) =>
     rollup.observations(metric) > 0 ? rollup.total(metric, where) : eventCount(event, where);
   const meanOrEvents = (metric: string, event: string, attribute: string) =>

@@ -15,5 +15,5 @@ export function createReportingAdapter(report: (input: number, output: number) =
 }
 
 function safe(value: number | undefined): number {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0;
 }
