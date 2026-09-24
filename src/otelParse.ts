@@ -323,7 +323,7 @@ export class OtelRollup {
    * added on top of the aggregate and counted twice.
    */
   private readonly sealed = new Map<string, Series>();
-  private readonly sealedMarks = new Map<string, { value: number; count: number }>();
+  private readonly sealedMarks = new Map<string, { value: number; count: number; aggKey: string }>();
   private readonly events: LogEvent[] = [];
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
@@ -542,8 +542,7 @@ export class OtelRollup {
     const value = contribution(s);
     const count = contributionCount(s);
     const aggKey = `${s.metric}\u0000${attrKey(s.attributes)}`;
-    const agg = this.sealed.get(aggKey);
-    if (agg) {
+    const agg = this.sealed.get(aggKey);    if (agg) {
       agg.retired += value;
       agg.retiredCount += count;
       agg.retiredCounts = addCounts(agg.retiredCounts, s.counts);
@@ -560,22 +559,43 @@ export class OtelRollup {
     const mark = this.sealedMarks.get(key);
     this.sealedMarks.set(key, {
       value: (mark?.value ?? 0) + value,
-      count: (mark?.count ?? 0) + count
+      count: (mark?.count ?? 0) + count,
+      aggKey
     });
 
     // `sealed` is bounded naturally — it is keyed by metric and attributes with
     // the session dropped, so it converges on the instrument set. `sealedMarks`
     // is per key and would otherwise grow for the life of the extension.
     //
-    // Evicting the oldest mark costs the ability to rebase that one key if it
-    // ever exports again. That is the right trade at this depth: the entry is
-    // the oldest of tens of thousands, its session stopped exporting long ago,
-    // and unbounded growth is a certainty where its return is not.
+    // Dropping a mark on its own would be worse than the leak: the aggregate
+    // keeps that history, the returning series can no longer discount it, and
+    // its full cumulative value lands on top — a guaranteed overcharge. So the
+    // matching history leaves the aggregate with it. Forgetting the oldest
+    // sliver of a long-dead session under-reports by that much and can never
+    // double-count, which is the right direction to err.
     if (this.sealedMarks.size > MAX_SEALED_MARKS) {
       const oldest = this.sealedMarks.keys().next();
       if (!oldest.done) {
-        this.sealedMarks.delete(oldest.value);
+        this.forgetMark(oldest.value);
       }
+    }
+  }
+
+  /** Drops a high-water mark and the history it was guarding, together. */
+  private forgetMark(key: string): void {
+    const mark = this.sealedMarks.get(key);
+    this.sealedMarks.delete(key);
+    if (!mark) {
+      return;
+    }
+    const agg = this.sealed.get(mark.aggKey);
+    if (!agg) {
+      return;
+    }
+    agg.retired -= mark.value;
+    agg.retiredCount -= mark.count;
+    if (agg.retired <= 0 && agg.retiredCount <= 0) {
+      this.sealed.delete(mark.aggKey);
     }
   }
 

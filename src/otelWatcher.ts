@@ -46,6 +46,14 @@ interface PersistedState {
   head: string;
   /** Bytes of the feed already consumed. */
   offset: number;
+  /**
+   * Where the pre-existing backlog ended when this stream was first seen.
+   *
+   * Catch-up reads in windows, so EOF moves while it runs. Seeding against a
+   * moving EOF would fold records written during catch-up into the baseline and
+   * never charge them; this boundary does not move.
+   */
+  baselineEnd: number;
   size: number;
   /** Token totals already pushed into the meter, so a restart never re-charges. */
   input: number;
@@ -142,6 +150,7 @@ export class OtelWatcher implements vscode.Disposable {
       path: stored?.path ?? '',
       head: stored?.head ?? '',
       offset: Math.max(0, stored?.offset ?? 0),
+      baselineEnd: Math.max(0, stored?.baselineEnd ?? 0),
       size: Math.max(0, stored?.size ?? 0),
       input: Math.max(0, stored?.input ?? 0),
       output: Math.max(0, stored?.output ?? 0),
@@ -358,6 +367,10 @@ export class OtelWatcher implements vscode.Disposable {
         path: file,
         head: signatureFor(file, stat.size),
         offset: 0,
+        // Whatever is already on disk is the backlog. Fixing the boundary here
+        // means records appended while we catch up fall outside it and are
+        // charged rather than quietly folded into the baseline.
+        baselineEnd: this.sawFeedMissing ? 0 : stat.size,
         size: 0,
         input: 0,
         output: 0,
@@ -640,7 +653,7 @@ export class OtelWatcher implements vscode.Disposable {
     if (!this.state.seeded) {
       this.state.input = totals.input;
       this.state.output = totals.output;
-      if (this.state.offset >= this.state.size) {
+      if (this.state.offset >= this.state.baselineEnd) {
         this.state.seeded = true;
       }
       this.persist(true);
@@ -666,7 +679,16 @@ export class OtelWatcher implements vscode.Disposable {
 
   /** Forgets what it has charged and re-adopts the current feed as history. */
   rebaseline(): void {
-    this.state = { path: this.feedPath ?? '', head: '', offset: 0, size: 0, input: 0, output: 0, seeded: false };
+    this.state = {
+      path: this.feedPath ?? '',
+      head: '',
+      offset: 0,
+      baselineEnd: 0,
+      size: 0,
+      input: 0,
+      output: 0,
+      seeded: false
+    };
     this.persist(true);
     this.scan();
   }

@@ -413,6 +413,40 @@ describe('cumulative metrics', () => {
     assert.ok(rollup.tokenTotals().input >= sealedBaseline, 'never goes backwards');
   });
 
+  it('does not overcharge after a sealed mark is forgotten', () => {
+    // Dropping a mark while keeping its history in the aggregate would let a
+    // returning series add its full cumulative value on top. The history leaves
+    // with the mark, so the worst case is under-reporting an ancient sliver.
+    const rollup = new OtelRollup();
+    const point = (session, sum) => ({
+      resource: { _rawAttributes: [['session.id', session]] },
+      scopeMetrics: [
+        {
+          metrics: [
+            {
+              descriptor: { name: TOKEN_USAGE },
+              dataPoints: [
+                { attributes: { 'gen_ai.token.type': 'input' }, endTime: [1, 0], value: { sum, count: 1 } }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    rollup.ingest(point('victim', 1000));
+    for (let i = 0; i < 9000; i++) {
+      rollup.ingest(point('filler' + i, 1));
+    }
+    const before = rollup.tokenTotals().input;
+    rollup.ingest(point('victim', 1000));
+    const after = rollup.tokenTotals().input;
+
+    // Whether or not the mark survived eviction, re-stating the same cumulative
+    // value must never inflate the total.
+    assert.ok(after <= before, `re-stating 1000 must not add; ${before} -> ${after}`);
+  });
+
   it('filters totals by attribute', () => {
     const rollup = loaded();
     assert.equal(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }), 3);
