@@ -752,6 +752,7 @@ export class OtelRollup {
     return matched.slice(-limit);
   }
 
+  /** Counts all-time compact totals; predicates may use only grouped attributes. */
   countEvents(name: string, predicate?: (event: EventQuery) => boolean): number {
     let n = 0;
     for (const e of this.eventTotals.values()) {

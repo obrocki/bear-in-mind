@@ -402,8 +402,9 @@ export function buildQuality(input: SummaryInput): QualitySection {
   const eventMatches = (attributes: Record<string, unknown>, where?: Record<string, string>) =>
     !where ||
     Object.entries(where).every(([key, value]) => {
-      const eventKey = key.startsWith('copilot_chat.') ? key.slice('copilot_chat.'.length).split('.').at(-1)! : key;
-      return String(attributes[key] ?? attributes[eventKey]) === value;
+      const eventKey = key.split('.').at(-1)!;
+      const actual = attributes[key] ?? attributes[eventKey];
+      return actual !== undefined && actual !== null && String(actual) === value;
     });
   const eventCount = (name: string, where?: Record<string, string>) =>
     rollup.countEvents(name, (event) => eventMatches(event.attributes, where));
@@ -574,7 +575,7 @@ export function computeDrift(otelObserved: number, transcriptObserved: number): 
       transcriptObserved,
       deltaTokens: otelObserved - transcriptObserved,
       deltaPercent: 0,
-      agreeing: true,
+      agreeing: false,
       pending: true
     };
   }

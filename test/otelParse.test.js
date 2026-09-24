@@ -792,6 +792,7 @@ describe('redacting endpoints', () => {
 describe('drift', () => {
   it('is pending until both sources have seen something', () => {
     assert.equal(computeDrift(0, 0).pending, true);
+    assert.equal(computeDrift(0, 0).agreeing, false);
     assert.equal(computeDrift(1000, 0).pending, true);
     assert.equal(computeDrift(0, 1000).pending, true);
   });
@@ -811,6 +812,7 @@ describe('drift', () => {
     assert.equal(drift.pending, true);
     assert.equal(drift.otelObserved, 1200);
     assert.equal(drift.deltaTokens, 1200);
+    assert.equal(drift.agreeing, false);
   });
 });
 
