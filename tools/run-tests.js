@@ -21,7 +21,22 @@ const esbuild = require('esbuild');
 const repoRoot = path.resolve(__dirname, '..');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-tests-'));
 
-const ENTRIES = ['src/otelParse.ts', 'src/otelSummary.ts'];
+const ENTRIES = ['src/otelParse.ts', 'src/otelSummary.ts', 'src/tokenMeter.ts'];
+
+/**
+ * `src/tokenMeter.ts` imports `vscode`, which does not exist outside the
+ * extension host. Pointing the bundler at a stub is what makes the accounting
+ * testable at all — it is the riskiest code here, so "it imports vscode" was
+ * not a good enough reason to leave it uncovered.
+ */
+const vscodeStub = {
+  name: 'vscode-stub',
+  setup(build) {
+    build.onResolve({ filter: /^vscode$/ }, () => ({
+      path: path.join(repoRoot, 'test', 'vscode-stub.js')
+    }));
+  }
+};
 
 async function main() {
   await esbuild.build({
@@ -31,6 +46,7 @@ async function main() {
     format: 'cjs',
     platform: 'node',
     target: 'node20',
+    plugins: [vscodeStub],
     logLevel: 'warning'
   });
 

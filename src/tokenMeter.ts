@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
 import { computeDrift, type ContextWindow, type DriftReport } from './otelSummary';
 
-const STORAGE_KEY = 'iceberg.usage.v2';
-const LEGACY_KEY = 'iceberg.usage.v1';
-
-/** How long the OpenTelemetry feed may go quiet before transcripts take over. */
-const OTEL_STALE_MS = 10 * 60 * 1000;
+const STORAGE_KEY = 'iceberg.usage.v3';
+const LEGACY_V2 = 'iceberg.usage.v2';
+const LEGACY_V1 = 'iceberg.usage.v1';
 
 /**
  * How long a context-window reading stays current.
@@ -15,7 +13,7 @@ const OTEL_STALE_MS = 10 * 60 * 1000;
  */
 const CONTEXT_STALE_MS = 30 * 60 * 1000;
 
-/** Which watcher the meter is currently charging. */
+/** Which watcher the meter is currently taking its numbers from. */
 export type UsageSource = 'otel' | 'transcripts';
 
 /** What the melting ice is measuring. */
@@ -52,41 +50,61 @@ interface Ledger {
 }
 
 interface StoredUsage {
-  /** Charged by whichever watcher is authoritative. */
-  auto: Ledger;
+  /**
+   * What each watcher has observed, cumulatively and commensurately.
+   *
+   * Both describe the *same* traffic, so the charged figure is the larger of
+   * the two rather than their sum.
+   */
+  otel: Ledger;
+  transcripts: Ledger;
+  /** Set once telemetry has reported; before that `otel` means nothing. */
+  promoted: boolean;
   /** Charged by explicit reports: the API, the chat participant, the demo. */
   manual: Ledger;
   credits: number;
   since: number;
-  /** Tokens each watcher has *seen* since they began overlapping. */
-  observed: { otel: number; transcripts: number };
-  overlapping: boolean;
+  /** Tokens each watcher saw since they began overlapping, for the drift readout. */
+  sinceHandover: { otel: number; transcripts: number };
 }
 
 function ledger(): Ledger {
   return { input: 0, output: 0, requests: 0 };
 }
 
+function tokens(l: Ledger): number {
+  return l.input + l.output;
+}
+
 /**
  * Tracks how many tokens have been burned and derives the "health" of the
  * iceberg from it. Everything the webview needs comes out of `snapshot()`.
  *
- * ## Two ledgers, never summed
+ * ## Reconciled, not arbitrated
  *
- * The transcript watcher and the OpenTelemetry watcher both observe the *same*
- * Copilot traffic. Adding them together would double every number, so they
- * share one `auto` ledger and only whichever is currently authoritative is
- * allowed to charge it. `manual` is separate and always charged, because the
- * things that feed it — the exported API, the `@iceberg` participant, the
- * meltdown demo — are not Copilot Chat traffic that either watcher can see.
+ * The transcript watcher and the OpenTelemetry watcher observe the *same*
+ * Copilot traffic. Adding them together would double every number, so the
+ * charged figure is `max(otel, transcripts)` — each keeps its own cumulative
+ * total and the further-ahead one sets the meter.
  *
- * Switching which watcher is authoritative therefore costs nothing: the ledger
- * is a running total of what has already been charged, so handing over
- * mid-flight carries the balance automatically and the ice never jumps.
+ * This is deliberately not a rule about which *delta* gets charged. That
+ * approach leaks: whichever source is charged, the other's observation has to
+ * be dropped, and every dropped observation is either usage counted twice or
+ * usage lost. A maximum over two monotonic totals cannot do either. It is
+ * idempotent, it survives a restart as long as the totals persist, it needs no
+ * staleness timer, and if one source stops the other simply overtakes it.
  *
- * The one thing that cannot be arbitrated is `credits`. OpenTelemetry has no
- * equivalent of `copilotCredits`, so premium-request credits always come from
- * the transcripts regardless of which source holds the meter.
+ * The two are made commensurate at handover: when telemetry first reports it
+ * adopts whatever the transcripts had reached, so the comparison is like for
+ * like and telemetry can actually overtake instead of starting from zero and
+ * never catching up.
+ *
+ * `manual` is separate and always added, because the things that feed it — the
+ * exported API, the `@iceberg` participant, the meltdown demo — are not Copilot
+ * Chat traffic that either watcher can see.
+ *
+ * `credits` cannot be arbitrated at all: OpenTelemetry has no equivalent of
+ * `copilotCredits`, so premium-request credits always come from the transcripts.
  */
 export class TokenMeter implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<UsageSnapshot>();
@@ -96,15 +114,13 @@ export class TokenMeter implements vscode.Disposable {
   private saveTimer: NodeJS.Timeout | undefined;
   private demoTimer: NodeJS.Timeout | undefined;
   private demo = false;
-  private otelLastSeenMs = 0;
-  /** Telemetry delta held back at promotion until its fate is known. */
-  private pending: Ledger = { input: 0, output: 0, requests: 0 };
-  private transcriptsSincePromotion = 0;
+  private lastSource: UsageSource = 'transcripts';
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
   constructor(private readonly memento: vscode.Memento) {
     this.state = this.load();
+    this.lastSource = this.source;
 
     this.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -117,40 +133,62 @@ export class TokenMeter implements vscode.Disposable {
 
   private load(): StoredUsage {
     const stored = this.memento.get<Partial<StoredUsage>>(STORAGE_KEY);
-    if (stored?.auto || stored?.manual) {
+    if (stored?.otel || stored?.transcripts) {
       return {
-        auto: sanitise(stored.auto),
+        otel: sanitise(stored.otel),
+        transcripts: sanitise(stored.transcripts),
+        promoted: stored.promoted ?? false,
         manual: sanitise(stored.manual),
         credits: Math.max(0, stored.credits ?? 0),
         since: stored.since ?? Date.now(),
-        observed: {
-          otel: Math.max(0, stored.observed?.otel ?? 0),
-          transcripts: Math.max(0, stored.observed?.transcripts ?? 0)
-        },
-        overlapping: stored.overlapping ?? false
+        sinceHandover: {
+          otel: Math.max(0, stored.sinceHandover?.otel ?? 0),
+          transcripts: Math.max(0, stored.sinceHandover?.transcripts ?? 0)
+        }
       };
     }
 
-    // Carry a v1 meter forward. Everything it holds was charged from the
-    // transcripts, which is exactly what the auto ledger means.
-    const legacy = this.memento.get<{
+    // A v2 meter kept one `auto` ledger fed by whichever watcher was
+    // authoritative. Everything in it was observed traffic, so it becomes the
+    // transcripts' cumulative total; telemetry adopts that figure the moment it
+    // first reports, exactly as it would have done anyway.
+    const v2 = this.memento.get<{
+      auto?: Partial<Ledger>;
+      manual?: Partial<Ledger>;
+      credits?: number;
+      since?: number;
+    }>(LEGACY_V2);
+    if (v2?.auto || v2?.manual) {
+      return {
+        otel: ledger(),
+        transcripts: sanitise(v2.auto),
+        promoted: false,
+        manual: sanitise(v2.manual),
+        credits: Math.max(0, v2.credits ?? 0),
+        since: v2.since ?? Date.now(),
+        sinceHandover: { otel: 0, transcripts: 0 }
+      };
+    }
+
+    const v1 = this.memento.get<{
       input?: number;
       output?: number;
       requests?: number;
       credits?: number;
       since?: number;
-    }>(LEGACY_KEY);
+    }>(LEGACY_V1);
     return {
-      auto: {
-        input: Math.max(0, legacy?.input ?? 0),
-        output: Math.max(0, legacy?.output ?? 0),
-        requests: Math.max(0, legacy?.requests ?? 0)
+      otel: ledger(),
+      transcripts: {
+        input: Math.max(0, v1?.input ?? 0),
+        output: Math.max(0, v1?.output ?? 0),
+        requests: Math.max(0, v1?.requests ?? 0)
       },
+      promoted: false,
       manual: ledger(),
-      credits: Math.max(0, legacy?.credits ?? 0),
-      since: legacy?.since ?? Date.now(),
-      observed: { otel: 0, transcripts: 0 },
-      overlapping: false
+      credits: Math.max(0, v1?.credits ?? 0),
+      since: v1?.since ?? Date.now(),
+      sinceHandover: { otel: 0, transcripts: 0 }
     };
   }
 
@@ -162,38 +200,33 @@ export class TokenMeter implements vscode.Disposable {
     return Math.max(1000, this.config.get<number>('tokenBudget', 5_000_000));
   }
 
-  /** Whether OpenTelemetry should hold the meter when it is producing data. */
-  private get preferOtel(): boolean {
-    return this.config.get<boolean>('otel.authoritative', true);
+  /** Whether telemetry may hold the meter at all. */
+  private get otelAllowed(): boolean {
+    return (
+      this.config.get<boolean>('otel.enabled', true) &&
+      this.config.get<boolean>('otel.authoritative', true)
+    );
+  }
+
+  /** The watcher currently setting the figure: whichever has seen more. */
+  private get charged(): Ledger {
+    const t = this.state.transcripts;
+    if (!this.state.promoted || !this.otelAllowed) {
+      return t;
+    }
+    return tokens(this.state.otel) >= tokens(t) ? this.state.otel : t;
   }
 
   get source(): UsageSource {
-    // Turning the reader off must hand the meter back immediately. Without this
-    // a recent reading would keep telemetry authoritative for the rest of the
-    // staleness window, leaving nothing able to charge.
-    if (!this.config.get<boolean>('otel.enabled', true)) {
-      return 'transcripts';
-    }
-    if (!this.preferOtel) {
-      return 'transcripts';
-    }
-    // With the transcript watcher switched off there is no second source to
-    // fall back to, so telemetry has to charge from its very first delta —
-    // otherwise that delta, and one after every idle spell, is simply lost.
-    if (!this.config.get<boolean>('trackCopilotChat', true)) {
-      return 'otel';
-    }
-    if (this.otelLastSeenMs === 0) {
-      return 'transcripts';
-    }
-    return Date.now() - this.otelLastSeenMs <= OTEL_STALE_MS ? 'otel' : 'transcripts';
+    return this.charged === this.state.otel ? 'otel' : 'transcripts';
   }
 
   get countedTotal(): number {
     const countIn = this.config.get<boolean>('countInputTokens', true);
     const countOut = this.config.get<boolean>('countOutputTokens', true);
-    const input = this.state.auto.input + this.state.manual.input;
-    const output = this.state.auto.output + this.state.manual.output;
+    const auto = this.charged;
+    const input = auto.input + this.state.manual.input;
+    const output = auto.output + this.state.manual.output;
     return (countIn ? input : 0) + (countOut ? output : 0);
   }
 
@@ -202,7 +235,7 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get drift(): DriftReport {
-    return computeDrift(this.state.observed.otel, this.state.observed.transcripts);
+    return computeDrift(this.state.sinceHandover.otel, this.state.sinceHandover.transcripts);
   }
 
   /**
@@ -238,6 +271,7 @@ export class TokenMeter implements vscode.Disposable {
   snapshot(): UsageSnapshot {
     const budget = this.budget;
     const total = this.countedTotal;
+    const auto = this.charged;
     const context = this.liveContext;
     // Falling back to the cumulative budget is not a lesser mode — it is the
     // only thing available until the trace store is connected, since the
@@ -247,12 +281,12 @@ export class TokenMeter implements vscode.Disposable {
       : clamp(1 - total / budget, 0, 1);
 
     return {
-      input: this.state.auto.input + this.state.manual.input,
-      output: this.state.auto.output + this.state.manual.output,
+      input: auto.input + this.state.manual.input,
+      output: auto.output + this.state.manual.output,
       total,
       budget,
       health,
-      requests: this.state.auto.requests + this.state.manual.requests,
+      requests: auto.requests + this.state.manual.requests,
       credits: this.state.credits,
       meltdownDemo: this.demo,
       bearName: this.config.get<string>('bearName', 'Nanuq') || 'Nanuq',
@@ -268,9 +302,11 @@ export class TokenMeter implements vscode.Disposable {
   /**
    * Records what a watcher saw.
    *
-   * Every delta counts towards the drift comparison, but only the authoritative
-   * watcher's delta is charged against the budget. Credits are the exception:
-   * only the transcripts carry them, so they are always taken.
+   * Every delta is kept — nothing is ever dropped on the grounds that the other
+   * watcher probably had it. Each source's own cumulative total grows, and the
+   * charged figure is the larger of the two, so the same traffic reported twice
+   * cannot inflate the meter and traffic reported by only one source cannot
+   * fall through the gap.
    */
   observe(
     from: UsageSource,
@@ -286,103 +322,62 @@ export class TokenMeter implements vscode.Disposable {
       return;
     }
 
-    // Authority is decided from the state as it stood *before* this delta.
-    // Letting an arriving delta promote its own source is what double-charges a
-    // handover: telemetry lags the transcripts by an export interval, so the
-    // transcripts have already charged this exact traffic. Reading `source`
-    // after refreshing `otelLastSeenMs` would charge it a second time.
-    const active = this.source;
-    const promoting = from === 'otel' && active !== 'otel';
-
-    let opened = false;
-    if (from === 'otel') {
-      if (!this.state.overlapping) {
-        // First telemetry data. From here both watchers run side by side, so
-        // start the comparison from a shared zero rather than from history.
-        this.state.overlapping = true;
-        this.state.observed = { otel: 0, transcripts: 0 };
-        opened = true;
-      }
-      this.otelLastSeenMs = Date.now();
-    }
-    // The delta that opens the window describes traffic the transcripts
-    // recorded before the window existed. Counting it would report a 100%
-    // disagreement between two sources that in fact agreed exactly.
-    if (this.state.overlapping && !opened) {
-      this.state.observed[from] += i + o;
-    }
-
+    // Only the transcripts carry credits, so they are taken regardless of which
+    // watcher is currently setting the token figure.
     if (c > 0) {
       this.state.credits += c;
     }
 
-    if (promoting) {
-      // Not charged yet — the transcripts usually charge this same traffic
-      // first. But "usually" is not "always": if they never do, dropping it
-      // would lose the usage for good. Hold it until the next telemetry delta
-      // shows whether the transcripts covered it.
-      this.pending.input += i;
-      this.pending.output += o;
-      this.pending.requests += requestsFrom(countAsRequest);
-      this.transcriptsSincePromotion = 0;
-    } else if (from === 'transcripts') {
-      this.transcriptsSincePromotion += i + o;
-      if (from === active && (i > 0 || o > 0)) {
-        this.charge(i, o, requestsFrom(countAsRequest));
+    let absorbed = false;
+    if (from === 'otel' && !this.state.promoted) {
+      // Make the two commensurate. Telemetry starts recording when it is
+      // switched on, long after the transcripts began, so without this it would
+      // sit permanently below them and could never take over.
+      this.state.promoted = true;
+      // This first delta describes traffic the transcripts have already
+      // counted — telemetry lags them by an export interval — so it is already
+      // inside the figure just carried over. Adding it again would bill the
+      // same request twice. Unless the transcripts have seen nothing at all, in
+      // which case nobody has counted it and it must be kept.
+      absorbed = tokens(this.state.transcripts) > 0;
+      this.state.otel = { ...this.state.transcripts };
+      this.state.sinceHandover = { otel: 0, transcripts: 0 };
+    }
+
+    if (!absorbed && (i > 0 || o > 0)) {
+      const target = from === 'otel' ? this.state.otel : this.state.transcripts;
+      target.input += i;
+      target.output += o;
+      target.requests += requestsFrom(countAsRequest);
+      if (this.state.promoted) {
+        this.state.sinceHandover[from] += i + o;
       }
-    } else if (from === active && (i > 0 || o > 0)) {
-      this.settlePending();
-      this.charge(i, o, requestsFrom(countAsRequest));
     }
 
     this.persist();
+    this.publish();
+  }
+
+  /**
+   * Re-publishes when the effective source has changed.
+   *
+   * `source` follows which ledger is ahead, so it can change on an `observe`
+   * for the *other* watcher. The HUD and status bar listen only on
+   * `onDidChange`, so the event has to carry that.
+   */
+  private publish(): void {
+    this.lastSource = this.source;
     this._onDidChange.fire(this.snapshot());
   }
 
-  private charge(input: number, output: number, requests: number): void {
-    this.state.auto.input += input;
-    this.state.auto.output += output;
-    this.state.auto.requests += requests;
-  }
-
   /**
-   * Resolves the delta held back at promotion.
-   *
-   * If the transcripts charged something in the meantime they covered the same
-   * traffic, so the held delta is dropped. If they charged nothing, nobody did,
-   * and it is charged now rather than lost for good.
+   * Kept for the watcher's poll. Nothing about the charged figure depends on
+   * elapsed time any more, so this only has to notice a source change that a
+   * configuration edit could have caused.
    */
-  private settlePending(): void {
-    const { input, output, requests } = this.pending;
-    if (input === 0 && output === 0) {
-      return;
-    }
-    if (this.transcriptsSincePromotion === 0) {
-      this.charge(input, output, requests);
-    }
-    this.pending = { input: 0, output: 0, requests: 0 };
-    this.transcriptsSincePromotion = 0;
-  }
-
-  /**
-   * Keeps telemetry authoritative while its feed is alive.
-   *
-   * `observe` only fires when tokens actually move, so without this an idle
-   * spell longer than `OTEL_STALE_MS` would quietly demote telemetry and hand
-   * the next request back to the transcripts.
-   */
-  noteOtelAlive(alive: boolean): void {
-    const before = this.source;
-    if (alive) {
-      this.otelLastSeenMs = Date.now();
-    }
-    // `source` is computed from elapsed time, so an idle feed can cross the
-    // staleness threshold between calls with no accompanying `observe`. The
-    // HUD and status bar only listen on `onDidChange`, so without this they
-    // would keep reporting OpenTelemetry long after the meter itself handed
-    // back to the transcripts.
-    if (this.source !== before) {
-      this._onDidChange.fire(this.snapshot());
+  noteOtelAlive(_alive: boolean): void {
+    if (this.source !== this.lastSource) {
+      this.publish();
     }
   }
 
@@ -400,21 +395,21 @@ export class TokenMeter implements vscode.Disposable {
     this.state.manual.output += o;
     this.state.manual.requests += requestsFrom(countAsRequest);
     this.persist();
-    this._onDidChange.fire(this.snapshot());
+    this.publish();
   }
 
   reset(): void {
     this.state = {
-      auto: ledger(),
+      otel: ledger(),
+      transcripts: ledger(),
+      promoted: false,
       manual: ledger(),
       credits: 0,
       since: Date.now(),
-      observed: { otel: 0, transcripts: 0 },
-      overlapping: false
+      sinceHandover: { otel: 0, transcripts: 0 }
     };
-    this.otelLastSeenMs = 0;
     this.persist(true);
-    this._onDidChange.fire(this.snapshot());
+    this.publish();
   }
 
   toggleDemo(): boolean {

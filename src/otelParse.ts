@@ -204,6 +204,15 @@ interface Series {
   /** Histogram companions to `last`, tracked the same way. */
   lastCount: number;
   retiredCount: number;
+  /**
+   * Cumulative amount already represented in the sealed aggregate.
+   *
+   * Set when a series resumes after its history was sealed. The incoming value
+   * is cumulative and still contains that history, so it is discounted here
+   * rather than counted in both places.
+   */
+  rebase: number;
+  rebaseCount: number;
   min?: number;
   max?: number;
   boundaries?: number[];
@@ -211,6 +220,29 @@ interface Series {
   /** Bucket counts banked from finished runs, so quantiles keep their history. */
   retiredCounts?: number[];
   updatedAtMs: number;
+}
+
+function newSeries(metric: string, attributes: Record<string, unknown>, atMs: number): Series {
+  return {
+    metric,
+    attributes,
+    last: 0,
+    retired: 0,
+    lastCount: 0,
+    retiredCount: 0,
+    rebase: 0,
+    rebaseCount: 0,
+    updatedAtMs: atMs
+  };
+}
+
+/** What a series contributes to a total, once sealed history is discounted. */
+function contribution(s: Series): number {
+  return s.retired + s.last - s.rebase;
+}
+
+function contributionCount(s: Series): number {
+  return s.retiredCount + s.lastCount - s.rebaseCount;
 }
 
 export interface TokenBucket {
@@ -252,7 +284,18 @@ export class OtelRollup {
    * dropping it outright would let a later export for the same key start
    * from zero and have its full cumulative value added again by `total()`.
    */
-  private readonly retiredTotals = new Map<string, { value: number; count: number }>();
+  /**
+   * History sealed out of `folded` under `MAX_FOLDED`, aggregated by metric and
+   * attributes so it still answers queries, plus the high-water mark each
+   * sealed key had reached.
+   *
+   * Both halves are needed. Without the aggregate the sealed tokens vanish from
+   * `total()` and the feed undercounts; without the per-key mark a later export
+   * for that key — cumulative, so it still carries that history — would be
+   * added on top of the aggregate and counted twice.
+   */
+  private readonly sealed = new Map<string, Series>();
+  private readonly sealedMarks = new Map<string, { value: number; count: number }>();
   private readonly events: LogEvent[] = [];
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
@@ -370,21 +413,15 @@ export class OtelRollup {
         if (this.series.size >= MAX_SERIES) {
           this.evictOldest();
         }
-        // A key folded out under MAX_FOLDED still has its high-water mark
-        // banked in `retiredTotals`; resume from that instead of zero so its
-        // history is not counted a second time once the live value grows
-        // past it.
-        const highWater = this.retiredTotals.get(key);
-        this.retiredTotals.delete(key);
-        s = {
-          metric,
-          attributes,
-          last: 0,
-          retired: highWater?.value ?? 0,
-          lastCount: 0,
-          retiredCount: highWater?.count ?? 0,
-          updatedAtMs: atMs
-        };
+        s = newSeries(metric, attributes, atMs);
+        // This key's history is already counted in the sealed aggregate. The
+        // incoming value is cumulative and still carries it, so discount that
+        // much here — otherwise it would be counted in both places.
+        const mark = this.sealedMarks.get(key);
+        if (mark) {
+          s.rebase = mark.value;
+          s.rebaseCount = mark.count;
+        }
       }
       this.series.set(key, s);
     }
@@ -442,27 +479,53 @@ export class OtelRollup {
     this.series.delete(oldestKey);
 
     if (this.folded.size > MAX_FOLDED) {
-      // Losing full histogram detail is the lesser evil, but the banked
-      // total must survive: keeping it in `retiredTotals` (a plain number
-      // pair, not the whole series) is cheap enough to do indefinitely and
-      // is what stops a reappearing series from being counted twice.
       const first = this.folded.keys().next();
       if (!first.done) {
-        const dropped = this.folded.get(first.value)!;
-        const existing = this.retiredTotals.get(first.value);
-        this.retiredTotals.set(first.value, {
-          value: (existing?.value ?? 0) + dropped.retired + dropped.last,
-          count: (existing?.count ?? 0) + dropped.retiredCount + dropped.lastCount
-        });
+        this.seal(first.value, this.folded.get(first.value)!);
         this.folded.delete(first.value);
       }
     }
   }
 
-  /** Live and folded series together. Every query must read both. */
+  /**
+   * Moves a folded series into the sealed aggregate and records how far it had
+   * got, so the same key can resume later without being counted twice.
+   *
+   * The aggregate is what keeps the tokens visible to queries; the mark is what
+   * lets a returning series discount the portion already represented there.
+   * Dropping either one is a bug — one undercounts, the other overcharges.
+   */
+  private seal(key: string, s: Series): void {
+    const value = contribution(s);
+    const count = contributionCount(s);
+    const aggKey = `${s.metric}\u0000${attrKey(s.attributes)}`;
+    const agg = this.sealed.get(aggKey);
+    if (agg) {
+      agg.retired += value;
+      agg.retiredCount += count;
+      agg.retiredCounts = addCounts(agg.retiredCounts, s.counts);
+    } else {
+      const fresh = newSeries(s.metric, s.attributes, s.updatedAtMs);
+      fresh.retired = value;
+      fresh.retiredCount = count;
+      fresh.boundaries = s.boundaries;
+      fresh.retiredCounts = addCounts(s.retiredCounts ? s.retiredCounts.slice() : undefined, s.counts);
+      fresh.counts = fresh.retiredCounts ? new Array(fresh.retiredCounts.length).fill(0) : undefined;
+      this.sealed.set(aggKey, fresh);
+    }
+
+    const mark = this.sealedMarks.get(key);
+    this.sealedMarks.set(key, {
+      value: (mark?.value ?? 0) + value,
+      count: (mark?.count ?? 0) + count
+    });
+  }
+
+  /** Live, folded and sealed series together. Every query must read all three. */
   private *allSeries(): Generator<Series> {
     yield* this.series.values();
     yield* this.folded.values();
+    yield* this.sealed.values();
   }
 
   // ------------------------------------------------------------- queries ----
@@ -474,7 +537,7 @@ export class OtelRollup {
       if (s.metric !== metric || !matches(s.attributes, where)) {
         continue;
       }
-      sum += s.retired + s.last;
+      sum += contribution(s);
     }
     return sum;
   }
@@ -486,7 +549,7 @@ export class OtelRollup {
       if (s.metric !== metric || !matches(s.attributes, where)) {
         continue;
       }
-      count += s.retiredCount + s.lastCount;
+      count += contributionCount(s);
     }
     return count;
   }
@@ -555,7 +618,7 @@ export class OtelRollup {
         continue;
       }
       const key = String(s.attributes[attribute] ?? 'unknown');
-      out.set(key, (out.get(key) ?? 0) + s.retired + s.last);
+      out.set(key, (out.get(key) ?? 0) + contribution(s));
     }
     return out;
   }
@@ -594,7 +657,7 @@ export class OtelRollup {
       const model = String(s.attributes['gen_ai.request.model'] ?? s.attributes['gen_ai.response.model'] ?? 'unknown');
       const type = String(s.attributes['gen_ai.token.type'] ?? '');
       const entry = byModel.get(model) ?? { input: 0, output: 0 };
-      const value = s.retired + s.last;
+      const value = contribution(s);
       if (type === 'output') {
         entry.output += value;
       } else {

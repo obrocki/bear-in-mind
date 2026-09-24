@@ -334,6 +334,11 @@ export class OtelWatcher implements vscode.Disposable {
     // path does: treat it as history to adopt, not usage already charged.
     if (stat.size < this.state.offset) {
       this.state = { path: file, offset: 0, size: 0, input: 0, output: 0, seeded: false };
+      // The rollup has to be replaced too. It still holds the old file's
+      // cumulative series, so the new file's lower counters would read as a
+      // counter restart and its history would be banked and added all over
+      // again, inflating both the dashboard and every later meter delta.
+      this._rollup = new OtelRollup();
       this.persist(true);
     }
 
@@ -572,10 +577,17 @@ export class OtelWatcher implements vscode.Disposable {
 
     // First pass after an install adopts whatever the feed already holds as
     // history, exactly as the transcript watcher does with its back catalogue.
+    //
+    // "First pass" means the whole backlog, not the first window. The reader
+    // catches up 8 MiB at a time, so declaring the baseline early would leave
+    // later windows — still older cumulative snapshots — to be charged as fresh
+    // burn, melting the berg on install.
     if (!this.state.seeded) {
-      this.state.seeded = true;
       this.state.input = totals.input;
       this.state.output = totals.output;
+      if (this.state.offset >= this.state.size) {
+        this.state.seeded = true;
+      }
       this.persist(true);
       return;
     }
