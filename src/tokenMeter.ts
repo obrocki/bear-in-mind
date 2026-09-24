@@ -13,6 +13,14 @@ const LEGACY_V1 = 'iceberg.usage.v1';
  */
 const CONTEXT_STALE_MS = 30 * 60 * 1000;
 
+/**
+ * How recently the transcripts must have reported for their ledger to be
+ * evidence that they also saw the request telemetry is now reporting.
+ *
+ * Comfortably more than one export interval, far less than a working session.
+ */
+const OVERLAP_WINDOW_MS = 5 * 60 * 1000;
+
 /** Which watcher the meter is currently taking its numbers from. */
 export type UsageSource = 'otel' | 'transcripts';
 
@@ -116,6 +124,8 @@ export class TokenMeter implements vscode.Disposable {
   private demo = false;
   private lastSource: UsageSource = 'transcripts';
   private lastBasis: MeltBasis = 'budget';
+  /** When the transcripts last reported, as the overlap signal for handover. */
+  private lastTranscriptMs = 0;
   private context: ContextWindow | undefined;
   private readonly subscriptions: vscode.Disposable[] = [];
 
@@ -329,6 +339,12 @@ export class TokenMeter implements vscode.Disposable {
       this.state.credits += c;
     }
 
+    if (i > 0 || o > 0) {
+      if (from === 'transcripts') {
+        this.lastTranscriptMs = Date.now();
+      }
+    }
+
     let absorbed = false;
     if (from === 'otel' && !this.state.promoted) {
       // Make the two commensurate. Telemetry starts recording when it is
@@ -337,12 +353,19 @@ export class TokenMeter implements vscode.Disposable {
       this.state.promoted = true;
       // This first delta describes traffic the transcripts have already
       // counted — telemetry lags them by an export interval — so it is already
-      // inside the figure just carried over. Adding it again would bill the
-      // same request twice. Two exceptions: the transcripts having seen nothing
-      // at all, and the transcript watcher being switched off, in which case
-      // their ledger holds only history and cannot contain this request.
-      absorbed =
-        tokens(this.state.transcripts) > 0 && this.config.get<boolean>('trackCopilotChat', true);
+      // inside the figure just carried over, and adding it again would bill the
+      // same request twice.
+      //
+      // That only holds while the transcripts are actually reporting. A ledger
+      // with history in it proves nothing: with the watcher disabled, or the
+      // feed newly created long after the last chat request, the transcripts
+      // cannot have seen *this* request and absorbing it would lose real usage.
+      // So the test is recent overlap, not a non-zero total.
+      const overlapping =
+        this.config.get<boolean>('trackCopilotChat', true) &&
+        this.lastTranscriptMs > 0 &&
+        Date.now() - this.lastTranscriptMs <= OVERLAP_WINDOW_MS;
+      absorbed = overlapping && tokens(this.state.transcripts) > 0;
       this.state.otel = { ...this.state.transcripts };
       this.state.sinceHandover = { otel: 0, transcripts: 0 };
     }

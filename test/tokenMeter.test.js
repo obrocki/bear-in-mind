@@ -161,6 +161,32 @@ describe('charging one stream of traffic', () => {
     settings({});
   });
 
+  it('charges the first telemetry export when the transcripts are not overlapping', () => {
+    // Historical transcript usage plus a feed that only starts producing later:
+    // the transcripts cannot have seen this request, so absorbing it would lose
+    // real usage. Only recent transcript activity is evidence of overlap.
+    const mem = memento();
+    mem.store.set('iceberg.usage.v3', {
+      otel: { input: 0, output: 0, requests: 0 },
+      transcripts: { input: 1000, output: 0, requests: 3 },
+      promoted: false,
+      manual: { input: 0, output: 0, requests: 0 },
+      credits: 0,
+      since: 1,
+      sinceHandover: { otel: 0, transcripts: 0 }
+    });
+    const m = new TokenMeter(mem);
+    m.observe('otel', 500, 0);
+    assert.equal(m.snapshot().total, 1500, 'a genuinely new request must be charged');
+  });
+
+  it('still absorbs when the transcripts just reported the same request', () => {
+    const { meter: m } = meter();
+    m.observe('transcripts', 3000, 500);
+    m.observe('otel', 3000, 500);
+    assert.equal(m.snapshot().total, 3500, 'one request, one charge');
+  });
+
   it('survives a restart mid-handover', () => {
     const mem = memento();
     const a = new TokenMeter(mem);
@@ -257,9 +283,15 @@ describe('migration', () => {
     assert.equal(s.total, 1_105_000);
     assert.equal(s.credits, 12);
 
-    // Telemetry connecting must not double the carried figure.
+    // Telemetry connecting must not re-charge the carried history...
     m.observe('otel', 1000, 0);
-    assert.equal(m.snapshot().total, 1_105_000, 'the first telemetry delta re-states history');
+    assert.equal(
+      m.snapshot().total,
+      1_106_000,
+      'with no recent transcript activity there is no evidence of overlap, so the delta is charged'
+    );
+    // ...and the carried figure itself is still intact underneath it.
+    assert.ok(m.snapshot().total > 1_105_000);
   });
 
   it('carries a v1 meter forward', () => {

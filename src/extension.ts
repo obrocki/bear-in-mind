@@ -384,7 +384,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  copilot otel        ${feed.copilotOtelEnabled ? 'enabled' : 'disabled'}`);
   output.appendLine(`  file feed           ${feed.jsonlPath ?? '(not configured)'}`);
   output.appendLine(`  trace store         ${feed.sqlitePath ?? '(not found)'}`);
-  output.appendLine(`  otlp endpoint       ${feed.otlpEndpoint ?? '(none)'}`);
+  output.appendLine(`  otlp endpoint       ${redactUrl(feed.otlpEndpoint)}`);
   output.appendLine(
     `  records             ${feed.records.metrics} metric exports · ${feed.records.logs} events · ` +
       `${feed.records.spans} spans skipped · ${feed.records.unknown} unknown · ${feed.records.malformed} malformed`
@@ -407,6 +407,28 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   }
   output.appendLine('───────────────────────────────────────────────────────');
   output.show(true);
+}
+
+/**
+ * Strips anything credential-shaped out of a URL before it is logged.
+ *
+ * OTLP endpoints routinely carry tokens in userinfo or a query string, and the
+ * output channel is visible in the UI and kept by the host. The host and path
+ * are what make the diagnostics useful; the secrets are not.
+ */
+function redactUrl(raw: string | undefined): string {
+  if (!raw) {
+    return '(none)';
+  }
+  try {
+    const url = new URL(raw);
+    const credentials = url.username || url.password ? '<redacted>@' : '';
+    const query = url.search ? '?<redacted>' : '';
+    return `${url.protocol}//${credentials}${url.host}${url.pathname}${query}`;
+  } catch {
+    // Not a URL we can take apart, so say nothing about its contents.
+    return '(unparseable, withheld)';
+  }
 }
 
 /** The view and command ids an extension claims, read from its manifest. */

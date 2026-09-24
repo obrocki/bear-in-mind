@@ -11,6 +11,8 @@ const STATE_KEY = 'iceberg.otelWatch.v1';
 const MAX_FILE_BYTES = 256 * 1024 * 1024;
 /** Per-poll read window, so a large backlog is caught up over several passes. */
 const MAX_READ_BYTES = 8 * 1024 * 1024;
+/** Bytes of the feed's head used as its identity fingerprint. */
+const MAX_SIGNATURE_BYTES = 512;
 /** How often the feed path and SQLite location are re-resolved. */
 const PATH_REFRESH_MS = 30_000;
 /** Spans older than this are ignored, matching the store's own 7-day retention. */
@@ -112,6 +114,14 @@ export class OtelWatcher implements vscode.Disposable {
   private timer: NodeJS.Timeout | undefined;
   private saveTimer: NodeJS.Timeout | undefined;
   private scanning = false;
+  /**
+   * Set when a configured feed was not on disk during a scan.
+   *
+   * A feed that appears afterwards is not a backlog to adopt as history —
+   * everything written to it happened while we were watching, so it is charged
+   * rather than baselined away.
+   */
+  private sawFeedMissing = false;
   private disposed = false;
   private notes: string[] = [];
 
@@ -307,6 +317,10 @@ export class OtelWatcher implements vscode.Disposable {
     try {
       stat = fs.statSync(file);
     } catch {
+      // Configured but not there yet — Copilot Chat creates it on its next
+      // start. Remember that, so when it does appear its contents are charged
+      // instead of being mistaken for history that predates us.
+      this.sawFeedMissing = true;
       return;
     }
     if (!stat.isFile()) {
@@ -318,30 +332,47 @@ export class OtelWatcher implements vscode.Disposable {
     // birth time, so neither is enough on its own — the reader would resume
     // mid-record in a stream it has never seen. Fingerprinting the head catches
     // all three cases: replaced, rotated, or rewritten.
-    const signature = headSignature(file, stat.size);
-    // The shrink test still earns its place: a rewrite that happens to leave
-    // the first 512 bytes identical has the same signature, and without this
-    // the reader would sit past EOF waiting for the new file to grow back.
-    if (
-      this.state.path !== file ||
-      this.state.head !== signature ||
-      stat.size < this.state.offset
-    ) {
+    //
+    // The fingerprint has to stay stable while the file grows. Hashing "the
+    // first up-to-512 bytes" does not: every append changes the hash until the
+    // file reaches 512 bytes, which would reset the rollup and re-baseline on
+    // every poll and quietly treat all of that early usage as history. So the
+    // stored prefix length travels with the hash, and a later scan re-hashes
+    // exactly that many bytes to compare like with like.
+    const previous = parseSignature(this.state.head);
+    let replaced = this.state.path !== file;
+    if (!replaced && previous) {
+      replaced =
+        stat.size < previous.length || hashPrefix(file, previous.length) !== previous.hash;
+    }
+
+    if (replaced || stat.size < this.state.offset) {
       this.state = {
         path: file,
-        head: signature,
+        head: signatureFor(file, stat.size),
         offset: 0,
         size: 0,
         input: 0,
         output: 0,
-        seeded: false
+        // A feed that did not exist when we started watching is not a backlog:
+        // everything in it happened on our watch and has to be charged.
+        seeded: this.sawFeedMissing
       };
       // The rollup has to go too. It still holds the previous stream's series,
       // events and record counts, so keeping it would blend two unrelated feeds
       // into one dashboard, and the new file's lower counters would read as a
       // counter restart and have the old history banked and added again.
       this._rollup = new OtelRollup();
+      this.sawFeedMissing = false;
       this.persist(true);
+    } else if (!previous || previous.length < MAX_SIGNATURE_BYTES) {
+      // Grown past what we last fingerprinted — take a longer one now that
+      // there are more bytes to be sure of.
+      const upgraded = signatureFor(file, stat.size);
+      if (upgraded !== this.state.head) {
+        this.state.head = upgraded;
+        this.persist();
+      }
     }
     if (stat.size > MAX_FILE_BYTES) {
       this.note(
@@ -715,13 +746,15 @@ function numeric(value: unknown): number {
 
 /**
  * Cheap fingerprint of a file's opening bytes, used to tell one stream from
- * another. FNV-1a over at most 512 bytes: enough to notice a rewrite, small
- * enough to run on every poll.
+ * another. FNV-1a, small enough to run on every poll.
+ *
+ * The prefix length is stored alongside the hash so a later scan can re-hash
+ * exactly the same number of bytes. Comparing hashes taken over different
+ * lengths would report a new stream on every append.
  */
-function headSignature(file: string, size: number): string {
-  const length = Math.min(512, size);
+function hashPrefix(file: string, length: number): string {
   if (length <= 0) {
-    return '0:0';
+    return '0';
   }
   try {
     const fd = fs.openSync(file, 'r');
@@ -733,13 +766,30 @@ function headSignature(file: string, size: number): string {
         hash ^= byte;
         hash = Math.imul(hash, 0x01000193) >>> 0;
       }
-      return `${length}:${hash.toString(16)}`;
+      return hash.toString(16);
     } finally {
       fs.closeSync(fd);
     }
   } catch {
     return '';
   }
+}
+
+function signatureFor(file: string, size: number): string {
+  const length = Math.min(MAX_SIGNATURE_BYTES, Math.max(0, size));
+  return `${length}:${hashPrefix(file, length)}`;
+}
+
+function parseSignature(raw: string): { length: number; hash: string } | undefined {
+  const at = raw.indexOf(':');
+  if (at <= 0) {
+    return undefined;
+  }
+  const length = Number(raw.slice(0, at));
+  if (!Number.isFinite(length) || length <= 0) {
+    return undefined;
+  }
+  return { length, hash: raw.slice(at + 1) };
 }
 
 function fileExists(target: string): boolean {
