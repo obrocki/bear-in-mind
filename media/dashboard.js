@@ -286,9 +286,9 @@
     return gauge;
   }
 
-  function renderCost(cost, session) {
+  function renderCost(cost, session, period) {
     const node = section('cost', 'Cost', 'Local usage · not a bill');
-    node.append(renderSession(session));
+    node.append(renderSession(session, period));
     node.append(el('p', 'headline-note',
       'Local usage across sessions and workspaces, not the selected chat.'));
     if (cost.legacyTokens > 0) {
@@ -380,18 +380,71 @@
     return node;
   }
 
-  function renderSession(session) {
+  /** Names beat GUIDs in a list; the ID stays available as the subtitle. */
+  function sessionLabel(session) {
+    return session.name || shortSessionId(session.sessionId);
+  }
+
+  function shortSessionId(sessionId) {
+    return sessionId.length > 12 ? sessionId.slice(0, 8) + '…' : sessionId;
+  }
+
+  /** The fallback when nothing is pinned and nothing has been observed. */
+  function renderPeriod(period) {
+    const block = el('div', 'gauge');
+    block.append(el('h3', null, 'This billing period'));
+    if (!period || period.sessions === 0) {
+      block.append(el('p', 'missing',
+        'No session metadata yet. Session cost and account allowance are not interchangeable.'));
+      return block;
+    }
+    const creditLabel = period.traceCreditSessions > 0
+      ? (period.traceCreditSessions === period.creditSessions
+        ? 'Model-call credits · retained traces'
+        : 'Reported credits · transcripts / trace fallback')
+      : 'Session Cost · transcripts';
+    block.append(stats([
+      { label: creditLabel, value: period.creditSessions > 0 ? credits(period.credits) : '—', qualifier: 'credits' },
+      { label: 'Sessions observed', value: count(period.sessions) }
+    ]));
+    if (period.tracedSessions > 0) {
+      block.append(stats([
+        { label: 'Input · retained traces', value: count(period.inputTokens) },
+        { label: 'Output · retained traces', value: count(period.outputTokens) }
+      ]));
+    }
+    block.append(el('p', 'viz-caption',
+      'Session totals for sessions observed since ' + new Date(period.sinceMs).toLocaleDateString() + '. ' +
+      count(period.creditSessions) + ' / ' + count(period.sessions) +
+      ' sessions reported credits, so this is observed usage, not an account balance or an invoice.'));
+    if (period.traceCreditSessions > 0) {
+      block.append(el('p', 'viz-caption',
+        'Retained trace credits used for ' + count(period.traceCreditSessions) + ' / ' + count(period.sessions) +
+        ' sessions because transcript credits are unavailable. ' +
+        'Transcript and trace credits are never added for the same session.'));
+    }
+    block.append(el('p', 'viz-caption',
+      count(period.tracedSessions) + ' / ' + count(period.sessions) + ' sessions have retained traces. ' +
+      'Trace history is limited to seven days' +
+      (period.traceSinceMs !== undefined ? ' (since ' + new Date(period.traceSinceMs).toLocaleDateString() + ')' : '') +
+      '; coverage may be incomplete and is not a month-to-date total.'));
+    return block;
+  }
+
+  function renderSession(session, period) {
     const block = el('div', 'gauge');
     block.append(el('h3', null, 'Compare a Copilot session'));
     const button = el('button', 'secondary', 'Select session…');
     button.addEventListener('click', () => post('session'));
     block.append(button);
     if (!session) {
-      block.append(el('p', 'missing', 'No session metadata yet. Session cost and account allowance are not interchangeable.'));
+      block.append(el('p', 'missing', 'No session selected or observed; showing the period roll-up instead.'));
+      block.append(renderPeriod(period));
       return block;
     }
     block.append(el('p', 'headline-note',
-      (session.pinned ? 'Pinned: ' : 'Latest observed: ') + session.sessionId +
+      (session.pinned ? 'Pinned: ' : 'Latest observed: ') + sessionLabel(session) +
+      (session.name ? ' (' + shortSessionId(session.sessionId) + ')' : '') +
       '. Not automatically the active VS Code chat.'));
     const transcript = session.transcript;
     const trace = session.trace;
@@ -778,7 +831,7 @@
   function apply(snapshot) {
     renderBanner(snapshot.feed);
     root.replaceChildren(
-      renderCost(snapshot.cost, snapshot.session),
+      renderCost(snapshot.cost, snapshot.session, snapshot.period),
       renderSpeed(snapshot.speed),
       renderQuality(snapshot.quality, snapshot.feed)
     );

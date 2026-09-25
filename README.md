@@ -66,9 +66,19 @@ These readings have different units and scopes, even when viewed during one chat
 | Ice without a reported limit | Unscaled unless you explicitly set a personal visual target. No environmental or billing inference. |
 
 Use **Iceberg: Select Comparison Session** (or **Select session…** in the
-dashboard) to pin the session ID you are examining in Copilot. The default is
-the latest observed session, **not automatically the active chat**. A missing
-pinned session stays missing rather than switching to somebody else's reading.
+dashboard) to pin the session you are examining in Copilot. Sessions are listed
+by the name you gave them in VS Code, with the session ID as searchable detail;
+unnamed sessions fall back to a shortened ID. The default is the latest observed
+session, **not automatically the active chat**. A missing pinned session stays
+missing rather than switching to somebody else's reading. When no session is
+selected or observed, the dashboard falls back to a billing-period roll-up:
+session totals for sessions seen since the 1st. Transcript credits take precedence;
+when they are missing, retained trace credits are used and labeled as a fallback,
+never added to transcript credits for the same session. Trace tokens and fallback
+credits cover **at most seven days of retained history, not a month-to-date total**.
+The dashboard shows the trace cutoff and observed session coverage; even retained
+history may be incomplete. These are local observations, **not an account balance
+or invoice**.
 Export delays, retained history, subagent attribution and provider coverage can
 still cause differences. No token-to-credit price estimate is used.
 

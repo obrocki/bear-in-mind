@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { it } = require('node:test');
 const build = process.env.BEAR_TEST_BUILD;
 const { OtelRollup } = require(path.join(build, 'otelParse.js'));
-const { buildSnapshot, emptySpanDigest, computeDrift } = require(path.join(build, 'otelSummary.js'));
+const { buildSnapshot, buildPeriod, emptySpanDigest, computeDrift, periodStart, sessionLabel } = require(path.join(build, 'otelSummary.js'));
 const renderer = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard.js'), 'utf8');
 
 class Element {
@@ -47,7 +47,7 @@ function dashboard() {
   return {
     messages,
     nodes,
-    render(feed, rollup = new OtelRollup(), drift = computeDrift(0, 0), usage = {}) {
+    render(feed, rollup = new OtelRollup(), drift = computeDrift(0, 0), usage = {}, snapshotOverrides = {}) {
       const snapshot = buildSnapshot({
         rollup, spans: emptySpanDigest(), bearName: 'Nanuq', budget: 5000000, health: 1,
         totals: { input: 100, output: 10, credits: 0 }, source: 'otel', basis: 'budget',
@@ -58,7 +58,7 @@ function dashboard() {
           notes: [], ...feed
         }
       });
-      receive({ data: { type: 'snapshot', snapshot } });
+      receive({ data: { type: 'snapshot', snapshot: { ...snapshot, ...snapshotOverrides } } });
       return nodes.sections.children.find((section) => section.dataset.key === 'quality');
     }
   };
@@ -185,6 +185,146 @@ it('shows the chosen session cost separately from trace credits and account allo
   assert.match(text, /Model-call credits · traces 12\.5/);
   assert.match(text, /1 \/ 2 model calls reported credits/);
   assert.match(text, /never added/);
+});
+
+it('names the session when the user named it and keeps the ID visible', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    selectedSessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4',
+    transcripts: [{
+      sessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4', title: 'Rate limiter rewrite',
+      updatedAt: 1000, credits: 12
+    }],
+    spans: emptySpanDigest()
+  });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /Pinned: Rate limiter rewrite \(3f7c9b21…\)/);
+  assert.equal(sessionLabel({ sessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4' }), '3f7c9b21…');
+  assert.equal(sessionLabel({ sessionId: 'short', name: 'Named' }), 'Named');
+});
+
+it('falls back to the billing-period roll-up when no session is selected or observed', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans: emptySpanDigest(), transcripts: [] });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /showing the period roll-up instead/);
+  assert.match(text, /No session metadata yet/);
+});
+
+function periodInput(now) {
+  const spans = emptySpanDigest();
+  spans.sinceMs = now - 7 * 24 * 60 * 60 * 1000;
+  spans.sessions = [{
+    sessionId: 'traced', endedAt: now - 1000, durationMs: 10, llmCalls: 1, toolCalls: 0,
+    inputTokens: 90000, outputTokens: 1000, credits: 4
+  }];
+  return {
+    spans,
+    transcripts: [
+      { sessionId: 'traced', updatedAt: now - 1000, credits: 10 },
+      { sessionId: 'early-month', updatedAt: periodStart(now) + 1000, credits: 6 },
+      { sessionId: 'last-month', updatedAt: periodStart(now) - 1, credits: 99 },
+      { sessionId: 'no-credits', updatedAt: now }
+    ]
+  };
+}
+
+it('rolls session totals up without disguising the shorter retained trace window', () => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  const input = periodInput(now);
+  const period = buildPeriod(input, now);
+  assert.equal(period.sessions, 3);
+  assert.equal(period.credits, 16);
+  assert.equal(period.creditSessions, 2);
+  assert.equal(period.traceCreditSessions, 0);
+  assert.equal(period.inputTokens, 90000);
+  assert.equal(period.outputTokens, 1000);
+  assert.equal(period.tracedSessions, 1);
+  assert.equal(period.sinceMs, periodStart(now));
+  assert.equal(period.traceSinceMs, input.spans.sinceMs);
+  assert.ok(period.traceSinceMs > period.sinceMs);
+});
+
+it('renders populated period totals, source labels and partial credit and trace coverage', (t) => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  t.mock.method(Date, 'now', () => now);
+  const period = buildPeriod(periodInput(now));
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {}, { period });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /This billing period/);
+  assert.match(text, /Session Cost · transcripts 16\s+credits/);
+  assert.match(text, /Sessions observed 3/);
+  assert.match(text, /Input · retained traces 90,000/);
+  assert.match(text, /Output · retained traces 1,000/);
+  assert.match(text, /2 \/ 3 sessions reported credits/);
+  assert.match(text, /1 \/ 3 sessions have retained traces/);
+  assert.ok(text.includes('sessions observed since ' + new Date(period.sinceMs).toLocaleDateString()));
+  assert.ok(text.includes('seven days (since ' + new Date(period.traceSinceMs).toLocaleDateString() + ')'));
+  assert.match(text, /coverage may be incomplete and is not a month-to-date total/);
+  assert.match(text, /not an account balance or an invoice/);
+  assert.doesNotMatch(text, /No session metadata yet|trace fallback/);
+});
+
+it('labels mixed credit totals as including a retained trace fallback', () => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  const input = periodInput(now);
+  input.spans.sessions.push({
+    sessionId: 'trace-only', endedAt: now, inputTokens: 2000, outputTokens: 50, credits: 2.5
+  });
+  const period = buildPeriod(input, now);
+  assert.equal(period.credits, 18.5);
+  assert.equal(period.creditSessions, 3);
+  assert.equal(period.traceCreditSessions, 1);
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {}, { period });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /Reported credits · transcripts \/ trace fallback 18\.5/);
+  assert.match(text, /3 \/ 4 sessions reported credits/);
+  assert.match(text, /2 \/ 4 sessions have retained traces/);
+  assert.match(text, /Retained trace credits used for 1 \/ 4 sessions because transcript credits are unavailable/);
+  assert.match(text, /never added for the same session/);
+  assert.doesNotMatch(text, /Session Cost · transcripts/);
+});
+
+it('labels trace-only period credits without attributing them to transcripts', () => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  const period = buildPeriod({ spans: periodInput(now).spans }, now);
+  assert.equal(period.traceCreditSessions, 1);
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {}, { period });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /Model-call credits · retained traces 4\s+credits/);
+  assert.match(text, /1 \/ 1 sessions reported credits/);
+  assert.doesNotMatch(text, /Session Cost · transcripts/);
+});
+
+it('keeps missing period credits unknown and reported zero credits visible without traces', () => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  for (const credits of [undefined, 0]) {
+    const period = buildPeriod({
+      spans: emptySpanDigest(),
+      transcripts: [{ sessionId: 'untraced', updatedAt: now, credits }]
+    }, now);
+    const d = dashboard();
+    d.render({}, new OtelRollup(), undefined, {}, { period });
+    const text = d.nodes.sections.textContent;
+    assert.ok(text.includes('Session Cost · transcripts ' + (credits === undefined ? '—' : '0')));
+    assert.ok(text.includes((credits === undefined ? '0' : '1') + ' / 1 sessions reported credits'));
+    assert.match(text, /0 \/ 1 sessions have retained traces/);
+    assert.match(text, /Trace history is limited to seven days/);
+    assert.doesNotMatch(text, /Input · retained traces|Output · retained traces|Invalid Date|trace fallback/);
+  }
+});
+
+it('does not replace reported zero transcript credits with a trace fallback', () => {
+  const now = new Date(2026, 8, 25, 12).getTime();
+  const input = periodInput(now);
+  input.transcripts = [{ sessionId: 'traced', updatedAt: now, credits: 0 }];
+  const period = buildPeriod(input, now);
+  assert.equal(period.credits, 0);
+  assert.equal(period.creditSessions, 1);
+  assert.equal(period.traceCreditSessions, 0);
 });
 
 it('identifies speed as aggregate telemetry rather than the selected session', () => {

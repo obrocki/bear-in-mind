@@ -57,6 +57,8 @@ export interface SpanSession {
 /** Aggregates derived from the `spans` table, when the SQLite source is live. */
 export interface SpanDigest {
   available: boolean;
+  /** Retention cutoff at the watcher's last scan, not proof of complete coverage. */
+  sinceMs?: number;
   sessions: SpanSession[];
   /** Exact durations in ms, collected per operation. */
   agentDurationsMs: number[];
@@ -220,14 +222,87 @@ export interface DashboardSnapshot {
   speed: SpeedSection;
   quality: QualitySection;
   session?: SessionComparison;
+  /** Fallback headline when no single session is pinned or observed. */
+  period: PeriodRollup;
 }
 
 export interface SessionComparison {
   sessionId: string;
+  /** The name the user gave the session, when there is one. */
+  name?: string;
   pinned: boolean;
   updatedAt: number;
   transcript?: ChatSessionUsage;
   trace?: SpanSession;
+}
+
+/**
+ * Session totals for sessions observed since the billing period started.
+ * Transcript credits take precedence over retained trace credits per session.
+ * Trace details cover only retained history, not the full billing period.
+ */
+export interface PeriodRollup {
+  sinceMs: number;
+  sessions: number;
+  credits: number;
+  /** Sessions that actually reported credits, so partial coverage is visible. */
+  creditSessions: number;
+  /** Sessions whose credits came from traces because transcript credits were missing. */
+  traceCreditSessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  tracedSessions: number;
+  traceSinceMs?: number;
+}
+
+/** Copilot's allowance resets monthly, so the period starts on the 1st. */
+export function periodStart(nowMs: number): number {
+  const now = new Date(nowMs);
+  return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+}
+
+/** Rolls every observed session in the current period into one comparison. */
+export function buildPeriod(
+  input: Pick<SummaryInput, 'transcripts' | 'spans'>, nowMs: number = Date.now()
+): PeriodRollup {
+  const sinceMs = periodStart(nowMs);
+  const sessions = sessionComparisons(input.transcripts ?? [], input.spans.sessions)
+    .filter((session) => session.updatedAt >= sinceMs);
+  let credits = 0;
+  let creditSessions = 0;
+  let traceCreditSessions = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let tracedSessions = 0;
+  for (const session of sessions) {
+    const reported = session.transcript?.credits ?? session.trace?.credits;
+    if (reported !== undefined) {
+      credits += reported;
+      creditSessions++;
+      if (session.transcript?.credits === undefined) {
+        traceCreditSessions++;
+      }
+    }
+    if (session.trace) {
+      tracedSessions++;
+      inputTokens += session.trace.inputTokens;
+      outputTokens += session.trace.outputTokens;
+    }
+  }
+  return {
+    sinceMs, sessions: sessions.length, credits, creditSessions, traceCreditSessions,
+    inputTokens, outputTokens, tracedSessions, traceSinceMs: input.spans.sinceMs
+  };
+}
+
+/** What to call a session in a list: its name when it has one, else its ID. */
+export function sessionLabel(session: Pick<SessionComparison, 'sessionId' | 'name'>): string {
+  return session.name ?? shortSessionId(session.sessionId);
+}
+
+/** IDs are GUIDs; the head is enough to recognise one without filling a line. */
+export function shortSessionId(sessionId: string): string {
+  return sessionId.length > 12 ? `${sessionId.slice(0, 8)}…` : sessionId;
 }
 
 export function sessionComparisons(
@@ -236,7 +311,8 @@ export function sessionComparisons(
   const sessions = new Map<string, SessionComparison>();
   for (const transcript of transcripts) {
     sessions.set(transcript.sessionId, {
-      sessionId: transcript.sessionId, pinned: false, updatedAt: transcript.updatedAt, transcript
+      sessionId: transcript.sessionId, name: transcript.title, pinned: false,
+      updatedAt: transcript.updatedAt, transcript
     });
   }
   for (const trace of spans) {
@@ -551,7 +627,8 @@ export function buildSnapshot(input: SummaryInput): DashboardSnapshot {
     cost: buildCost(input),
     speed: buildSpeed(input),
     quality: buildQuality(input),
-    session: selectedSession(input)
+    session: selectedSession(input),
+    period: buildPeriod(input)
   };
 }
 

@@ -30,6 +30,22 @@ it('replays context growth and compaction without banking snapshots as usage', (
   assert.equal(session.sessionId, 's');
 });
 
+it('carries the name the user gave the session and drops derived transcript titles', () => {
+  const state = replay([
+    { kind: 0, v: { sessionId: 's', customTitle: '  Rate limiter\n rewrite ', title: 'Fix the flaky login test', requests: [] } }
+  ]);
+  assert.equal(sessionUsage(state, 'fallback', 1).title, 'Rate limiter rewrite');
+  assert.doesNotMatch(JSON.stringify(state), /flaky login/);
+  applyLine(JSON.stringify({ kind: 1, k: ['customTitle'], v: 'Renamed' }), state);
+  assert.equal(sessionUsage(state, 'fallback', 1).title, 'Renamed');
+  applyLine(JSON.stringify({ kind: 3, k: ['customTitle'] }), state);
+  assert.equal(sessionUsage(state, 'fallback', 1).title, undefined);
+  applyLine(JSON.stringify({ kind: 1, k: ['customTitle'], v: 'x'.repeat(200) }), state);
+  assert.equal(sessionUsage(state, 'fallback', 1).title.length, 80);
+  applyLine(JSON.stringify({ kind: 1, k: ['customTitle'], v: 42 }), state);
+  assert.equal(sessionUsage(state, 'fallback', 1).title, undefined);
+});
+
 it('matches VS Code Session Cost including backend totals, missing and zero credits', () => {
   const state = replay([{ kind: 0, v: { requests: [
     { copilotCredits: 30, sessionCopilotCredits: 293.2 },

@@ -339,6 +339,7 @@ export class OtelWatcher implements vscode.Disposable {
         }
       }
       this.spans = digestSpans(spans.values());
+      this.spans.sinceMs = cutoff;
       this.emitSpanDelta(spans.values());
       this.emitDelta();
       this._onDidScan.fire();
