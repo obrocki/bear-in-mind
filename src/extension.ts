@@ -7,7 +7,7 @@ import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
-import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, type DashboardSnapshot, type SessionComparison } from './otelSummary';
+import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
@@ -177,14 +177,16 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       const choices = [
         { label: 'Latest observed session', description: 'Not automatically the active VS Code chat', sessionId: undefined },
         ...sessionComparisons(watcher.sessions, otel.spanDigest.sessions).map((session) => ({
-          label: session.sessionId,
+          label: sessionLabel(session),
           description: `${session.trace?.model ?? session.transcript?.model ?? 'unknown model'} · ${new Date(session.updatedAt).toLocaleString()}`,
+          detail: session.sessionId,
           sessionId: session.sessionId
         }))
       ];
       const choice = await vscode.window.showQuickPick(choices, {
         title: 'Session to compare with Copilot',
-        placeHolder: 'Pin a session ID, or follow the most recently observed session'
+        matchOnDetail: true,
+        placeHolder: 'Pick a session by name, or follow the most recently observed session'
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
@@ -407,7 +409,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  local budget        ${usage.total} counted / ${usage.budget} tokens (visual target only)`);
   output.appendLine(`  manual / legacy     ${usage.manualTokens} explicit / ${usage.legacyTokens} excluded old estimates`);
   if (session) {
-    output.appendLine(`  comparison session  ${session.sessionId} (${session.pinned ? 'pinned' : 'latest observed'}, not active-chat API)`);
+    output.appendLine(`  comparison session  ${session.name ? `${session.name} · ` : ''}${session.sessionId} (${session.pinned ? 'pinned' : 'latest observed'}, not active-chat API)`);
     output.appendLine(`  session cost        ${session.transcript?.credits ?? 'not reported'} transcript credits`);
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);

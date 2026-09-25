@@ -17,6 +17,8 @@ interface RequestUsage {
 
 export interface ChatSessionUsage {
   sessionId: string;
+  /** The name VS Code shows for the session, when the user gave it one. */
+  title?: string;
   updatedAt: number;
   requests: number;
   credits?: number;
@@ -27,6 +29,7 @@ export interface ChatSessionUsage {
 
 export interface ParserState {
   sessionId?: string;
+  title?: string;
   requests: RequestUsage[];
 }
 
@@ -54,6 +57,22 @@ function requestUsage(raw: unknown): RequestUsage {
   return result;
 }
 
+/**
+ * Only the name the user gave the session is projected. Titles VS Code derives
+ * from the first prompt are transcript content, so they are left behind with
+ * the rest of it.
+ */
+export function sessionTitle(raw: unknown): string | undefined {
+  if (typeof raw !== 'string' || raw.length > 512) {
+    return undefined;
+  }
+  const title = raw.replace(/\s+/g, ' ').trim();
+  if (!title) {
+    return undefined;
+  }
+  return title.length > 80 ? `${title.slice(0, 79)}…` : title;
+}
+
 /** Replay VS Code's mutation log, projecting only usage metadata. */
 export function applyLine(line: string, state: ParserState): boolean {
   if (!line.trim()) {
@@ -70,14 +89,18 @@ export function applyLine(line: string, state: ParserState): boolean {
   }
   const { kind, k, v, i } = raw as { kind?: number; k?: unknown; v?: unknown; i?: number };
   if (kind === 0) {
-    const doc = v as { sessionId?: unknown; requests?: unknown[] } | undefined;
+    const doc = v as { sessionId?: unknown; customTitle?: unknown; requests?: unknown[] } | undefined;
     state.sessionId = typeof doc?.sessionId === 'string' ? doc.sessionId : undefined;
+    state.title = sessionTitle(doc?.customTitle);
     state.requests = Array.isArray(doc?.requests) ? doc.requests.map(requestUsage) : [];
     return true;
   }
   const key = Array.isArray(k) ? k : [];
   if (key.length === 1 && key[0] === 'sessionId') {
     state.sessionId = kind === 3 ? undefined : typeof v === 'string' ? v : undefined;
+  }
+  if (key.length === 1 && key[0] === 'customTitle') {
+    state.title = kind === 3 ? undefined : sessionTitle(v);
   }
   if (key[0] !== 'requests') {
     return true;
@@ -129,7 +152,7 @@ export function sessionUsage(state: ParserState, fallbackId: string, updatedAt: 
   }
   const last = [...state.requests].reverse().find((r) => r.promptTokens !== undefined);
   return {
-    sessionId: state.sessionId ?? fallbackId, updatedAt,
+    sessionId: state.sessionId ?? fallbackId, title: state.title, updatedAt,
     requests: state.requests.length,
     credits: hasCredits ? Math.max(summed, reported) : undefined,
     creditRequests, model: last?.modelId, latestPromptTokens: last?.promptTokens

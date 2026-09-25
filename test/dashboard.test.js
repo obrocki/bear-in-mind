@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { it } = require('node:test');
 const build = process.env.BEAR_TEST_BUILD;
 const { OtelRollup } = require(path.join(build, 'otelParse.js'));
-const { buildSnapshot, emptySpanDigest, computeDrift } = require(path.join(build, 'otelSummary.js'));
+const { buildSnapshot, buildPeriod, emptySpanDigest, computeDrift, periodStart, sessionLabel } = require(path.join(build, 'otelSummary.js'));
 const renderer = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard.js'), 'utf8');
 
 class Element {
@@ -185,6 +185,53 @@ it('shows the chosen session cost separately from trace credits and account allo
   assert.match(text, /Model-call credits · traces 12\.5/);
   assert.match(text, /1 \/ 2 model calls reported credits/);
   assert.match(text, /never added/);
+});
+
+it('names the session when the user named it and keeps the ID visible', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    selectedSessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4',
+    transcripts: [{
+      sessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4', title: 'Rate limiter rewrite',
+      updatedAt: 1000, credits: 12
+    }],
+    spans: emptySpanDigest()
+  });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /Pinned: Rate limiter rewrite \(3f7c9b21…\)/);
+  assert.equal(sessionLabel({ sessionId: '3f7c9b21-5d44-4f2e-9a11-77c0d1f2e3b4' }), '3f7c9b21…');
+  assert.equal(sessionLabel({ sessionId: 'short', name: 'Named' }), 'Named');
+});
+
+it('falls back to the billing-period roll-up when no session is selected or observed', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans: emptySpanDigest(), transcripts: [] });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /showing the period roll-up instead/);
+  assert.match(text, /No session metadata yet/);
+});
+
+it('rolls observed credits and tokens up over the billing period', () => {
+  const now = Date.UTC(2026, 8, 25, 6, 0, 0);
+  const spans = emptySpanDigest();
+  spans.sessions = [{
+    sessionId: 'traced', endedAt: Date.UTC(2026, 8, 20), durationMs: 10, llmCalls: 1, toolCalls: 0,
+    inputTokens: 90000, outputTokens: 1000, credits: 4
+  }];
+  const period = buildPeriod({
+    spans,
+    transcripts: [
+      { sessionId: 'traced', updatedAt: Date.UTC(2026, 8, 20), credits: 10 },
+      { sessionId: 'last-month', updatedAt: Date.UTC(2026, 7, 20), credits: 99 },
+      { sessionId: 'no-credits', updatedAt: Date.UTC(2026, 8, 24) }
+    ]
+  }, now);
+  assert.equal(period.sessions, 2);
+  assert.equal(period.credits, 10);
+  assert.equal(period.creditSessions, 1);
+  assert.equal(period.inputTokens, 90000);
+  assert.equal(period.outputTokens, 1000);
+  assert.equal(period.sinceMs, periodStart(now));
 });
 
 it('identifies speed as aggregate telemetry rather than the selected session', () => {

@@ -1,5 +1,12 @@
 # Change Log
 
+## 0.6.1
+
+- Session selection now lists the name the user gave a chat session, with the
+  session ID as searchable detail, instead of leading with a GUID.
+- Added a billing-period roll-up (credits and traced tokens observed since the
+  1st) as the dashboard fallback when no session is selected or observed.
+
 ## 0.6.0
 
 - Removed the default 5M-token target: ice is unscaled without a reported prompt

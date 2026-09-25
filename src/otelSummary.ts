@@ -220,14 +220,79 @@ export interface DashboardSnapshot {
   speed: SpeedSection;
   quality: QualitySection;
   session?: SessionComparison;
+  /** Fallback headline when no single session is pinned or observed. */
+  period: PeriodRollup;
 }
 
 export interface SessionComparison {
   sessionId: string;
+  /** The name the user gave the session, when there is one. */
+  name?: string;
   pinned: boolean;
   updatedAt: number;
   transcript?: ChatSessionUsage;
   trace?: SpanSession;
+}
+
+/**
+ * Everything observed since the billing period started. Credits come from the
+ * transcripts (the same figure VS Code shows per session) and tokens from the
+ * traces; the two are never added together, and neither is an account balance.
+ */
+export interface PeriodRollup {
+  sinceMs: number;
+  sessions: number;
+  credits: number;
+  /** Sessions that actually reported credits, so partial coverage is visible. */
+  creditSessions: number;
+  inputTokens: number;
+  outputTokens: number;
+  tracedSessions: number;
+}
+
+/** Copilot's allowance resets monthly, so the period starts on the 1st. */
+export function periodStart(nowMs: number): number {
+  const now = new Date(nowMs);
+  return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+}
+
+/** Rolls every observed session in the current period into one comparison. */
+export function buildPeriod(
+  input: Pick<SummaryInput, 'transcripts' | 'spans'>, nowMs: number = Date.now()
+): PeriodRollup {
+  const sinceMs = periodStart(nowMs);
+  const sessions = sessionComparisons(input.transcripts ?? [], input.spans.sessions)
+    .filter((session) => session.updatedAt >= sinceMs);
+  let credits = 0;
+  let creditSessions = 0;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let tracedSessions = 0;
+  for (const session of sessions) {
+    const reported = session.transcript?.credits ?? session.trace?.credits;
+    if (reported !== undefined) {
+      credits += reported;
+      creditSessions++;
+    }
+    if (session.trace) {
+      tracedSessions++;
+      inputTokens += session.trace.inputTokens;
+      outputTokens += session.trace.outputTokens;
+    }
+  }
+  return {
+    sinceMs, sessions: sessions.length, credits, creditSessions, inputTokens, outputTokens, tracedSessions
+  };
+}
+
+/** What to call a session in a list: its name when it has one, else its ID. */
+export function sessionLabel(session: Pick<SessionComparison, 'sessionId' | 'name'>): string {
+  return session.name ?? shortSessionId(session.sessionId);
+}
+
+/** IDs are GUIDs; the head is enough to recognise one without filling a line. */
+export function shortSessionId(sessionId: string): string {
+  return sessionId.length > 12 ? `${sessionId.slice(0, 8)}…` : sessionId;
 }
 
 export function sessionComparisons(
@@ -236,7 +301,8 @@ export function sessionComparisons(
   const sessions = new Map<string, SessionComparison>();
   for (const transcript of transcripts) {
     sessions.set(transcript.sessionId, {
-      sessionId: transcript.sessionId, pinned: false, updatedAt: transcript.updatedAt, transcript
+      sessionId: transcript.sessionId, name: transcript.title, pinned: false,
+      updatedAt: transcript.updatedAt, transcript
     });
   }
   for (const trace of spans) {
@@ -551,7 +617,8 @@ export function buildSnapshot(input: SummaryInput): DashboardSnapshot {
     cost: buildCost(input),
     speed: buildSpeed(input),
     quality: buildQuality(input),
-    session: selectedSession(input)
+    session: selectedSession(input),
+    period: buildPeriod(input)
   };
 }
 

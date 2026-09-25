@@ -2,7 +2,7 @@
   "name": "bear-in-mind",
   "displayName": "Bear in Mind — Copilot Token Meter",
   "description": "A polar bear's iceberg melts with Copilot token usage. Track tokens, speed and quality — not a spending cap.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
