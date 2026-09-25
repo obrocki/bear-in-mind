@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { it } = require('node:test');
 const { OtelWatcher } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelWatcher.js'));
+const { buildPeriod, periodStart } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 
 const record = fs.readFileSync(path.join(__dirname, 'fixtures', 'otel-feed.jsonl'), 'utf8')
   .split('\n').filter(Boolean).map(JSON.parse).find((entry) => entry.scopeMetrics);
@@ -204,6 +205,38 @@ it('meters modern serialized file spans without metrics and never repeats them a
   assert.equal(restarted.spanDigest.sessions[0].llmCalls, 2);
 });
 
+it('exposes the seven-day trace cutoff when older billing-period sessions lose their traces', (t) => {
+  let now = new Date(2026, 8, 25, 12).getTime();
+  t.mock.method(Date, 'now', () => now);
+  const { file, watcher } = fixture(t);
+  const day = 24 * 60 * 60 * 1000;
+  const early = spanRecord('early-call', periodStart(now) + day);
+  early.attributes['gen_ai.conversation.id'] = 'early';
+  const recent = spanRecord('recent-call', now - 5 * day);
+  const transcripts = [
+    { sessionId: 'early', updatedAt: periodStart(now) + day, credits: 8 },
+    { sessionId: 's', updatedAt: now - 5 * day, credits: 11 }
+  ];
+  fs.writeFileSync(file, [early, recent].map((span) => JSON.stringify(span)).join('\n') + '\n');
+  watcher.scan();
+  let period = buildPeriod({ spans: watcher.spanDigest, transcripts });
+  assert.equal(period.sessions, 2);
+  assert.equal(period.credits, 19);
+  assert.equal(period.tracedSessions, 1);
+  assert.equal(period.inputTokens, 1000);
+  assert.equal(period.traceSinceMs, now - 7 * day);
+  assert.ok(period.traceSinceMs > period.sinceMs);
+
+  now += 3 * day;
+  watcher.scan();
+  period = buildPeriod({ spans: watcher.spanDigest, transcripts });
+  assert.equal(period.sessions, 2);
+  assert.equal(period.credits, 19);
+  assert.equal(period.tracedSessions, 0);
+  assert.equal(period.inputTokens, 0);
+  assert.equal(period.traceSinceMs, now - 7 * day);
+});
+
 it('reads real SQLite spans, aliases and credits; deduplicates the same file-exported span', (t) => {
   const { DatabaseSync } = require('node:sqlite');
   let now = Date.UTC(2026, 8, 24, 12);
@@ -224,6 +257,10 @@ it('reads real SQLite spans, aliases and credits; deduplicates the same file-exp
   db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
     'shared', 'chat', null, now - 1000, now, 250, 's', null, 'auto', 'resolved', 1000, 100, 500, 20
   );
+  db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(
+    'expired', 'chat', null, now - 8 * 24 * 60 * 60 * 1000, now - 8 * 24 * 60 * 60 * 1000 + 1000,
+    250, 'old-session', null, 'auto', 'resolved', 2000, 200, 500, 20
+  );
   const insert = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
   insert.run('shared', 'copilot_chat.request.max_prompt_tokens', '128000');
   insert.run('shared', 'copilot_chat.copilot_usage_nano_aiu', '293200000000');
@@ -232,6 +269,8 @@ it('reads real SQLite spans, aliases and credits; deduplicates the same file-exp
   fs.writeFileSync(file, JSON.stringify(record) + '\n');
   globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = dbFile;
   watcher.scan();
+  assert.equal(watcher.spanDigest.sinceMs, now - 7 * 24 * 60 * 60 * 1000);
+  assert.equal(watcher.spanDigest.sessions.length, 1);
   assert.equal(watcher.spanDigest.sessions[0].credits, 293.2);
   assert.equal(watcher.spanDigest.sessions[0].llmCalls, 1);
   assert.equal(watcher.spanDigest.reasoningTokens, 30);

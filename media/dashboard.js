@@ -398,20 +398,36 @@
         'No session metadata yet. Session cost and account allowance are not interchangeable.'));
       return block;
     }
+    const creditLabel = period.traceCreditSessions > 0
+      ? (period.traceCreditSessions === period.creditSessions
+        ? 'Model-call credits · retained traces'
+        : 'Reported credits · transcripts / trace fallback')
+      : 'Session Cost · transcripts';
     block.append(stats([
-      { label: 'Session Cost · transcripts', value: period.creditSessions > 0 ? credits(period.credits) : '—', qualifier: 'credits' },
+      { label: creditLabel, value: period.creditSessions > 0 ? credits(period.credits) : '—', qualifier: 'credits' },
       { label: 'Sessions observed', value: count(period.sessions) }
     ]));
     if (period.tracedSessions > 0) {
       block.append(stats([
-        { label: 'Input · traces', value: count(period.inputTokens) },
-        { label: 'Output · traces', value: count(period.outputTokens) }
+        { label: 'Input · retained traces', value: count(period.inputTokens) },
+        { label: 'Output · retained traces', value: count(period.outputTokens) }
       ]));
     }
     block.append(el('p', 'viz-caption',
-      'Rolled up from sessions observed since ' + new Date(period.sinceMs).toLocaleDateString() + '. ' +
+      'Session totals for sessions observed since ' + new Date(period.sinceMs).toLocaleDateString() + '. ' +
       count(period.creditSessions) + ' / ' + count(period.sessions) +
       ' sessions reported credits, so this is observed usage, not an account balance or an invoice.'));
+    if (period.traceCreditSessions > 0) {
+      block.append(el('p', 'viz-caption',
+        'Retained trace credits used for ' + count(period.traceCreditSessions) + ' / ' + count(period.sessions) +
+        ' sessions because transcript credits are unavailable. ' +
+        'Transcript and trace credits are never added for the same session.'));
+    }
+    block.append(el('p', 'viz-caption',
+      count(period.tracedSessions) + ' / ' + count(period.sessions) + ' sessions have retained traces. ' +
+      'Trace history is limited to seven days' +
+      (period.traceSinceMs !== undefined ? ' (since ' + new Date(period.traceSinceMs).toLocaleDateString() + ')' : '') +
+      '; coverage may be incomplete and is not a month-to-date total.'));
     return block;
   }
 

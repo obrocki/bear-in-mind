@@ -4,8 +4,10 @@
 
 - Session selection now lists the name the user gave a chat session, with the
   session ID as searchable detail, instead of leading with a GUID.
-- Added a billing-period roll-up (credits and traced tokens observed since the
-  1st) as the dashboard fallback when no session is selected or observed.
+- Added a billing-period roll-up of totals for sessions observed since the 1st
+  as the dashboard fallback when no session is selected or observed. Trace
+  details are limited to retained seven-day history, with the cutoff and
+  session coverage shown; trace-credit fallbacks are labeled separately.
 
 ## 0.6.0
 

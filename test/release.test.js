@@ -38,6 +38,13 @@ it('keeps release versions synchronized and waits for main CI instead of publish
   assert.match(workflow, /target_commitish: \$\{\{ steps\.release\.outputs\.commit \}\}/);
 });
 
+it('keeps dependency versions matched to their locked tarballs during release version bumps', () => {
+  for (const name of ['deep-extend', 'tunnel-agent']) {
+    const dependency = lockfile.packages[`node_modules/${name}`];
+    assert.ok(dependency.resolved.endsWith(`/${name}-${dependency.version}.tgz`), name);
+  }
+});
+
 it('plans exactly one stable tag at the tested merged commit', async () => {
   assert.deepEqual(await run(), { publish: 'true', tag: `v${manifest.version}`, commit: 'tested-commit' });
 });

@@ -72,8 +72,13 @@ unnamed sessions fall back to a shortened ID. The default is the latest observed
 session, **not automatically the active chat**. A missing pinned session stays
 missing rather than switching to somebody else's reading. When no session is
 selected or observed, the dashboard falls back to a billing-period roll-up:
-reported credits and traced tokens across sessions seen since the 1st, which is
-observed usage only, **not an account balance or invoice**.
+session totals for sessions seen since the 1st. Transcript credits take precedence;
+when they are missing, retained trace credits are used and labeled as a fallback,
+never added to transcript credits for the same session. Trace tokens and fallback
+credits cover **at most seven days of retained history, not a month-to-date total**.
+The dashboard shows the trace cutoff and observed session coverage; even retained
+history may be incomplete. These are local observations, **not an account balance
+or invoice**.
 Export delays, retained history, subagent attribution and provider coverage can
 still cause differences. No token-to-credit price estimate is used.
 

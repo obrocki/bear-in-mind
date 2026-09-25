@@ -57,6 +57,8 @@ export interface SpanSession {
 /** Aggregates derived from the `spans` table, when the SQLite source is live. */
 export interface SpanDigest {
   available: boolean;
+  /** Retention cutoff at the watcher's last scan, not proof of complete coverage. */
+  sinceMs?: number;
   sessions: SpanSession[];
   /** Exact durations in ms, collected per operation. */
   agentDurationsMs: number[];
@@ -235,9 +237,9 @@ export interface SessionComparison {
 }
 
 /**
- * Everything observed since the billing period started. Credits come from the
- * transcripts (the same figure VS Code shows per session) and tokens from the
- * traces; the two are never added together, and neither is an account balance.
+ * Session totals for sessions observed since the billing period started.
+ * Transcript credits take precedence over retained trace credits per session.
+ * Trace details cover only retained history, not the full billing period.
  */
 export interface PeriodRollup {
   sinceMs: number;
@@ -245,9 +247,12 @@ export interface PeriodRollup {
   credits: number;
   /** Sessions that actually reported credits, so partial coverage is visible. */
   creditSessions: number;
+  /** Sessions whose credits came from traces because transcript credits were missing. */
+  traceCreditSessions: number;
   inputTokens: number;
   outputTokens: number;
   tracedSessions: number;
+  traceSinceMs?: number;
 }
 
 /** Copilot's allowance resets monthly, so the period starts on the 1st. */
@@ -265,6 +270,7 @@ export function buildPeriod(
     .filter((session) => session.updatedAt >= sinceMs);
   let credits = 0;
   let creditSessions = 0;
+  let traceCreditSessions = 0;
   let inputTokens = 0;
   let outputTokens = 0;
   let tracedSessions = 0;
@@ -273,6 +279,9 @@ export function buildPeriod(
     if (reported !== undefined) {
       credits += reported;
       creditSessions++;
+      if (session.transcript?.credits === undefined) {
+        traceCreditSessions++;
+      }
     }
     if (session.trace) {
       tracedSessions++;
@@ -281,7 +290,8 @@ export function buildPeriod(
     }
   }
   return {
-    sinceMs, sessions: sessions.length, credits, creditSessions, inputTokens, outputTokens, tracedSessions
+    sinceMs, sessions: sessions.length, credits, creditSessions, traceCreditSessions,
+    inputTokens, outputTokens, tracedSessions, traceSinceMs: input.spans.sinceMs
   };
 }
 
