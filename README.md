@@ -9,7 +9,9 @@ not a measurement of energy consumption, CO2 or real ice loss.
 [![CI](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml/badge.svg)](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Bear in Mind visualises usage. **It cannot cap spending, throttle requests or
+Bear in Mind visualises usage: reported credits observed since the 1st of the
+month, plus the individual sessions behind them. That is observed spend, not an
+account balance or invoice, and **it cannot cap spending, throttle requests or
 change your bill**, including on unlimited plans.
 
 ![The iceberg melting and refreezing](docs/media/melt.gif)
