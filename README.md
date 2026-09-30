@@ -135,6 +135,24 @@ requests: accept/reject an edit or rate a response. A connected but empty Qualit
 section [waits for those signals](docs/media/dashboard-waiting.png); it does not
 require reconnecting.
 
+### Disconnecting and restoring defaults
+
+To undo the connection, choose **Restore defaults and disconnect…** as the
+fourth option in the connect picker, the button at the foot of the dashboard,
+the dashboard's **…** menu, or run **Iceberg: Restore Defaults and Disconnect…**.
+A confirmation lists every change first. It then:
+
+- returns each Copilot Chat telemetry setting it changed to your previous user
+  value (or the default), leaving any you changed yourself afterwards alone;
+- resets Bear in Mind's user settings, but not workspace settings;
+- deletes its meter history, session pin and local feed file. Other open windows
+  stop saving their copies and start fresh when reloaded.
+
+Copilot's own trace store and transcripts are untouched. Reload the window so
+Copilot Chat stops exporting, or pick **Uninstall Bear in Mind** to remove the
+extension as well. Connections made before 0.6.3 kept no record of previous
+values, so only settings that still hold what Bear in Mind writes are reset.
+
 Quality uses cumulative metrics when present, otherwise documented edit,
 survival, feedback, cloud-session and tool-call events. Matching metrics and
 events are never added together; inference events alone are not quality signals.
@@ -191,7 +209,8 @@ The meltdown demo never changes usage. `@iceberg` is counted only by automatic t
 ## Commands and settings
 
 Search the Command Palette for **Iceberg** to open the habitat/dashboard, connect
-telemetry, inspect diagnostics/stats, name the bear or toggle the meltdown demo.
+or disconnect telemetry, inspect diagnostics/stats, name the bear or toggle the
+meltdown demo.
 
 Common settings:
 
@@ -215,8 +234,9 @@ scale, status bar and bear name. Turning telemetry off does not erase counted us
 - **Quality is empty:** an active feed can have token data before any quality
   actions occur. Trace-store-only setups show tool success only; edit, survival
   and feedback signals need a file feed.
-- **Collector stopped:** clear `github.copilot.chat.otel.outfile` to restore OTLP;
-  use the local trace store alongside it.
+- **Collector stopped:** clear `github.copilot.chat.otel.outfile` to restore OTLP,
+  or run **Iceberg: Restore Defaults and Disconnect…**; use the local trace store
+  alongside it.
 - **Duplicate menus:** remove old `local.iceberg-copilot` or
   `obrocki.iceberg-copilot` installs, then reload. `iceberg.*` settings remain valid.
 
@@ -230,6 +250,8 @@ renders that model in the GitHub Copilot app, with live read-only coverage from
 local stores. These measurements indicate readiness to measure ROI, not
 monetary return: verified delivery and quality, billed costs, human effort and
 a comparable non-AI baseline are still needed. Neither ships in the VSIX.
+
+![The AI attribution canvas's Live coverage tab, rendered from synthetic stores](docs/media/canvas-coverage.png)
 
 ## Development
 

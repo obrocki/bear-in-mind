@@ -30,11 +30,15 @@ chat request through VS Code's language-model API, like other chat participants.
 
 Usage ledgers, bounded overlap evidence and file cursors are saved in VS Code's
 local global state. **Connect Copilot Telemetry** also changes the selected Copilot
-settings and creates the chosen feed directory. It warns before replacing an
-OTLP exporter.
+settings, records their previous user values, and creates the chosen feed
+directory. It warns before replacing an OTLP exporter.
 
 Disable readers with `iceberg.trackCopilotChat: false` and
 `iceberg.otel.enabled: false`. This does not delete Copilot's existing files.
+**Restore Defaults and Disconnect** puts the Copilot settings back to their
+previous values, resets Bear in Mind's user settings, and deletes its stored
+state and feed directory. It too leaves Copilot's trace store and transcripts
+untouched.
 
 ## Reporting a vulnerability
 

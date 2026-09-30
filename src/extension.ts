@@ -8,6 +8,19 @@ import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
+import {
+  BACKUP_KEY,
+  CONNECT_KEYS,
+  RESET_KEY,
+  SealableMemento,
+  contributedSettings,
+  describeAction,
+  legacyActions,
+  planCopilotRestore,
+  planSettingsReset,
+  recordBackup,
+  type SettingsBackup
+} from './restore';
 import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
@@ -20,18 +33,24 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     return standDown(context, conflict);
   }
 
-  const meter = new TokenMeter(context.globalState);
+  // Sealable so that restoring defaults cannot be undone by a pending save or
+  // the persist-on-dispose that runs when the window reloads.
+  const globalState = new SealableMemento(context.globalState, RESET_KEY);
+  const workspaceState = new SealableMemento(context.workspaceState);
+  const storage = { globalState, globalStorageUri: context.globalStorageUri };
+
+  const meter = new TokenMeter(globalState);
   const api = createIcebergApi(meter);
   context.subscriptions.push(meter);
 
   const output = vscode.window.createOutputChannel('Iceberg');
   context.subscriptions.push(output);
   const log = (message: string) => output.appendLine(`[${new Date().toISOString()}] ${message}`);
-  let selectedSessionId = context.workspaceState.get<string>('iceberg.selectedSession');
+  let selectedSessionId = workspaceState.get<string>('iceberg.selectedSession');
 
   // Watchers observe the same traffic; the meter reconciles their cumulative totals.
   const watcher = new ChatUsageWatcher(
-    context,
+    storage,
     (delta) => meter.observe('transcripts', delta.input, delta.output, delta.requests, delta.credits),
     log
   );
@@ -39,7 +58,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   watcher.start();
 
   const otel = new OtelWatcher(
-    context,
+    storage,
     (delta) => meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests),
     log
   );
@@ -169,7 +188,11 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
     vscode.commands.registerCommand('iceberg.nameBear', () => pickBearName(meter.snapshot().bearName)),
 
-    vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output)),
+    vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output, globalState)),
+
+    vscode.commands.registerCommand('iceberg.restoreDefaults', () =>
+      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output })
+    ),
 
     vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output, snapshot().session)),
 
@@ -195,7 +218,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
-        await context.workspaceState.update('iceberg.selectedSession', selectedSessionId);
+        await workspaceState.update('iceberg.selectedSession', selectedSessionId);
         updateContext();
         changed.fire();
       }
@@ -237,7 +260,15 @@ export function deactivate(): void {
 }
 
 /** Trace storage is additive; the file feed replaces OTLP, so ask before changing it. */
-async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel): Promise<void> {
+async function connectTelemetry(
+  otel: OtelWatcher,
+  output: vscode.OutputChannel,
+  globalState: SealableMemento
+): Promise<void> {
+  if (globalState.isSealed) {
+    await promptReload('Bear in Mind was just restored to its defaults. Reload the window before connecting again.');
+    return;
+  }
   const config = vscode.workspace.getConfiguration(OTEL_SECTION);
   const endpoint = (config.get<string>('otlpEndpoint', '') || '').trim();
   // Every user-facing mention of the endpoint uses this. The raw value is only
@@ -273,7 +304,15 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
     id: 'both' as const
   };
 
-  const choices = traceStoreAvailable ? [traceStore, both, fileFeed] : [fileFeed];
+  const restore = {
+    label: 'Restore defaults and disconnect…',
+    detail: 'Undo the Copilot settings Bear in Mind changed, reset its settings and clear its stored data.',
+    id: 'restore' as const
+  };
+  const separator = { label: '', kind: vscode.QuickPickItemKind.Separator, id: undefined };
+
+  const sources = traceStoreAvailable ? [traceStore, both, fileFeed] : [fileFeed];
+  const choices = [...sources, separator, restore];
   const placeHolder = !traceStoreAvailable
     ? 'This Copilot Chat has no local trace store, so the file feed is the only source'
     : collectorInUse
@@ -284,7 +323,11 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
     title: 'Connect Copilot telemetry to Bear in Mind',
     placeHolder
   });
-  if (!picked) {
+  if (!picked?.id) {
+    return;
+  }
+  if (picked.id === 'restore') {
+    await vscode.commands.executeCommand('iceberg.restoreDefaults');
     return;
   }
 
@@ -336,6 +379,22 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
 
   const applied: string[] = [];
   const failed: string[] = [];
+  let backup = globalState.get<SettingsBackup>(BACKUP_KEY);
+  // Values an earlier Bear in Mind wrote, before backups existed, are not the
+  // user's originals; recording them would make a later restore a no-op.
+  const before: Record<string, unknown> = {};
+  for (const key of CONNECT_KEYS) {
+    before[key] = config.inspect(key)?.globalValue;
+  }
+  const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
+  const ownedEarlier = new Set(
+    legacyActions({
+      current: before,
+      backup,
+      feedPaths: [otel.defaultFeedPath(), feedOverride].filter(Boolean),
+      collectorConfigured: !!endpoint
+    }).filter((action) => action.kind === 'remove').map((action) => action.key)
+  );
   for (const [key, value] of wanted) {
     // A setting this build of Copilot Chat does not register cannot be written —
     // `update` rejects. Writing them one at a time, and checking first, means one
@@ -349,10 +408,15 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
     try {
       await config.update(key, value, vscode.ConfigurationTarget.Global);
       applied.push(key);
+      // Remember the user's own value so Restore Defaults can put it back.
+      backup = recordBackup(backup, key, ownedEarlier.has(key) ? undefined : known.globalValue, value);
     } catch (err) {
       failed.push(key);
       output.appendLine(`[iceberg] could not set ${OTEL_SECTION}.${key}: ${String(err)}`);
     }
+  }
+  if (backup) {
+    await globalState.update(BACKUP_KEY, backup);
   }
 
   otel.reconfigure();
@@ -383,6 +447,154 @@ async function connectTelemetry(otel: OtelWatcher, output: vscode.OutputChannel)
   if (choice === reload) {
     await vscode.commands.executeCommand('workbench.action.reloadWindow');
   }
+}
+
+interface RestoreContext {
+  context: vscode.ExtensionContext;
+  otel: OtelWatcher;
+  watcher: ChatUsageWatcher;
+  globalState: SealableMemento;
+  workspaceState: SealableMemento;
+  output: vscode.OutputChannel;
+}
+
+/**
+ * Returns VS Code to how it was before Bear in Mind: Copilot telemetry settings
+ * back to the user's own values, Bear in Mind's user settings to their defaults,
+ * and its stored data and feed file removed. Copilot's own files are untouched.
+ */
+async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output }: RestoreContext): Promise<void> {
+  if (globalState.isSealed) {
+    await promptReload('Bear in Mind is already restored to its defaults. Reload the window to finish.');
+    return;
+  }
+
+  const copilot = vscode.workspace.getConfiguration(OTEL_SECTION);
+  const current: Record<string, unknown> = {};
+  for (const key of CONNECT_KEYS) {
+    current[key] = copilot.inspect(key)?.globalValue;
+  }
+  const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
+  const copilotPlan = planCopilotRestore({
+    current,
+    backup: globalState.get<SettingsBackup>(BACKUP_KEY),
+    feedPaths: [otel.defaultFeedPath(), feedOverride].filter(Boolean),
+    collectorConfigured: !!(copilot.get<string>('otlpEndpoint', '') || '').trim()
+  });
+  const copilotChanges = copilotPlan.filter((action) => action.kind !== 'keep');
+  const copilotKept = copilotPlan.filter((action) => action.kind === 'keep');
+
+  // Only user settings are reset: workspace settings belong to the project and
+  // may be shared with others through source control.
+  const root = vscode.workspace.getConfiguration();
+  const settingsPlan = planSettingsReset(contributedSettings(context.extension?.packageJSON), (key) => root.inspect(key));
+  const userSettings = settingsPlan.filter((entry) => entry.scopes.includes('global')).map((entry) => entry.key);
+  const workspaceSettings = settingsPlan.filter((entry) => entry.scopes.some((scope) => scope !== 'global')).map((entry) => entry.key);
+
+  const detail = [
+    'Copilot Chat telemetry settings:',
+    ...(copilotChanges.length > 0
+      ? copilotChanges.map((action) => `  • ${describeAction(OTEL_SECTION, action)}`)
+      : ['  • nothing to undo']),
+    ...copilotKept.map((action) => `  • ${describeAction(OTEL_SECTION, action)}`),
+    '',
+    `Bear in Mind settings: ${userSettings.length > 0 ? `${userSettings.length} reset to default (${userSettings.join(', ')})` : 'already at defaults'}.`,
+    ...(workspaceSettings.length > 0 ? [`Workspace settings left alone: ${workspaceSettings.join(', ')}.`] : []),
+    'Stored data: the meter history, session pin and local telemetry feed are deleted. Other open windows stop saving and start fresh when reloaded.',
+    '',
+    "Copilot's own trace store and transcripts are not touched. Reload the window afterwards so Copilot Chat picks up the change."
+  ].join('\n');
+
+  const confirm = 'Restore and Disconnect';
+  const answer = await vscode.window.showWarningMessage(
+    'Restore Bear in Mind to its defaults and disconnect it from Copilot telemetry?',
+    { modal: true, detail },
+    confirm
+  );
+  if (answer !== confirm) {
+    return;
+  }
+
+  otel.stop();
+  watcher.stop();
+  output.appendLine(`[${new Date().toISOString()}] restoring defaults`);
+
+  const failed: string[] = [];
+  for (const action of copilotChanges) {
+    try {
+      await copilot.update(action.key, action.kind === 'restore' ? action.value : undefined, vscode.ConfigurationTarget.Global);
+      output.appendLine(`  ${describeAction(OTEL_SECTION, action)}`);
+    } catch (err) {
+      failed.push(`${OTEL_SECTION}.${action.key}`);
+      output.appendLine(`  could not change ${OTEL_SECTION}.${action.key}: ${String(err)}`);
+    }
+  }
+  for (const action of copilotKept) {
+    output.appendLine(`  ${describeAction(OTEL_SECTION, action)}`);
+  }
+  for (const key of userSettings) {
+    try {
+      await root.update(key, undefined, vscode.ConfigurationTarget.Global);
+      output.appendLine(`  ${key} → default`);
+    } catch (err) {
+      failed.push(key);
+      output.appendLine(`  could not reset ${key}: ${String(err)}`);
+    }
+  }
+
+  // Clearing seals both stores, so nothing is written back before the reload.
+  await globalState.clear();
+  await workspaceState.clear();
+
+  // The directory is ours alone and only holds the feed. Leave it if Copilot is
+  // still told to write there, since removing it would silently break that.
+  const storageDir = context.globalStorageUri.fsPath;
+  const outfile = (vscode.workspace.getConfiguration(OTEL_SECTION).get<string>('outfile', '') || '').trim();
+  if (outfile && isInside(storageDir, outfile)) {
+    output.appendLine(`  kept ${storageDir}: Copilot Chat still writes its feed there`);
+  } else {
+    try {
+      fs.rmSync(storageDir, { recursive: true, force: true });
+      output.appendLine(`  deleted ${storageDir}`);
+    } catch (err) {
+      output.appendLine(`  could not delete ${storageDir}: ${String(err)}`);
+    }
+  }
+
+  const note = failed.length > 0 ? ` ${failed.length} setting(s) could not be changed; see the Iceberg output.` : '';
+  const reload = 'Reload Window';
+  const uninstall = 'Uninstall Bear in Mind';
+  const choice = await vscode.window.showInformationMessage(
+    `Bear in Mind is disconnected and back to its defaults.${note} Reload so Copilot Chat stops exporting ` +
+      'telemetry, or uninstall to remove the extension as well.',
+    reload,
+    uninstall
+  );
+  if (choice === uninstall) {
+    const id = context.extension?.id ?? 'obrocki.bear-in-mind';
+    try {
+      await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', id);
+    } catch (err) {
+      output.appendLine(`  could not uninstall ${id}: ${String(err)}`);
+      await vscode.commands.executeCommand('workbench.extensions.search', `@installed ${id}`);
+      return;
+    }
+  }
+  if (choice) {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
+}
+
+async function promptReload(message: string): Promise<void> {
+  const reload = 'Reload Window';
+  if ((await vscode.window.showInformationMessage(message, reload)) === reload) {
+    await vscode.commands.executeCommand('workbench.action.reloadWindow');
+  }
+}
+
+function isInside(dir: string, file: string): boolean {
+  const relative = path.relative(path.resolve(dir), path.resolve(file));
+  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
 function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.OutputChannel, session?: SessionComparison): void {

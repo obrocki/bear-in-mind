@@ -13,6 +13,7 @@
   const root = document.getElementById('sections');
   const banner = document.getElementById('banner');
   const provenance = document.getElementById('provenance');
+  const maintenance = document.getElementById('maintenance');
 
   const SVG = 'http://www.w3.org/2000/svg';
 
@@ -899,6 +900,15 @@
     provenance.textContent = parts.join('  ·  ');
   }
 
+  function renderMaintenance() {
+    if (!maintenance) return;
+    const reset = el('button', 'secondary', 'Restore defaults & disconnect…');
+    reset.title =
+      'Undo the Copilot settings Bear in Mind changed, reset its settings and clear its stored data. Asks before changing anything.';
+    reset.addEventListener('click', () => post('restore'));
+    maintenance.replaceChildren(reset);
+  }
+
   // ------------------------------------------------------------------ apply --
 
   function apply(snapshot) {
@@ -916,5 +926,6 @@
     if (msg && msg.type === 'snapshot') apply(msg.snapshot);
   });
 
+  renderMaintenance();
   post('ready');
 })();
