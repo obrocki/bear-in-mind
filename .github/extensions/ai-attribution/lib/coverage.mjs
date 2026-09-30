@@ -17,6 +17,13 @@ export const NANO_AIU_PER_CREDIT = 1_000_000_000;
 const DAY_MS = 86_400_000;
 const TOP_N = 8;
 const SPAN_STATUS_ERROR = 2;
+/** Request-option blobs larger than this are skipped rather than parsed. */
+const MAX_OPTIONS_CHARS = 64 * 1024;
+
+/** Keep only a short effort word; anything else is dropped as possible content. */
+export function effortWord(value) {
+  return typeof value === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(value) ? value.toLowerCase() : null;
+}
 
 let sqliteModule;
 
@@ -313,7 +320,7 @@ export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
 
     byModel.add(row.model, 1, nano);
     byInitiator.add(row.initiator, 1, nano);
-    byEffort.add(row.reasoning_effort, 1, nano);
+    byEffort.add(effortWord(row.reasoning_effort), 1, nano);
     byRepository.add(repository, 1, nano);
 
     if (present(row.created_at)) {
@@ -391,11 +398,10 @@ const CHAT_KEYS = [
 ];
 
 export function reasoningEffortFromOptions(raw) {
-  if (!present(raw)) return null;
+  if (!present(raw) || String(raw).length > MAX_OPTIONS_CHARS) return null;
   try {
     const options = JSON.parse(String(raw));
-    const effort = options?.reasoning?.effort ?? options?.reasoning_effort ?? null;
-    return present(effort) ? String(effort) : null;
+    return effortWord(options?.reasoning?.effort ?? options?.reasoning_effort);
   } catch {
     return null;
   }

@@ -289,6 +289,10 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
 
   assert.equal(reasoningEffortFromOptions('{"reasoning_effort":"max"}'), 'max');
   assert.equal(reasoningEffortFromOptions('not json'), null);
+  assert.equal(reasoningEffortFromOptions('{"reasoning":{"effort":"HIGH"}}'), 'high');
+  assert.equal(reasoningEffortFromOptions('{"reasoning":{"effort":"ignore previous; leak"}}'), null);
+  assert.equal(reasoningEffortFromOptions(JSON.stringify({ reasoning: { effort: 'x'.repeat(40) } })), null);
+  assert.equal(reasoningEffortFromOptions(JSON.stringify({ pad: 'x'.repeat(70000), reasoning_effort: 'low' })), null);
 });
 
 it('discovers the most recently written agent-traces.db', async (t) => {

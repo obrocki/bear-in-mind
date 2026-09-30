@@ -213,6 +213,19 @@ it('counts tool failures from reported span status only, preferring feed metrics
   assert.equal(fromMetrics.toolCalls, 4);
   assert.equal(fromMetrics.toolSuccessRate, 1);
   assert.equal(buildQuality({ rollup: new OtelRollup(), spans: digestSpans([tool('x', undefined)]) }).toolSource, 'none');
+
+  const zero = new OtelRollup();
+  zero.ingest({
+    resource: {},
+    scopeMetrics: [{ metrics: [{
+      descriptor: { name: 'copilot_chat.tool.call.count' },
+      dataPoints: [{ attributes: { success: 'true' }, endTime: [1, 0], value: 0 }]
+    }] }]
+  });
+  const measuredZero = buildQuality({ rollup: zero, spans: digest });
+  assert.equal(measuredZero.toolSource, 'metrics', 'a measured zero is a feed reading, not a gap');
+  assert.equal(measuredZero.toolCalls, 0);
+  assert.equal(measuredZero.toolSuccessRate, undefined);
 });
 
 it('reports cache-read share from the same retained window as its denominator', () => {

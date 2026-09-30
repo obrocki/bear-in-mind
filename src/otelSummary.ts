@@ -677,10 +677,12 @@ export function buildQuality(input: Pick<SummaryInput, 'rollup'> & Partial<Pick<
 
   const metricToolCalls = Math.round(rollup.total(TOOL_CALL_COUNT));
   const metricToolFailures = Math.round(rollup.total(TOOL_CALL_COUNT, { success: 'false' }));
-  // Span status is a fallback for trace-store-only setups. Tool spans without a
-  // reported status are left out rather than counted as successes.
+  // Span status is a fallback for trace-store-only setups. A feed measurement,
+  // even of zero calls, wins; tool spans without a reported status are left out
+  // rather than counted as successes.
   const spanToolCalls = input.spans?.toolStatusCalls ?? 0;
-  const toolSource: MetricSource = metricToolCalls > 0 ? 'metrics' : spanToolCalls > 0 ? 'spans' : 'none';
+  const toolSource: MetricSource =
+    rollup.observations(TOOL_CALL_COUNT) > 0 ? 'metrics' : spanToolCalls > 0 ? 'spans' : 'none';
   const toolCalls = toolSource === 'spans' ? spanToolCalls : metricToolCalls;
   const toolFailures = toolSource === 'spans' ? input.spans?.toolFailures ?? 0 : metricToolFailures;
 
