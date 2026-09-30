@@ -79,7 +79,13 @@ it('normalises repository identifiers and drops credentials', async () => {
   assert.equal(normalizeRepository('user:secret@host/o/r'), null, 'unparsed credentials are rejected, not shown');
   assert.equal(normalizeRepository('ftp://user:pw@host.example/o/r'), 'host.example/o/r');
   assert.equal(normalizeRepository('https://user:pw@[bad/o/r'), null);
-  for (const local of ['/home/alice/private/repo', 'C:\\Users\\alice\\repo', 'file:///home/alice/repo', '~/repo']) {
+  for (const local of [
+    '/home/alice/private/repo',
+    'C:\\Users\\alice\\repo',
+    'file:///home/alice/repo',
+    '~/repo',
+    'C:private/repo',
+  ]) {
     assert.equal(normalizeRepository(local), null, local);
   }
 });
@@ -290,6 +296,8 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   assert.equal(traces.totals.credits, 4);
   const stage = Object.fromEntries(traces.funnel.map((f) => [f.id, f]));
   assert.equal(stage.session.calls, 2);
+  assert.ok(stage.observed.sessions >= stage.session.sessions, 'session counts never grow down the funnel');
+  assert.equal(stage.observed.sessions, 1, 'the parent-only sub-agent call belongs to chat-1');
   assert.equal(stage.repository.credits, 4);
   assert.equal(stage.branch.credits, 4);
   assert.equal(stage.pullRequest.emitted, false);

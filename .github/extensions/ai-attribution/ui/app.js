@@ -673,16 +673,17 @@ async function selectView(view, fromUser) {
   if (!RENDERERS[view]) return;
   state.view = view;
   render();
-  if (view === 'research' && !state.research) {
-    state.research = (await api('/api/research')).markdown;
-    render();
-  }
+  // Persist before any fetch, so a slower request cannot overwrite a newer selection.
   if (fromUser) {
     api('/api/view', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ view }),
     }).catch(() => {});
+  }
+  if (view === 'research' && !state.research) {
+    state.research = (await api('/api/research')).markdown;
+    render();
   }
 }
 

@@ -308,7 +308,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   attr.run('call', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
   span.run('title', at + 20, at + 100, 0, 'chat', 'title', null, 'mini', 50, 5, 0, null);
   attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', '0');
-  attr.run('title', 'copilot_chat.request.options', 'not json');
+  attr.run('title', 'copilot_chat.request.options', JSON.stringify({ pad: 'x'.repeat(70000), reasoning: { effort: 'max' } }));
   span.run('ok', at + 30, at + 40, 1, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
   span.run('bad', at + 50, at + 60, 2, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
   db.close();

@@ -57,7 +57,7 @@ function text(value: unknown): string | undefined {
  */
 export function repositoryName(value: unknown): string | undefined {
   const raw = text(value)?.trim();
-  if (!raw || /^(file:|[/\\~.]|[a-z]:[\\/])/i.test(raw) || raw.includes('\\')) {
+  if (!raw || /^(file:|[/\\~.]|[a-z]:)/i.test(raw) || raw.includes('\\')) {
     return undefined;
   }
   let name = raw.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');

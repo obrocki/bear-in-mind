@@ -114,7 +114,7 @@ export function normalizeRepository(value) {
   if (value === null || value === undefined) return null;
   let v = String(value).trim();
   if (!v) return null;
-  if (/^(file:|[/\\~.]|[a-z]:[\\/])/i.test(v) || v.includes('\\')) return null;
+  if (/^(file:|[/\\~.]|[a-z]:)/i.test(v) || v.includes('\\')) return null;
   v = v.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
     try {
@@ -607,9 +607,10 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       link = 'trace';
     }
 
-    addTo(stages.observed, sessionKey, nano);
-    // Only an ID on the call itself counts; trace-only links show in the link breakdown.
     const stageKey = sessionKey ?? (present(parent) ? String(parent) : null);
+    // Every stage, including "observed", counts sessions by the same key so
+    // session counts stay monotonic down the funnel.
+    addTo(stages.observed, stageKey, nano);
     if (stageKey) {
       addTo(stages.session, stageKey, nano);
       if (ctx?.repository) {

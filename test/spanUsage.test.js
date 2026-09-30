@@ -170,7 +170,7 @@ it('normalises repository names and rejects credential-shaped values', () => {
   assert.equal(repositoryName('ssh://git@github.com/o/r.git'), 'o/r');
   assert.equal(repositoryName('https://token@ghe.example.com/o/r/'), 'ghe.example.com/o/r');
   assert.equal(repositoryName('user:pass@host/o/r'), undefined);
-  for (const local of ['/home/alice/private/repo', 'C:\\Users\\alice\\repo', 'c:/Users/alice/repo', 'file:///home/alice/repo', '~/repo', './repo']) {
+  for (const local of ['/home/alice/private/repo', 'C:\\Users\\alice\\repo', 'c:/Users/alice/repo', 'file:///home/alice/repo', '~/repo', './repo', 'C:private/repo']) {
     assert.equal(repositoryName(local), undefined, local);
   }
   assert.equal(repositoryName('dev.azure.com/org/project/repo'), 'dev.azure.com/org/project/repo');

@@ -36,6 +36,8 @@ const TEXT_SPAN_KEYS = [
   'github.copilot.git.repository', 'github.copilot.git.branch',
   'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name'
 ];
+/** Request-option blobs larger than this are skipped, matching the file-span path. */
+const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;
 
 export interface OtelUsageDelta {
   input: number;
@@ -663,9 +665,11 @@ export class OtelWatcher implements vscode.Disposable {
     try {
       for (const raw of db.prepare(
         'SELECT a.span_id, ' +
-          "COALESCE(json_extract(a.value, '$.reasoning.effort'), json_extract(a.value, '$.reasoning_effort')) AS effort " +
+          // CASE evaluates in order, so oversized blobs never reach the JSON parser.
+          `CASE WHEN length(a.value) > ${MAX_REQUEST_OPTIONS_CHARS} THEN NULL WHEN json_valid(a.value) THEN ` +
+          "COALESCE(json_extract(a.value, '$.reasoning.effort'), json_extract(a.value, '$.reasoning_effort')) END AS effort " +
           'FROM span_attributes a JOIN spans s ON s.span_id = a.span_id ' +
-          "WHERE s.start_time_ms >= ? AND a.key = 'copilot_chat.request.options' AND json_valid(a.value)"
+          "WHERE s.start_time_ms >= ? AND a.key = 'copilot_chat.request.options'"
       ).all(since)) {
         const r = raw as Record<string, unknown>;
         if (typeof r.effort === 'string') {
