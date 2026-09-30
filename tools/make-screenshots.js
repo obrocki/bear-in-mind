@@ -30,7 +30,8 @@ const SHOTS = [
   { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-context.png', page: 'dashboard.html', q: 'context', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 470, dsf: 2, settle: 1200 },
-  { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 1000, dsf: 2, settle: 1200 }
+  { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-credits.png', page: 'dashboard.html', q: 'credits', w: 560, h: 900, dsf: 2, settle: 1200 }
 ];
 
 const requested = process.argv.slice(2);

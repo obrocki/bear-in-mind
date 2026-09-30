@@ -7,7 +7,7 @@ import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
-import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
+import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, sessionWorkLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
@@ -178,15 +178,20 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         { label: 'Latest observed session', description: 'Not automatically the active VS Code chat', sessionId: undefined },
         ...sessionComparisons(watcher.sessions, otel.spanDigest.sessions).map((session) => ({
           label: sessionLabel(session),
-          description: `${session.trace?.model ?? session.transcript?.model ?? 'unknown model'} · ${new Date(session.updatedAt).toLocaleString()}`,
+          description: [
+            session.trace?.model ?? session.transcript?.model ?? 'unknown model',
+            sessionWorkLabel(session),
+            new Date(session.updatedAt).toLocaleString()
+          ].filter(Boolean).join(' · '),
           detail: session.sessionId,
           sessionId: session.sessionId
         }))
       ];
       const choice = await vscode.window.showQuickPick(choices, {
         title: 'Session to compare with Copilot',
+        matchOnDescription: true,
         matchOnDetail: true,
-        placeHolder: 'Pick a session by name, or follow the most recently observed session'
+        placeHolder: 'Pick a session by name or repository, or follow the most recently observed session'
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
@@ -413,7 +418,13 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     output.appendLine(`  session cost        ${session.transcript?.credits ?? 'not reported'} transcript credits`);
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
+    output.appendLine(`  session work        ${sessionWorkLabel(session) ?? 'not reported'} (agent span git attributes)`);
   }
+  const spans = otel.spanDigest;
+  output.appendLine(
+    `  retained trace calls ${spans.creditCalls}/${spans.chatCalls} reported ${spans.credits} credits; ` +
+    `${spans.sessionlessCalls} calls without a session ID; ${spans.toolFailures}/${spans.toolStatusCalls} tool spans failed`
+  );
   output.appendLine(`  ice gauge           ${usage.basis}: ${iceReadout(usage)}`);
   if (usage.context) {
     output.appendLine(

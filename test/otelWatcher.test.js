@@ -278,3 +278,56 @@ it('reads real SQLite spans, aliases and credits; deduplicates the same file-exp
   assert.deepEqual(deltas, [{ input: 1000, output: 100, requests: 1, source: 'traces' }]);
   assert.equal(watcher.health().sqliteActive, true);
 });
+
+it('reads work context, callers, reasoning effort and tool status from a current trace store', (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const now = Date.UTC(2026, 8, 30, 12);
+  t.mock.method(Date, 'now', () => now);
+  const { dir, watcher } = fixture(t);
+  const dbFile = path.join(dir, 'agent-traces.db');
+  const db = new DatabaseSync(dbFile);
+  db.exec(`
+    CREATE TABLE spans (
+      span_id TEXT PRIMARY KEY, trace_id TEXT, name TEXT, start_time_ms INTEGER, end_time_ms INTEGER,
+      status_code INTEGER NOT NULL DEFAULT 0, operation_name TEXT, agent_name TEXT, conversation_id TEXT,
+      request_model TEXT, response_model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER,
+      reasoning_tokens INTEGER, tool_name TEXT, chat_session_id TEXT, ttft_ms REAL
+    );
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT, PRIMARY KEY (span_id, key));
+  `);
+  const span = db.prepare(`INSERT INTO spans (span_id, start_time_ms, end_time_ms, status_code, operation_name,
+    agent_name, chat_session_id, response_model, input_tokens, output_tokens, cached_tokens, tool_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  const at = now - 60000;
+  span.run('agent', at, at + 9000, 0, 'invoke_agent', 'GitHub Copilot Chat', 'chat-1', null, null, null, null, null);
+  attr.run('agent', 'github.copilot.git.repository', 'https://github.com/o/r.git');
+  attr.run('agent', 'github.copilot.git.branch', 'feature');
+  span.run('call', at + 10, at + 900, 0, 'chat', 'panel/editAgent', 'chat-1', 'opus', 1000, 20, 750, null);
+  attr.run('call', 'copilot_chat.copilot_usage_nano_aiu', '3000000000');
+  attr.run('call', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
+  span.run('title', at + 20, at + 100, 0, 'chat', 'title', null, 'mini', 50, 5, 0, null);
+  attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', '0');
+  attr.run('title', 'copilot_chat.request.options', 'not json');
+  span.run('ok', at + 30, at + 40, 0, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
+  span.run('bad', at + 50, at + 60, 2, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
+  db.close();
+  globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = dbFile;
+  watcher.scan();
+
+  const digest = watcher.spanDigest;
+  assert.equal(digest.chatCalls, 2);
+  assert.equal(digest.credits, 3);
+  assert.equal(digest.sessionlessCalls, 1);
+  assert.equal(digest.sessions[0].repository, 'o/r');
+  assert.equal(digest.sessions[0].branch, 'feature');
+  assert.equal(digest.sessions[0].agentName, 'GitHub Copilot Chat');
+  assert.deepEqual(
+    digest.byRepository.map((row) => [row.key, row.calls, row.credits]),
+    [['o/r', 1, 3], [null, 1, 0]]
+  );
+  assert.deepEqual(digest.byCaller.map((row) => row.key), ['panel/editAgent', 'title']);
+  assert.deepEqual(digest.byEffort.map((row) => [row.key, row.calls]), [['high', 1], [null, 1]]);
+  assert.equal(digest.toolStatusCalls, 2);
+  assert.equal(digest.toolFailures, 1);
+});

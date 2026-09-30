@@ -3,8 +3,8 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { it } = require('node:test');
-const { digestSpans, fileUsageSpan, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
-const { buildSpeed, selectedSession, sessionComparisons } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
+const { digestSpans, fileUsageSpan, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
+const { buildCost, buildQuality, buildSpeed, buildTraceCredits, selectedSession, sessionComparisons } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 const { OtelRollup, classify } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelParse.js'));
 const start = Date.UTC(2026, 8, 24, 12);
 
@@ -113,4 +113,115 @@ it('matches transcript and trace sessions by ID, never adds their credit totals'
   assert.equal(selected.sessionId, 'expired');
   assert.equal(selected.trace, undefined, 'a stale pin must not silently switch to another session');
   assert.equal(selected.pinned, true);
+});
+
+it('groups model-call credits by model, caller, reasoning effort and inherited repository', () => {
+  const noSession = { 'copilot_chat.chat_session_id': undefined, 'gen_ai.conversation.id': undefined };
+  const digest = digestSpans([
+    span('agent', 'invoke_agent', {
+      'gen_ai.agent.name': 'GitHub Copilot Chat',
+      'github.copilot.git.repository': 'https://user:secret@github.com/o/r.git',
+      'github.copilot.git.branch': 'main'
+    }),
+    span('a', 'chat', {
+      'gen_ai.agent.name': 'panel/editAgent',
+      'copilot_chat.request.options': JSON.stringify({ stream: true, reasoning: { effort: 'high' } })
+    }, 10),
+    span('sub', 'chat', {
+      ...noSession, 'copilot_chat.parent_chat_session_id': 'vscode-session', 'gen_ai.agent.name': 'executionSubagentTool',
+      'copilot_chat.copilot_usage_nano_aiu': 500000000, 'copilot_chat.request.options': { reasoning_effort: 'MAX' }
+    }, 20),
+    span('title', 'chat', {
+      ...noSession, 'gen_ai.agent.name': 'title', 'gen_ai.response.model': 'mini', 'copilot_chat.copilot_usage_nano_aiu': 0
+    }, 30),
+    span('lm', 'chat', { ...noSession, 'gen_ai.response.model': 'mini', 'copilot_chat.copilot_usage_nano_aiu': undefined }, 40)
+  ]);
+  assert.equal(digest.chatCalls, 4);
+  assert.equal(digest.creditCalls, 3);
+  assert.equal(digest.credits, 2);
+  assert.equal(digest.sessionlessCalls, 3);
+  assert.equal(digest.sessionlessCredits, 0.5);
+  const session = digest.sessions[0];
+  assert.equal(session.repository, 'o/r', 'credentials never survive');
+  assert.equal(session.branch, 'main');
+  assert.equal(session.agentName, 'GitHub Copilot Chat');
+  assert.doesNotMatch(JSON.stringify(digest.sessions), /secret/);
+
+  const trace = buildTraceCredits(digest);
+  assert.deepEqual(trace.byRepository.map((r) => [r.label, r.calls, r.credits]), [['o/r', 2, 2], ['no repository', 2, 0]]);
+  assert.deepEqual(trace.byModel.map((r) => [r.label, r.calls, r.creditCalls]), [['resolved-model', 2, 2], ['mini', 2, 1]]);
+  assert.deepEqual(trace.byEffort.map((r) => r.label), ['high', 'max', 'not reported']);
+  assert.deepEqual(trace.byCaller.map((r) => r.label), ['panel/editAgent', 'executionSubagentTool', 'title', 'unnamed caller']);
+});
+
+it('folds long credit breakdowns into one remainder row', () => {
+  const digest = digestSpans(Array.from({ length: 8 }, (_, i) =>
+    span('m' + i, 'chat', { 'gen_ai.response.model': 'model-' + i, 'copilot_chat.copilot_usage_nano_aiu': (i + 1) * 1e9 }, i)));
+  const rows = buildTraceCredits(digest).byModel;
+  assert.equal(rows.length, 6);
+  assert.deepEqual(rows[0], { label: 'model-7', calls: 1, creditCalls: 1, credits: 8 });
+  assert.deepEqual(rows[5], { label: '3 more', calls: 3, creditCalls: 3, credits: 6 });
+});
+
+it('normalises repository names and rejects credential-shaped values', () => {
+  assert.equal(repositoryName('o/r'), 'o/r');
+  assert.equal(repositoryName('git@github.com:o/r.git'), 'o/r');
+  assert.equal(repositoryName('ssh://git@github.com/o/r.git'), 'o/r');
+  assert.equal(repositoryName('https://token@ghe.example.com/o/r/'), 'ghe.example.com/o/r');
+  assert.equal(repositoryName('user:pass@host/o/r'), undefined);
+  assert.equal(repositoryName(''), undefined);
+  assert.equal(repositoryName(42), undefined);
+});
+
+it('keeps only a short reasoning-effort word from request options', () => {
+  assert.equal(reasoningEffort({ 'copilot_chat.request.options': '{"reasoning":{"effort":"xhigh"}}' }), 'xhigh');
+  assert.equal(reasoningEffort({ 'copilot_chat.request.options': '{"reasoning":{"effort":"high; drop table"}}' }), undefined);
+  assert.equal(reasoningEffort({ 'copilot_chat.request.options': '{broken' }), undefined);
+  assert.equal(reasoningEffort({ 'copilot_chat.request.options': JSON.stringify({ pad: 'x'.repeat(70000) }) }), undefined);
+  assert.equal(reasoningEffort({ 'gen_ai.request.reasoning.level': 'low' }), 'low');
+  assert.equal(span('t', 'execute_tool', { 'copilot_chat.request.options': '{"reasoning_effort":"high"}' }).effort, undefined);
+});
+
+it('counts tool failures from reported span status only, preferring feed metrics', () => {
+  const tool = (id, status) => usageSpan(id, { 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': 'read_file' },
+    start, start + 10, status);
+  const digest = digestSpans([tool('a', 2), tool('b', 0), tool('c', '1'), tool('d', undefined), tool('e', 'nope')]);
+  assert.equal(digest.toolStatusCalls, 3);
+  assert.equal(digest.toolFailures, 1);
+  const record = {
+    spanId: 'f', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0], status: { code: 2 },
+    attributes: { 'gen_ai.operation.name': 'execute_tool' }
+  };
+  assert.equal(fileUsageSpan(record).failed, true);
+
+  const fromSpans = buildQuality({ rollup: new OtelRollup(), spans: digest });
+  assert.equal(fromSpans.toolSource, 'spans');
+  assert.equal(fromSpans.toolCalls, 3);
+  assert.equal(fromSpans.toolSuccessRate, 2 / 3);
+  assert.equal(fromSpans.available, true);
+
+  const rollup = new OtelRollup();
+  rollup.ingest({
+    resource: {},
+    scopeMetrics: [{ metrics: [{
+      descriptor: { name: 'copilot_chat.tool.call.count' },
+      dataPoints: [{ attributes: { success: 'true' }, endTime: [1, 0], value: 4 }]
+    }] }]
+  });
+  const fromMetrics = buildQuality({ rollup, spans: digest });
+  assert.equal(fromMetrics.toolSource, 'metrics');
+  assert.equal(fromMetrics.toolCalls, 4);
+  assert.equal(fromMetrics.toolSuccessRate, 1);
+  assert.equal(buildQuality({ rollup: new OtelRollup(), spans: digestSpans([tool('x', undefined)]) }).toolSource, 'none');
+});
+
+it('reports cache-read share from the same retained window as its denominator', () => {
+  const cost = buildCost({
+    rollup: new OtelRollup(), spans: digestSpans([span('a', 'chat')]),
+    totals: { input: 999999, output: 0, credits: 0 }, drift: {}
+  });
+  assert.equal(cost.cacheReadRatio, 0.8, '8000 cached / 10000 trace input, not the meter total');
+  assert.equal(cost.traceCredits.available, true);
+  assert.equal(buildCost({ rollup: new OtelRollup(), spans: digestSpans([]), totals: { input: 1, output: 0, credits: 0 } })
+    .cacheReadRatio, undefined);
 });

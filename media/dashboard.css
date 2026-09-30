@@ -164,6 +164,18 @@ body {
   overflow-wrap: anywhere;
 }
 
+.gauge h4 {
+  margin: 12px 0 6px;
+  font: 400 10px/1.3 var(--mono);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.gauge .breakdown {
+  margin-bottom: 8px;
+}
+
 .gauge-remaining {
   margin: 0;
   font: 600 11px/1.4 var(--mono);

@@ -59,6 +59,13 @@ dependencies; reload extensions in the app after editing. Its tests run with
 - Quality falls back to documented log events per instrument only when metrics
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.
+  Tool success falls back to `execute_tool` span status only when the feed has no
+  tool-call measurements; spans without a status are excluded, not successes.
+- Retained-trace credit breakdowns (model, repository, caller, reasoning effort)
+  are diagnostics over the seven-day span window: never add them to the meter or
+  to transcript credits. Keep only `owner/name` repository identifiers (no URL
+  credentials) and only the effort word from `copilot_chat.request.options`.
+  Select optional `agent-traces.db` columns defensively; older stores lack them.
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call
   time. Turn index is not an LLM round-trip count.

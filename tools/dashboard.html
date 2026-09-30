@@ -9,6 +9,7 @@
        ?empty   the not-yet-connected state
        ?waiting connected feed with no quality signals
        ?context latest-prompt gauge instead of local budget
+       ?credits scroll to the retained-trace credit breakdown
        ?narrow  sidebar width (the CSS breakpoint does the rest)
 -->
 <link href="../media/dashboard.css" rel="stylesheet" />
@@ -85,6 +86,37 @@
         output: Math.round(5400 + wave(i + 5) * 2400)
       })),
       source: 'otel',
+      cacheReadRatio: 0.751,
+      traceCredits: {
+        available: true,
+        sinceMs: Date.now() - 7 * 86400000,
+        calls: 125,
+        creditCalls: 124,
+        credits: 311.5,
+        sessionlessCalls: 90,
+        sessionlessCredits: 0,
+        byModel: [
+          { label: 'claude-opus-5.5', calls: 11, creditCalls: 11, credits: 149.5 },
+          { label: 'gpt-5.6-sol', calls: 6, creditCalls: 6, credits: 85 },
+          { label: 'gpt-5.6-terra', calls: 15, creditCalls: 15, credits: 76.8 },
+          { label: 'gpt-4o-mini', calls: 90, creditCalls: 90, credits: 0 }
+        ],
+        byRepository: [
+          { label: 'octo/api', calls: 13, creditCalls: 13, credits: 149.5 },
+          { label: 'octo/web', calls: 20, creditCalls: 20, credits: 76.9 },
+          { label: 'no repository', calls: 86, creditCalls: 85, credits: 0 }
+        ],
+        byCaller: [
+          { label: 'panel/editAgent', calls: 32, creditCalls: 32, credits: 311.3 },
+          { label: 'executionSubagentTool', calls: 2, creditCalls: 2, credits: 0.2 },
+          { label: 'copilotLanguageModelWrapper', calls: 75, creditCalls: 75, credits: 0 }
+        ],
+        byEffort: [
+          { label: 'not reported', calls: 102, creditCalls: 101, credits: 149.5 },
+          { label: 'max', calls: 6, creditCalls: 6, credits: 85 },
+          { label: 'high', calls: 15, creditCalls: 15, credits: 76.8 }
+        ]
+      },
       drift: {
         otelObserved: 1284391,
         spanObserved: 1281002,
@@ -120,7 +152,8 @@
       transcript: { credits: 293.2, latestPromptTokens: 136600 },
       trace: {
         credits: 293.2, creditCalls: 32, llmCalls: 32,
-        inputTokens: 2100000, outputTokens: 85000, durationMs: 74200
+        inputTokens: 2100000, outputTokens: 85000, durationMs: 74200,
+        repository: 'octo/api', branch: 'main'
       }
     },
     quality: {
@@ -147,6 +180,7 @@
       toolCalls: 1930,
       toolFailures: 47,
       toolSuccessRate: (1930 - 47) / 1930,
+      toolSource: 'metrics',
       editResponseErrors: 4,
       summarizationsApplied: 22,
       summarizationsFailed: 1,
@@ -185,6 +219,16 @@
   }
 
   window.postMessage({ type: 'snapshot', snapshot: snapshot }, '*');
+
+  if (location.search.includes('credits')) {
+    // Frame the retained-trace credit breakdown, which sits below the fold.
+    setTimeout(function () {
+      const heading = Array.prototype.find.call(document.querySelectorAll('.gauge h3'), function (h) {
+        return h.textContent.indexOf('Model-call credits') === 0;
+      });
+      if (heading) window.scrollTo(0, heading.parentElement.getBoundingClientRect().top + window.scrollY - 16);
+    }, 100);
+  }
 </script>
 </body>
 </html>

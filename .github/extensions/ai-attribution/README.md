@@ -63,3 +63,25 @@ Open input also accepts `sessionStorePath` and `tracesDbPath` overrides.
 
 After editing, reload extensions in the app. Tests live in
 [`test/attributionCanvas.test.js`](../../../test/attributionCanvas.test.js).
+
+## Reuse
+
+This folder is committed, so the GitHub Copilot app loads the canvas for anyone
+who opens this repository. To build another canvas from it:
+
+| Part | Reuse as |
+| --- | --- |
+| `lib/server.mjs` | Generic per-panel loopback server: static files, JSON API, server-sent events, and Host/Origin checks against DNS rebinding and cross-site posts. Pass your own `uiDir` and `api`. |
+| `ui/dom.js`, `ui/markdown.js` | Safe rendering: nodes built with text only, never HTML strings; links limited to `http(s)`. |
+| `lib/coverage.mjs` | Read-only access to the Copilot session store and VS Code `agent-traces.db`, with a temporary-copy fallback when a database is locked. |
+| `extension.mjs` | Pattern for a canvas with an input schema, validated actions and cleanup on close. |
+
+Copy the folder to `.github/extensions/<name>/` (shared with the repository) or
+`~/.copilot/extensions/<name>/` (personal), then change the canvas `id`,
+`displayName` and views. `lib/model.mjs` reads `docs/research/` relative to the
+repository root; point `MODEL_PATH` and `RESEARCH_PATH` elsewhere when the
+extension lives outside this repository.
+
+To share without copying files, use **Share extension as gist…** in the app's
+command palette and **Install extension from gist…** on the other side. The app
+can also install straight from this folder's GitHub URL.

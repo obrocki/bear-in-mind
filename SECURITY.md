@@ -11,6 +11,13 @@ Bear in Mind meters local files:
 - The configured Copilot OpenTelemetry JSON-lines feed and read-only
   `agent-traces.db`, for metrics, timings and outcome labels.
 
+From span metadata the dashboard also shows repository and branch names
+(`github.copilot.git.*` on agent spans, with any credentials in remote URLs
+removed), Copilot caller names, tool names and span status, and a short
+reasoning-effort word taken from `copilot_chat.request.options`; the rest of that
+options blob is discarded. These are held in memory for the retained seven-day
+window and are not persisted.
+
 Raw records may contain prompts, responses or tool content, especially with
 `captureContent` enabled. Reading/parsing JSON is not content isolation: records
 pass through memory. Known content-bearing attributes are discarded at the parser

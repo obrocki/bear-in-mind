@@ -21,4 +21,5 @@ To rebuild one screenshot: `npm run media:shots -- dashboard-waiting.png`.
 
 Preview `shot.html?health=0.3&chrome=0` or `dashboard.html?waiting` in a browser.
 Both harnesses support `?context` for latest-prompt headroom; the dashboard also
-supports `?empty` for a disconnected source.
+supports `?empty` for a disconnected source and `?credits` to frame the
+retained-trace credit breakdown.
