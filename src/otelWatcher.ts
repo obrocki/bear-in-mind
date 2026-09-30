@@ -614,7 +614,12 @@ export class OtelWatcher implements vscode.Disposable {
         const id = String(r.span_id);
         const a = attributes.get(id) ?? {};
         const key = String(r.key);
-        a[key] = TEXT_SPAN_KEYS.includes(key) ? r.value : Number(r.value);
+        if (TEXT_SPAN_KEYS.includes(key)) {
+          a[key] = r.value;
+        } else if (r.value !== null && r.value !== undefined && String(r.value).trim() !== '') {
+          // A blank numeric value is unreported, not zero.
+          a[key] = Number(r.value);
+        }
         attributes.set(id, a);
       }
       this.readReasoningEfforts(db, since, attributes);

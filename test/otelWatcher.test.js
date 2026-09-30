@@ -307,7 +307,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   attr.run('call', 'copilot_chat.copilot_usage_nano_aiu', '3000000000');
   attr.run('call', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
   span.run('title', at + 20, at + 100, 0, 'chat', 'title', null, 'mini', 50, 5, 0, null);
-  attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', '0');
+  attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', ' ');
   attr.run('title', 'copilot_chat.request.options', JSON.stringify({ pad: 'x'.repeat(70000), reasoning: { effort: 'max' } }));
   span.run('ok', at + 30, at + 40, 1, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
   span.run('bad', at + 50, at + 60, 2, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
@@ -319,6 +319,8 @@ it('reads work context, callers, reasoning effort and tool status from a current
   assert.equal(digest.chatCalls, 2);
   assert.equal(digest.credits, 3);
   assert.equal(digest.sessionlessCalls, 1);
+  assert.equal(digest.creditCalls, 1, 'a blank credit value is unreported, not a zero-credit call');
+  assert.equal(digest.sessionlessCreditCalls, 0);
   assert.equal(digest.sessions[0].repository, 'o/r');
   assert.equal(digest.sessions[0].branch, 'feature');
   assert.equal(digest.sessions[0].agentName, 'GitHub Copilot Chat');
