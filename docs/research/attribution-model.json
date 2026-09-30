@@ -474,7 +474,7 @@
     { "id": "quality", "name": "Quality", "measure": "Edit acceptance, survival, review rounds, CI pass rate, revert rate, task completion", "availability": "needs-vcs-join" },
     { "id": "reconciliation", "name": "Billed AI cost", "measure": "Reconcile reported credits with billed net amount by user/day/model; include seat and infrastructure costs", "availability": "needs-org-api" },
     { "id": "human_effort", "name": "Human effort and rework", "measure": "Developer time spent prompting, reviewing, correcting and maintaining delivered work vs comparable non-AI work", "availability": "needs-baseline" },
-    { "id": "roi", "name": "Incremental return", "measure": "(Value of verified incremental outcomes − incremental AI and human costs) / incremental AI and human costs; requires an explicit value model and comparable baseline", "availability": "needs-baseline" }
+    { "id": "roi", "name": "Incremental return", "measure": "(Valued incremental benefit − AI investment) / AI investment; include incremental spend and oversight, avoid double-counting time savings, and use a comparable baseline", "availability": "needs-baseline" }
   ],
   "gaps": [
     { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
