@@ -100,12 +100,12 @@ function renderOutcomes() {
             return h(
               'div',
               { class: 'card' },
-              h('h3', {}, `${SOURCE_SHORT[s.id] ?? s.label} · reported credits and PR references`),
+              h('h3', {}, `${SOURCE_SHORT[s.id] ?? s.label} · reported credits and PR coverage`),
               h(
                 'p',
                 {},
                 pr?.emitted && s.totals.creditedCalls
-                  ? `${fmtCredits.format(pr.credits)} credits in sessions reaching repository + branch + PR reference; ${fmtCredits.format(s.totals.credits - pr.credits)} credits without one.`
+                  ? `${fmtCredits.format(pr.credits)} credits in sessions reaching repository, branch, and a recorded PR reference; ${fmtCredits.format(s.totals.credits - pr.credits)} credits without reaching that stage.`
                   : 'PR-reference credit split unavailable.',
               ),
               h('p', { class: 'muted small' }, 'Only calls reporting credits contribute. A reference does not establish a merged PR or delivered value. Sources are not added together.'),
