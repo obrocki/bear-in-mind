@@ -105,7 +105,7 @@ function renderOutcomes() {
                 'p',
                 {},
                 pr?.emitted && s.totals.creditedCalls
-                  ? `${fmtCredits.format(pr.credits)} credits in sessions with a recorded PR reference; ${fmtCredits.format(s.totals.credits - pr.credits)} credits without one.`
+                  ? `${fmtCredits.format(pr.credits)} credits in sessions reaching repository + branch + PR reference; ${fmtCredits.format(s.totals.credits - pr.credits)} credits without one.`
                   : 'PR-reference credit split unavailable.',
               ),
               h('p', { class: 'muted small' }, 'Only calls reporting credits contribute. A reference does not establish a merged PR or delivered value. Sources are not added together.'),
