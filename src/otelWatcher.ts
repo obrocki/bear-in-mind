@@ -159,7 +159,7 @@ export class OtelWatcher implements vscode.Disposable {
   private notes: string[] = [];
 
   constructor(
-    private readonly context: vscode.ExtensionContext,
+    private readonly context: Pick<vscode.ExtensionContext, 'globalStorageUri'> & { readonly globalState: vscode.Memento },
     private readonly onUsage: (delta: OtelUsageDelta) => void,
     private readonly log?: (message: string) => void
   ) {

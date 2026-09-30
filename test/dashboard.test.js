@@ -32,7 +32,7 @@ class Element {
 }
 
 function dashboard() {
-  const nodes = Object.fromEntries(['sections', 'banner', 'provenance'].map((id) => [id, new Element('div')]));
+  const nodes = Object.fromEntries(['sections', 'banner', 'provenance', 'maintenance'].map((id) => [id, new Element('div')]));
   const messages = [];
   let receive;
   vm.runInNewContext(renderer, {
@@ -374,6 +374,17 @@ it('does not offer to reconnect when local telemetry reading is disabled', () =>
   const quality = dashboard().render({ watching: false, jsonlActive: true, jsonlPath: 'feed.jsonl' });
   assert.match(quality.textContent, /Telemetry reading is off/);
   assert.doesNotMatch(quality.textContent, /Connect telemetry/);
+});
+
+it('always offers to restore defaults and disconnect from the footer', () => {
+  for (const feed of [{}, { sqliteActive: true, jsonlPath: 'feed.jsonl', jsonlActive: true }]) {
+    const d = dashboard();
+    d.render(feed);
+    const button = d.nodes.maintenance.find('button');
+    assert.match(button.textContent, /Restore defaults & disconnect/);
+    button.listeners.click();
+    assert.equal(d.messages.at(-1), 'restore');
+  }
 });
 
 it('replaces waiting with quality data when a relevant metric arrives', () => {

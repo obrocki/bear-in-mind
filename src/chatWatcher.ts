@@ -179,7 +179,7 @@ export class ChatUsageWatcher implements vscode.Disposable {
   private readonly warnings = new Set<string>();
 
   constructor(
-    private readonly context: vscode.ExtensionContext,
+    private readonly context: Pick<vscode.ExtensionContext, 'globalStorageUri'> & { readonly globalState: vscode.Memento },
     private readonly onUsage: (delta: { input: number; output: number; credits: number; requests: number }) => void,
     private readonly log?: (message: string) => void
   ) {

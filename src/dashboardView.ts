@@ -36,6 +36,9 @@ class DashboardHost implements vscode.Disposable {
           case 'session':
             void vscode.commands.executeCommand('iceberg.selectSession');
             break;
+          case 'restore':
+            void vscode.commands.executeCommand('iceberg.restoreDefaults');
+            break;
           default:
             break;
         }
@@ -77,6 +80,7 @@ class DashboardHost implements vscode.Disposable {
   <div class="sections" id="sections"></div>
   <footer>
     <p class="provenance" id="provenance"></p>
+    <div class="actions" id="maintenance"></div>
   </footer>
 
   <script nonce="${nonce}" src="${script}"></script>

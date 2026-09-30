@@ -3,7 +3,8 @@
 Everything in this folder is **generated**, not hand-drawn. If you change
 `media/main.js`, `media/style.css`, `media/dashboard.js` or
 `media/dashboard.css`, regenerate these so the README does not drift from what
-the extension actually looks like.
+the extension actually looks like. If you change the AI attribution canvas or
+research model, regenerate the canvas shots too.
 
 | File | What it is |
 | --- | --- |
@@ -18,6 +19,10 @@ the extension actually looks like.
 | `dashboard-waiting.png` | A flowing telemetry feed awaiting quality signals. |
 | `dashboard-credits.png` | Retained-trace credits by model, repository, caller and reasoning effort. |
 | `dashboard-empty.png` | The dashboard before any telemetry is connected. |
+| `canvas-outcomes.png` | AI attribution canvas Outcomes tab with synthetic ROI-readiness coverage. |
+| `canvas-coverage.png` | AI attribution canvas Live coverage tab from synthetic stores. |
+| `canvas-surfaces.png` | AI attribution concept × surface matrix. |
+| `canvas-model.png` | AI attribution data model entities and relationships. |
 
 ## How they are produced
 
@@ -43,10 +48,16 @@ any mock of it:
   median cut, and LZW-encodes a GIF89a with frame differencing and a transparent
   index for unchanged pixels.
 
-Neither path needs a native dependency, and neither needs VS Code running.
+- **AI attribution canvas shots** (`tools/make-canvas-shots.js`) create
+  synthetic `session-store.db` and `agent-traces.db` fixtures using the test
+  schemas, start the real canvas server and UI, and capture the selected tabs in
+  headless Chromium/Edge. No live Copilot stores are opened.
+
+None of these paths needs a native dependency or VS Code running.
 
 ```bash
-npm run media
+npm run media          # everything, including the canvas shots
+npm run media:canvas   # canvas shots only
 ```
 
 See [`tools/README.md`](../../tools/README.md) for the details.
