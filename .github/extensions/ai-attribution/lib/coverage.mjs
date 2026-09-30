@@ -106,17 +106,20 @@ export function findTracesDb(globalStorageDirs) {
 
 /**
  * owner/name for github.com, host/path otherwise. Remote URLs can carry
- * credentials, so only the host and path of a parsed URL survive, and any
- * unparsed value containing `@` is rejected rather than shown.
+ * credentials, so only the host and path of a parsed URL survive. Unparsed
+ * values containing `@`, and local filesystem remotes (absolute, home-relative,
+ * Windows or `file:` paths), are rejected rather than shown.
  */
 export function normalizeRepository(value) {
   if (value === null || value === undefined) return null;
   let v = String(value).trim();
   if (!v) return null;
+  if (/^(file:|[/\\~.]|[a-z]:[\\/])/i.test(v) || v.includes('\\')) return null;
   v = v.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
     try {
       const url = new URL(v);
+      if (!url.hostname) return null;
       const pathname = url.pathname.replace(/^\/+/, '');
       v = url.hostname.toLowerCase() === 'github.com' ? pathname : `${url.hostname}/${pathname}`;
     } catch {
@@ -368,15 +371,17 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     byEffort.add(effortWord(row.reasoning_effort), 1, nano);
     byRepository.add(repository, 1, nano);
 
-    if (present(row.created_at)) {
-      const ts = String(row.created_at);
-      const day = ts.slice(0, 10);
+    // Bucket by normalized UTC instant, not raw text; unreadable values are skipped.
+    const t = timestampMs(row.created_at);
+    const iso = t.ms !== null ? new Date(t.ms).toISOString() : t.dateOnly ? `${t.day}T00:00:00.000Z` : null;
+    if (iso) {
+      const day = iso.slice(0, 10);
       const d = byDay.get(day) ?? { day, calls: 0, nano: 0 };
       d.calls += 1;
       d.nano += nano;
       byDay.set(day, d);
-      if (!first || ts < first) first = ts;
-      if (!last || ts > last) last = ts;
+      if (!first || iso < first) first = iso;
+      if (!last || iso > last) last = iso;
     }
   }
 

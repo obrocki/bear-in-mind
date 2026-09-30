@@ -65,7 +65,8 @@ dependencies; reload extensions in the app after editing. Its tests run with
 - Retained-trace credit breakdowns (model, repository, caller, reasoning effort)
   are diagnostics over the seven-day span window: never add them to the meter or
   to transcript credits. Keep only `owner/name` repository identifiers (no URL
-  credentials) and only the effort word from `copilot_chat.request.options`.
+  credentials, no local filesystem paths) and only the effort word from
+  `copilot_chat.request.options`.
   Select optional `agent-traces.db` columns defensively; older stores lack them.
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call

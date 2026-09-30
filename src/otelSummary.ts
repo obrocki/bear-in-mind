@@ -90,6 +90,8 @@ export interface SpanDigest {
   credits: number;
   /** Model calls with no chat session ID (titles, progress, language-model API requests). */
   sessionlessCalls: number;
+  /** Of those, calls that reported credits, and the credits they reported. */
+  sessionlessCreditCalls: number;
   sessionlessCredits: number;
   byModel: CallTally[];
   /** By `gen_ai.agent.name`. */
@@ -133,6 +135,7 @@ export function emptySpanDigest(): SpanDigest {
     creditCalls: 0,
     credits: 0,
     sessionlessCalls: 0,
+    sessionlessCreditCalls: 0,
     sessionlessCredits: 0,
     byModel: [],
     byCaller: [],
@@ -224,6 +227,7 @@ export interface TraceCredits {
   creditCalls: number;
   credits: number;
   sessionlessCalls: number;
+  sessionlessCreditCalls: number;
   sessionlessCredits: number;
   byModel: CreditRow[];
   byRepository: CreditRow[];
@@ -539,6 +543,7 @@ export function buildTraceCredits(spans: SpanDigest): TraceCredits {
     creditCalls: spans.creditCalls ?? 0,
     credits: spans.credits ?? 0,
     sessionlessCalls: spans.sessionlessCalls ?? 0,
+    sessionlessCreditCalls: spans.sessionlessCreditCalls ?? 0,
     sessionlessCredits: spans.sessionlessCredits ?? 0,
     byModel: creditRows(spans.byModel, 'unknown model'),
     byRepository: creditRows(spans.byRepository, 'no repository'),

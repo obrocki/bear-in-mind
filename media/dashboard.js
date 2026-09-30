@@ -427,10 +427,14 @@
     block.append(el('p', 'viz-caption',
       'Repository comes from agent spans (github.copilot.git.*) in the same session or its parent session.'));
     if (trace.sessionlessCalls > 0) {
+      const reported = trace.sessionlessCreditCalls || 0;
       block.append(el('p', 'viz-caption',
         count(trace.sessionlessCalls) + ' / ' + count(trace.calls) +
         ' calls carry no session ID (helper calls such as titles, progress messages and language-model API requests); ' +
-        'they reported ' + credits(trace.sessionlessCredits) + ' credits.'));
+        (reported === 0
+          ? 'none of them reported credits.'
+          : (reported < trace.sessionlessCalls ? count(reported) + ' of them' : 'they') +
+            ' reported ' + credits(trace.sessionlessCredits) + ' credits.')));
     }
     if (trace.creditCalls < trace.calls) {
       const unknown = trace.calls - trace.creditCalls;

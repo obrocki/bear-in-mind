@@ -103,12 +103,13 @@ async function openInstance(ctx) {
   if (input.windowDays !== undefined) options.windowDays = clampWindow(input.windowDays);
   if (input.sessionStorePath !== undefined) options.sessionStorePath = input.sessionStorePath || undefined;
   if (input.tracesDbPath !== undefined) options.tracesDbPath = input.tracesDbPath || undefined;
-  const changed = coverageKey(options) !== coverageKey(instance.options);
   instance.options = options;
 
-  const coverage = await coverageFor(instance.options);
+  // Every open recomputes, so a reopened panel never shows a stale snapshot;
+  // the UI's follow-up GET reuses this fresh result.
+  const coverage = await coverageFor(instance.options, { refresh: true });
   instance.server.broadcast('view', { view: instance.view });
-  if (changed) instance.server.broadcast('coverage', { generatedAt: coverage.generatedAt });
+  instance.server.broadcast('coverage', { generatedAt: coverage.generatedAt });
 
   return {
     title: 'AI attribution',

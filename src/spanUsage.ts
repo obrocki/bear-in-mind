@@ -51,17 +51,22 @@ function text(value: unknown): string | undefined {
 
 /**
  * `owner/name` for github.com, `host/path` elsewhere. Remote URLs can carry
- * credentials, so only the host and path of a parsed URL survive.
+ * credentials, so only the host and path of a parsed URL survive. Local
+ * filesystem remotes (absolute, home-relative, Windows or `file:` paths) are
+ * rejected so no local path reaches the dashboard.
  */
 export function repositoryName(value: unknown): string | undefined {
   const raw = text(value)?.trim();
-  if (!raw) {
+  if (!raw || /^(file:|[/\\~.]|[a-z]:[\\/])/i.test(raw) || raw.includes('\\')) {
     return undefined;
   }
   let name = raw.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(name)) {
     try {
       const url = new URL(name);
+      if (!url.hostname) {
+        return undefined;
+      }
       const pathname = url.pathname.replace(/^\/+/, '');
       name = url.hostname.toLowerCase() === 'github.com' ? pathname : `${url.hostname}/${pathname}`;
     } catch {
@@ -234,7 +239,10 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       }
       if (!span.sessionId) {
         digest.sessionlessCalls++;
-        digest.sessionlessCredits += span.credits ?? 0;
+        if (span.credits !== undefined) {
+          digest.sessionlessCreditCalls++;
+          digest.sessionlessCredits += span.credits;
+        }
       }
       const repository = work.get(span.sessionId ?? '')?.repository ?? work.get(span.parentSessionId ?? '')?.repository;
       tally(byModel, span.model, span.credits);

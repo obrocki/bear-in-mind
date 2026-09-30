@@ -506,7 +506,11 @@ function sourceCard(s) {
                   {},
                   h('th', {}, 'Tool'),
                   h('th', { class: 'num' }, 'Calls'),
-                  h('th', { class: 'num' }, 'Failed'),
+                  h(
+                    'th',
+                    { class: 'num', title: 'Failed calls / calls that reported an OK or ERROR status' },
+                    'Failed / with status',
+                  ),
                 ),
               ),
               h(
@@ -521,7 +525,7 @@ function sourceCard(s) {
                     h(
                       'td',
                       { class: 'num', title: x.statusCalls ? '' : 'Status not reported' },
-                      x.statusCalls ? fmtInt.format(x.failed) : '—',
+                      x.statusCalls ? `${fmtInt.format(x.failed)} / ${fmtInt.format(x.statusCalls)}` : '—',
                     ),
                   ),
                 ),

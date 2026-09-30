@@ -79,6 +79,9 @@ it('normalises repository identifiers and drops credentials', async () => {
   assert.equal(normalizeRepository('user:secret@host/o/r'), null, 'unparsed credentials are rejected, not shown');
   assert.equal(normalizeRepository('ftp://user:pw@host.example/o/r'), 'host.example/o/r');
   assert.equal(normalizeRepository('https://user:pw@[bad/o/r'), null);
+  for (const local of ['/home/alice/private/repo', 'C:\\Users\\alice\\repo', 'file:///home/alice/repo', '~/repo']) {
+    assert.equal(normalizeRepository(local), null, local);
+  }
 });
 
 it('session store: credit-weighted funnel stops where references stop', async (t) => {
@@ -471,6 +474,12 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   assert.equal(store.totals.credits, 42);
   const stage = Object.fromEntries(store.funnel.map((f) => [f.id, f]));
   assert.equal(stage.branch.credits, 42);
+  assert.deepEqual(
+    store.daily.map((d) => d.day),
+    ['2026-09-23', '2026-09-24', '2026-09-25'],
+    'buckets use normalized UTC days',
+  );
+  assert.deepEqual(store.freshness, { first: '2026-09-23T13:30:00.000Z', last: '2026-09-25T00:00:00.000Z' });
   assert.equal(stage.workRef.emitted, false);
   assert.equal(stage.pullRequest.emitted, false);
   assert.match(store.notes.join(' '), /session_refs is missing or lacks session_id \/ ref_type/);

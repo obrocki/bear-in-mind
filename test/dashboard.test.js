@@ -474,7 +474,7 @@ it('breaks retained trace credits down by model, repository, caller and effort',
   assert.match(text, /no repository ×1 0/);
   assert.match(text, /By caller panel\/editAgent ×1/);
   assert.match(text, /By reasoning effort high ×1/);
-  assert.match(text, /1 \/ 2 calls carry no session ID/);
+  assert.match(text, /1 \/ 2 calls carry no session ID.*none of them reported credits/);
   assert.match(text, /1 call reported no credits: unknown, not free/);
   assert.match(text, /never added to the meter or to transcript Session Cost/);
   assert.match(text, /Cache-read share 82%\s+of trace input/);

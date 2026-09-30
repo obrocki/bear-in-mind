@@ -13,7 +13,8 @@ Bear in Mind meters local files:
 
 From span metadata the dashboard also shows repository and branch names
 (`github.copilot.git.*` on agent spans, with any credentials in remote URLs
-removed), Copilot caller names, tool names and span status, and a short
+removed and local filesystem remotes dropped), Copilot caller names, tool names
+and span status, and a short
 reasoning-effort word taken from `copilot_chat.request.options`; the rest of that
 options blob is discarded. These are held in memory for the retained seven-day
 window and are not persisted.
