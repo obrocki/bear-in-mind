@@ -303,6 +303,8 @@ export interface SessionComparison {
   updatedAt: number;
   transcript?: ChatSessionUsage;
   trace?: SpanSession;
+  /** `owner/name@branch` (or either part) from the session's agent spans. */
+  work?: string;
 }
 
 /**
@@ -389,6 +391,7 @@ export function sessionComparisons(
       sessionId: trace.sessionId, pinned: false, updatedAt: trace.endedAt
     };
     session.trace = trace;
+    session.work = sessionWorkLabel(session);
     session.updatedAt = Math.max(session.updatedAt, trace.endedAt);
     sessions.set(trace.sessionId, session);
   }

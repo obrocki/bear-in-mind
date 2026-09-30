@@ -195,6 +195,7 @@ function renderSurfaces() {
           'button',
           {
             'aria-pressed': String(state.group === g.id),
+            'data-focus-key': `group-${g.id}`,
             onclick: () => {
               state.group = g.id;
               render();
@@ -502,7 +503,11 @@ function sourceCard(s) {
                     {},
                     h('td', {}, x.key),
                     h('td', { class: 'num' }, fmtInt.format(x.calls)),
-                    h('td', { class: 'num' }, fmtInt.format(x.failed)),
+                    h(
+                      'td',
+                      { class: 'num', title: x.statusCalls ? '' : 'Status not reported' },
+                      x.statusCalls ? fmtInt.format(x.failed) : '—',
+                    ),
                   ),
                 ),
               ),
@@ -526,6 +531,7 @@ function renderCoverage() {
     'select',
     {
       'aria-label': 'Window',
+      'data-focus-key': 'window',
       onchange: (e) => refresh(Number(e.target.value)),
     },
     WINDOWS.map((w) => h('option', { value: w.days, selected: c?.window.days === w.days }, w.label)),
@@ -540,7 +546,11 @@ function renderCoverage() {
       'div',
       { class: 'toolbar' },
       select,
-      h('button', { onclick: () => refresh(), disabled: state.busy }, state.busy ? 'Refreshing…' : 'Refresh'),
+      h(
+        'button',
+        { 'data-focus-key': 'refresh', onclick: () => refresh(), 'aria-disabled': state.busy ? 'true' : undefined },
+        state.busy ? 'Refreshing…' : 'Refresh',
+      ),
       c ? h('span', { class: 'muted small' }, `Generated ${new Date(c.generatedAt).toLocaleString()}`) : null,
     ),
     c
@@ -590,29 +600,54 @@ const RENDERERS = {
 
 function renderTabs() {
   const tabs = document.getElementById('tabs');
-  tabs.replaceChildren(
-    ...VIEWS.map((v) =>
-      h(
-        'button',
-        {
-          role: 'tab',
-          'aria-selected': String(state.view === v.id),
-          onclick: () => selectView(v.id, true),
-        },
-        v.label,
+  // Built once and updated in place, so the focused tab survives a re-render.
+  if (!tabs.childElementCount) {
+    tabs.append(
+      ...VIEWS.map((v) =>
+        h(
+          'button',
+          {
+            role: 'tab',
+            id: `tab-${v.id}`,
+            'aria-controls': 'view',
+            'data-view': v.id,
+            onclick: () => selectView(v.id, true),
+            onkeydown: onTabKey,
+          },
+          v.label,
+        ),
       ),
-    ),
-  );
+    );
+  }
+  for (const button of tabs.children) {
+    const selected = button.dataset.view === state.view;
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+}
+
+function onTabKey(event) {
+  const index = VIEWS.findIndex((v) => v.id === state.view);
+  const next = { ArrowRight: index + 1, ArrowLeft: index - 1, Home: 0, End: VIEWS.length - 1 }[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  const view = VIEWS[(next + VIEWS.length) % VIEWS.length].id;
+  selectView(view, true);
+  document.getElementById(`tab-${view}`).focus();
 }
 
 function render() {
   renderTabs();
   if (!state.model) return;
+  // Controls inside the panel are rebuilt; restore focus to the equivalent one.
+  const focusKey = main.contains(document.activeElement) ? document.activeElement.dataset.focusKey : undefined;
   try {
     main.replaceChildren(...[RENDERERS[state.view]()].flat().filter(Boolean));
   } catch (err) {
     main.replaceChildren(h('p', {}, `Could not render: ${err.message}`));
   }
+  main.setAttribute('aria-labelledby', `tab-${state.view}`);
+  if (focusKey) main.querySelector(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
 }
 
 async function selectView(view, fromUser) {
@@ -638,6 +673,7 @@ async function loadCoverage() {
 }
 
 async function refresh(windowDays) {
+  if (state.busy) return;
   state.busy = true;
   render();
   try {

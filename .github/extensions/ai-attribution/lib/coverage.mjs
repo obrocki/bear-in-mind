@@ -95,20 +95,26 @@ export function findTracesDb(globalStorageDirs) {
 
 // ---------------------------------------------------------------- helpers ---
 
-/** owner/name for github.com, host/path otherwise. Credentials in remote URLs are dropped. */
+/**
+ * owner/name for github.com, host/path otherwise. Remote URLs can carry
+ * credentials, so only the host and path of a parsed URL survive, and any
+ * unparsed value containing `@` is rejected rather than shown.
+ */
 export function normalizeRepository(value) {
   if (value === null || value === undefined) return null;
   let v = String(value).trim();
   if (!v) return null;
-  v = v.replace(/^git@([^:]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
-  if (/^https?:\/\//i.test(v)) {
+  v = v.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
     try {
       const url = new URL(v);
       const pathname = url.pathname.replace(/^\/+/, '');
       v = url.hostname.toLowerCase() === 'github.com' ? pathname : `${url.hostname}/${pathname}`;
     } catch {
-      /* keep as given */
+      return null;
     }
+  } else if (v.includes('@')) {
+    return null;
   }
   v = v.replace(/\.git$/i, '').replace(/\/+$/, '');
   return v || null;
@@ -562,16 +568,22 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   const tools = db
     .prepare(
-      `SELECT ${cols.has('tool_name') ? 'tool_name' : 'NULL AS tool_name'}, ${cols.has('status_code') ? 'status_code' : '0 AS status_code'}
+      `SELECT ${cols.has('tool_name') ? 'tool_name' : 'NULL AS tool_name'}, ${cols.has('status_code') ? 'status_code' : 'NULL AS status_code'}
              FROM spans WHERE operation_name = 'execute_tool' AND start_time_ms >= ?`,
     )
     .all(sinceMs);
+  // Only spans with a reported status count toward failures; older stores
+  // without `status_code` leave the failure count unknown, not zero.
   const toolTally = new Map();
   for (const tool of tools) {
     const key = present(tool.tool_name) ? String(tool.tool_name) : '(none)';
-    const t = toolTally.get(key) ?? { key, calls: 0, failed: 0 };
+    const t = toolTally.get(key) ?? { key, calls: 0, statusCalls: 0, failed: 0 };
     t.calls += 1;
-    t.failed += num(tool.status_code) === SPAN_STATUS_ERROR ? 1 : 0;
+    const status = present(tool.status_code) ? Number(tool.status_code) : NaN;
+    if (Number.isInteger(status)) {
+      t.statusCalls += 1;
+      t.failed += status === SPAN_STATUS_ERROR ? 1 : 0;
+    }
     toolTally.set(key, t);
   }
 

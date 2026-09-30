@@ -493,3 +493,26 @@ it('omits the trace credit breakdown without retained model calls', () => {
   d.render({}, new OtelRollup(), undefined, {});
   assert.doesNotMatch(d.nodes.sections.textContent, /Model-call credits · retained traces|Cache-read share/);
 });
+
+it('shows retained trace credits before the local meter has charged any usage', () => {
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    spans: tracedSpans(), totals: { input: 0, output: 0, credits: 0 }, countedTokens: 0
+  });
+  const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
+  assert.match(cost.textContent, /No new token counts/);
+  assert.match(cost.textContent, /Model-call credits · retained traces/);
+  assert.match(cost.textContent, /Cache-read share 82%\s+of trace input/);
+});
+
+it('labels a session with a branch even when no repository is reported', () => {
+  const at = Date.UTC(2026, 8, 29, 12);
+  const spans = digestSpans([
+    usageSpan('agent', {
+      'gen_ai.operation.name': 'invoke_agent', 'copilot_chat.chat_session_id': 'solo', 'github.copilot.git.branch': 'topic'
+    }, at, at + 100)
+  ]);
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans });
+  assert.match(d.nodes.sections.textContent, /Latest observed: solo · topic\./);
+});

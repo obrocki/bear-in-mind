@@ -7,7 +7,7 @@ import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { OtelWatcher } from './otelWatcher';
-import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, sessionWorkLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
+import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
@@ -180,7 +180,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
           label: sessionLabel(session),
           description: [
             session.trace?.model ?? session.transcript?.model ?? 'unknown model',
-            sessionWorkLabel(session),
+            session.work,
             new Date(session.updatedAt).toLocaleString()
           ].filter(Boolean).join(' · '),
           detail: session.sessionId,
@@ -418,7 +418,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     output.appendLine(`  session cost        ${session.transcript?.credits ?? 'not reported'} transcript credits`);
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
-    output.appendLine(`  session work        ${sessionWorkLabel(session) ?? 'not reported'} (agent span git attributes)`);
+    output.appendLine(`  session work        ${session.work ?? 'not reported'} (agent span git attributes)`);
   }
   const spans = otel.spanDigest;
   output.appendLine(

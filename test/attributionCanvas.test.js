@@ -76,6 +76,9 @@ it('normalises repository identifiers and drops credentials', async () => {
   assert.equal(normalizeRepository('https://dev.azure.com/org/proj/_git/repo'), 'dev.azure.com/org/proj/_git/repo');
   assert.equal(normalizeRepository('  '), null);
   assert.equal(normalizeRepository(null), null);
+  assert.equal(normalizeRepository('user:secret@host/o/r'), null, 'unparsed credentials are rejected, not shown');
+  assert.equal(normalizeRepository('ftp://user:pw@host.example/o/r'), 'host.example/o/r');
+  assert.equal(normalizeRepository('https://user:pw@[bad/o/r'), null);
 });
 
 it('session store: credit-weighted funnel stops where references stop', async (t) => {
@@ -281,7 +284,7 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   });
   assert.equal(traces.breakdowns.repository[0].key, 'o/r');
   assert.equal(traces.breakdowns.reasoningEffort.find((r) => r.key === 'high').credits, 3);
-  assert.deepEqual(traces.tools, [{ key: 'read_file', calls: 2, failed: 1 }]);
+  assert.deepEqual(traces.tools, [{ key: 'read_file', calls: 2, statusCalls: 2, failed: 1 }]);
   assert.equal(coverage.sources.find((s) => s.id === 'sessionStore').status, 'missing');
 
   assert.equal(reasoningEffortFromOptions('{"reasoning_effort":"max"}'), 'max');
@@ -379,4 +382,27 @@ it('canvas server: serves UI and API on loopback, rejects foreign hosts and orig
     403,
   );
   assert.equal(view, 'gaps');
+});
+
+it('VS Code traces: an older store without status_code leaves tool failures unknown', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { computeCoverage } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const file = path.join(dir, 'agent-traces.db');
+  const now = Date.UTC(2026, 8, 30, 12);
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, start_time_ms INTEGER, operation_name TEXT, tool_name TEXT);
+    INSERT INTO spans VALUES ('a', ${now - 1000}, 'execute_tool', 'read_file'), ('b', ${now - 900}, 'execute_tool', 'read_file');
+  `);
+  db.close();
+  const coverage = await computeCoverage({
+    windowDays: 7,
+    now,
+    sessionStorePath: path.join(dir, 'none.db'),
+    tracesDbPath: file,
+  });
+  const traces = coverage.sources.find((s) => s.id === 'traces');
+  assert.equal(traces.status, 'ok');
+  assert.deepEqual(traces.tools, [{ key: 'read_file', calls: 2, statusCalls: 0, failed: 0 }]);
 });

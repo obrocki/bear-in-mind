@@ -304,6 +304,10 @@
         ])
       );
       node.append(renderGauge(cost));
+      // Retained traces are adopted without charging the meter, so they can
+      // exist before any new usage does.
+      const retained = renderTraceCredits(cost);
+      if (retained) node.append(retained);
       return node;
     }
 
@@ -336,9 +340,6 @@
 
     const telemetryRows = [];
     if (cost.cachedTokens > 0) telemetryRows.push({ label: 'Trace cache read', value: tokens(cost.cachedTokens) });
-    if (cost.cacheReadRatio !== undefined && cost.cacheReadRatio !== null) {
-      telemetryRows.push({ label: 'Cache-read share', value: percent(cost.cacheReadRatio), qualifier: 'of trace input' });
-    }
     if (cost.reasoningTokens > 0) telemetryRows.push({ label: 'Trace reasoning', value: tokens(cost.reasoningTokens) });
     if (cost.burnPerHour > 0) telemetryRows.push({ label: 'Feed burn rate', value: tokens(cost.burnPerHour), qualifier: '/hr' });
     if (telemetryRows.length) {
@@ -379,7 +380,7 @@
       );
     }
 
-    const traceCredits = renderTraceCredits(cost.traceCredits);
+    const traceCredits = renderTraceCredits(cost);
     if (traceCredits) node.append(traceCredits);
 
     node.append(driftNote(cost.drift, cost.source));
@@ -390,14 +391,19 @@
    * Where reported model-call credits went in retained traces. Token share is
    * not credit share, so this is grouped by credits rather than tokens.
    */
-  function renderTraceCredits(trace) {
+  function renderTraceCredits(cost) {
+    const trace = cost.traceCredits;
     if (!trace || !trace.available) return null;
     const block = el('div', 'gauge');
     block.append(el('h3', null, 'Model-call credits · retained traces'));
-    block.append(stats([
+    const rows = [
       { label: 'Reported credits', value: trace.creditCalls > 0 ? credits(trace.credits) : '—', qualifier: 'credits' },
       { label: 'Calls reporting credits', value: count(trace.creditCalls) + ' / ' + count(trace.calls) }
-    ]));
+    ];
+    if (cost.cacheReadRatio !== undefined && cost.cacheReadRatio !== null) {
+      rows.push({ label: 'Cache-read share', value: percent(cost.cacheReadRatio), qualifier: 'of trace input' });
+    }
+    block.append(stats(rows));
     const groups = [
       ['By model', trace.byModel],
       ['By repository', trace.byRepository],
@@ -501,7 +507,7 @@
     block.append(el('p', 'headline-note',
       (session.pinned ? 'Pinned: ' : 'Latest observed: ') + sessionLabel(session) +
       (session.name ? ' (' + shortSessionId(session.sessionId) + ')' : '') +
-      (trace && trace.repository ? ' · ' + trace.repository + (trace.branch ? '@' + trace.branch : '') : '') +
+      (session.work ? ' · ' + session.work : '') +
       '. Not automatically the active VS Code chat.'));
     block.append(stats([
       { label: 'Session Cost · transcript', value: transcript && transcript.credits !== undefined ? credits(transcript.credits) : '—', qualifier: 'credits' },
