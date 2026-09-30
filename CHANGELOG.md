@@ -1,5 +1,25 @@
 # Change Log
 
+## 0.6.2
+
+- Dashboard: a **Model-call credits · retained traces** block groups reported
+  credits by model, repository, caller and reasoning effort, because token share
+  is not credit share. Calls without a session ID and calls without credits are
+  counted and labeled rather than hidden.
+- Sessions carry the repository and branch reported by their agent spans, shown
+  in the session picker (searchable), the comparison session and diagnostics.
+- Cost shows the cache-read share of retained trace input.
+- Quality falls back to `execute_tool` span status for tool success when the feed
+  has no tool-call metrics or events, so trace-store-only setups get a signal.
+  Only OK and ERROR span statuses count; UNSET or missing statuses are left out.
+- The trace-store reader tolerates older `agent-traces.db` schemas without
+  `agent_name` or `status_code`.
+- Research: [connecting AI usage to work and outcomes](docs/research/ai-telemetry-attribution.md)
+  across VS Code, Copilot CLI, the GitHub Copilot app and Copilot cloud agent, with a
+  structured attribution model. Repository-only; not part of the VSIX.
+- Added the **AI attribution** GitHub Copilot app canvas (`.github/extensions/ai-attribution/`)
+  showing the model, surface matrix, gaps and live read-only coverage from local stores.
+
 ## 0.6.1
 
 - Session selection now lists the name the user gave a chat session, with the

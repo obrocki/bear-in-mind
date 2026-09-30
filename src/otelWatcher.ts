@@ -25,6 +25,19 @@ const PATH_REFRESH_MS = 30_000;
 const SPAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** How recently the feed must have exported token usage to count as live. */
 const FEED_FRESH_MS = 15 * 60 * 1000;
+/** `span_attributes` read as numbers. */
+const NUMERIC_SPAN_KEYS = [
+  'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
+  'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens'
+];
+/** `span_attributes` read as short strings: identity and work context, never content. */
+const TEXT_SPAN_KEYS = [
+  'copilot_chat.parent_chat_session_id', 'copilot_chat.debug_log_label',
+  'github.copilot.git.repository', 'github.copilot.git.branch',
+  'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name'
+];
+/** Request-option blobs larger than this are skipped, matching the file-span path. */
+const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;
 
 export interface OtelUsageDelta {
   input: number;
@@ -577,28 +590,39 @@ export class OtelWatcher implements vscode.Disposable {
     try {
       db = new sqlite.DatabaseSync(file, { readOnly: true });
       const since = Date.now() - SPAN_WINDOW_MS;
+      // Older stores lack these columns; select NULL instead of failing the scan.
+      const columns = new Set(
+        db.prepare('PRAGMA table_info(spans)').all().map((row) => String((row as Record<string, unknown>).name))
+      );
+      const optional = (name: string) => (columns.has(name) ? name : `NULL AS ${name}`);
       const rows = db
         .prepare(
           'SELECT span_id, operation_name, tool_name, start_time_ms, end_time_ms, ttft_ms, ' +
             'conversation_id, chat_session_id, request_model, response_model, ' +
-            'input_tokens, output_tokens, cached_tokens, reasoning_tokens ' +
+            'input_tokens, output_tokens, cached_tokens, reasoning_tokens, ' +
+            `${optional('agent_name')}, ${optional('status_code')} ` +
             'FROM spans WHERE start_time_ms >= ?'
         )
         .all(since);
       const attributes = new Map<string, Record<string, unknown>>();
+      const keys = [...NUMERIC_SPAN_KEYS, ...TEXT_SPAN_KEYS];
       for (const raw of db.prepare(
         'SELECT a.span_id, a.key, a.value FROM span_attributes a JOIN spans s ON s.span_id = a.span_id ' +
-        'WHERE s.start_time_ms >= ? AND a.key IN (?, ?, ?, ?, ?, ?)'
-      ).all(since, 'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
-        'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens',
-        'copilot_chat.parent_chat_session_id', 'copilot_chat.debug_log_label')) {
+        `WHERE s.start_time_ms >= ? AND a.key IN (${keys.map(() => '?').join(', ')})`
+      ).all(since, ...keys)) {
         const r = raw as Record<string, unknown>;
         const id = String(r.span_id);
         const a = attributes.get(id) ?? {};
         const key = String(r.key);
-        a[key] = key.endsWith('session_id') || key.endsWith('debug_log_label') ? r.value : Number(r.value);
+        if (TEXT_SPAN_KEYS.includes(key)) {
+          a[key] = r.value;
+        } else if (r.value !== null && r.value !== undefined && String(r.value).trim() !== '') {
+          // A blank numeric value is unreported, not zero.
+          a[key] = Number(r.value);
+        }
         attributes.set(id, a);
       }
+      this.readReasoningEfforts(db, since, attributes);
       const completed: UsageSpan[] = [];
       for (const raw of rows) {
         const r = raw as Record<string, unknown>;
@@ -614,8 +638,9 @@ export class OtelWatcher implements vscode.Disposable {
           'gen_ai.usage.cache_read.input_tokens': r.cached_tokens,
           'gen_ai.usage.reasoning_tokens': r.reasoning_tokens,
           'copilot_chat.time_to_first_token': r.ttft_ms,
+          'gen_ai.agent.name': r.agent_name,
           ...attributes.get(String(r.span_id))
-        }, numeric(r.start_time_ms), numeric(r.end_time_ms));
+        }, numeric(r.start_time_ms), numeric(r.end_time_ms), r.status_code ?? undefined);
         if (span) {
           completed.push(span);
         }
@@ -631,6 +656,34 @@ export class OtelWatcher implements vscode.Disposable {
       } catch {
         /* already gone */
       }
+    }
+  }
+
+  /**
+   * Adds the reasoning effort from `copilot_chat.request.options` without
+   * pulling the whole options blob into memory. Isolated so a SQLite build
+   * without JSON functions loses only this breakdown, not the span scan.
+   */
+  private readReasoningEfforts(
+    db: SqliteDatabase, since: number, attributes: Map<string, Record<string, unknown>>
+  ): void {
+    try {
+      for (const raw of db.prepare(
+        'SELECT a.span_id, ' +
+          // CASE evaluates in order, so oversized blobs never reach the JSON parser.
+          `CASE WHEN length(a.value) > ${MAX_REQUEST_OPTIONS_CHARS} THEN NULL WHEN json_valid(a.value) THEN ` +
+          "COALESCE(json_extract(a.value, '$.reasoning.effort'), json_extract(a.value, '$.reasoning_effort')) END AS effort " +
+          'FROM span_attributes a JOIN spans s ON s.span_id = a.span_id ' +
+          "WHERE s.start_time_ms >= ? AND a.key = 'copilot_chat.request.options'"
+      ).all(since)) {
+        const r = raw as Record<string, unknown>;
+        if (typeof r.effort === 'string') {
+          const id = String(r.span_id);
+          attributes.set(id, { ...attributes.get(id), 'copilot_chat.request.options': { reasoning: { effort: r.effort } } });
+        }
+      }
+    } catch {
+      /* no JSON support in this SQLite build */
     }
   }
 

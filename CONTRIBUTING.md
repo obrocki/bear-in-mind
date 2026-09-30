@@ -20,10 +20,18 @@ then press `F5` for an Extension Development Host.
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
+| `.github/extensions/ai-attribution/` | GitHub Copilot app canvas for the attribution research; not packaged. |
 
 Watchers → meter/summary → snapshots → webviews. Renderers format data; they do
 not decide accounting. Tests bundle TypeScript with a small VS Code stub and use
 Node's test runner; feed tests use temporary files and renderer tests use a DOM shim.
+
+Research on connecting Copilot usage to work and outcomes lives in
+[docs/research](docs/research/ai-telemetry-attribution.md). The
+[AI attribution canvas](.github/extensions/ai-attribution/README.md) renders it
+with live coverage. It is plain ES modules with no build step and no
+dependencies; reload extensions in the app after editing. Its tests run with
+`npm test`.
 
 ## Accounting invariants
 
@@ -51,6 +59,15 @@ Node's test runner; feed tests use temporary files and renderer tests use a DOM 
 - Quality falls back to documented log events per instrument only when metrics
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.
+  Tool success falls back to `execute_tool` span status only when the feed has no
+  tool-call measurements (a measured zero counts). Only OK and ERROR count; UNSET
+  is unknown, not a success.
+- Retained-trace credit breakdowns (model, repository, caller, reasoning effort)
+  are diagnostics over the seven-day span window: never add them to the meter or
+  to transcript credits. Keep only `owner/name` repository identifiers (no URL
+  credentials, no local filesystem paths) and only the effort word from
+  `copilot_chat.request.options`.
+  Select optional `agent-traces.db` columns defensively; older stores lack them.
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call
   time. Turn index is not an LLM round-trip count.

@@ -52,6 +52,18 @@ export interface SpanSession {
   tokenCalls?: number;
   activeMs?: number;
   context?: ContextWindow;
+  /** From the session's agent spans (`github.copilot.git.*`), when reported. */
+  repository?: string;
+  branch?: string;
+}
+
+/** Model calls and their reported credits under one grouping key. */
+export interface CallTally {
+  key: string | null;
+  calls: number;
+  /** Calls that reported credits; the rest are unknown, not free. */
+  creditCalls: number;
+  credits: number;
 }
 
 /** Aggregates derived from the `spans` table, when the SQLite source is live. */
@@ -72,6 +84,24 @@ export interface SpanDigest {
   reasoningTokens: number;
   /** Latest observed prompt occupancy against `max_prompt_tokens`, from any session. */
   context?: ContextWindow;
+  /** Unique `chat` spans, and the reported credits among them. */
+  chatCalls: number;
+  creditCalls: number;
+  credits: number;
+  /** Model calls with no chat session ID (titles, progress, language-model API requests). */
+  sessionlessCalls: number;
+  /** Of those, calls that reported credits, and the credits they reported. */
+  sessionlessCreditCalls: number;
+  sessionlessCredits: number;
+  byModel: CallTally[];
+  /** By `gen_ai.agent.name`. */
+  byCaller: CallTally[];
+  byEffort: CallTally[];
+  /** By the repository of the call's session, or its parent session. */
+  byRepository: CallTally[];
+  /** Tool spans that reported a status, and how many of them failed. */
+  toolStatusCalls: number;
+  toolFailures: number;
 }
 
 /**
@@ -100,7 +130,19 @@ export function emptySpanDigest(): SpanDigest {
     inputTokens: 0,
     outputTokens: 0,
     cachedTokens: 0,
-    reasoningTokens: 0
+    reasoningTokens: 0,
+    chatCalls: 0,
+    creditCalls: 0,
+    credits: 0,
+    sessionlessCalls: 0,
+    sessionlessCreditCalls: 0,
+    sessionlessCredits: 0,
+    byModel: [],
+    byCaller: [],
+    byEffort: [],
+    byRepository: [],
+    toolStatusCalls: 0,
+    toolFailures: 0
   };
 }
 
@@ -162,6 +204,35 @@ export interface CostSection {
   drift: DriftReport;
   manualTokens: number;
   legacyTokens: number;
+  /** Trace cache-read input / trace input, both from the same retained window. */
+  cacheReadRatio?: number;
+  traceCredits: TraceCredits;
+}
+
+export interface CreditRow {
+  label: string;
+  calls: number;
+  creditCalls: number;
+  credits: number;
+}
+
+/**
+ * Reported model-call credits in retained traces, grouped several ways. A
+ * diagnostic breakdown: never added to the meter or to transcript Session Cost.
+ */
+export interface TraceCredits {
+  available: boolean;
+  sinceMs?: number;
+  calls: number;
+  creditCalls: number;
+  credits: number;
+  sessionlessCalls: number;
+  sessionlessCreditCalls: number;
+  sessionlessCredits: number;
+  byModel: CreditRow[];
+  byRepository: CreditRow[];
+  byCaller: CreditRow[];
+  byEffort: CreditRow[];
 }
 
 export interface SpeedSection {
@@ -207,6 +278,8 @@ export interface QualitySection {
   toolCalls: number;
   toolFailures: number;
   toolSuccessRate?: number;
+  /** Feed metrics/events first; span status from retained traces as a fallback. */
+  toolSource: MetricSource;
   editResponseErrors: number;
   summarizationsApplied: number;
   summarizationsFailed: number;
@@ -234,6 +307,8 @@ export interface SessionComparison {
   updatedAt: number;
   transcript?: ChatSessionUsage;
   trace?: SpanSession;
+  /** `owner/name@branch` (or either part) from the session's agent spans. */
+  work?: string;
 }
 
 /**
@@ -320,6 +395,7 @@ export function sessionComparisons(
       sessionId: trace.sessionId, pinned: false, updatedAt: trace.endedAt
     };
     session.trace = trace;
+    session.work = sessionWorkLabel(session);
     session.updatedAt = Math.max(session.updatedAt, trace.endedAt);
     sessions.set(trace.sessionId, session);
   }
@@ -430,8 +506,59 @@ export function buildCost(input: SummaryInput): CostSection {
     source: input.source,
     drift: input.drift,
     manualTokens: input.manualTokens ?? 0,
-    legacyTokens: input.legacyTokens ?? 0
+    legacyTokens: input.legacyTokens ?? 0,
+    cacheReadRatio: spans.inputTokens > 0 ? spans.cachedTokens / spans.inputTokens : undefined,
+    traceCredits: buildTraceCredits(spans)
   };
+}
+
+/** Rows shown per breakdown; anything beyond is folded into one "N more" row. */
+const CREDIT_ROWS = 5;
+
+function creditRows(tallies: CallTally[] | undefined, unknownLabel: string): CreditRow[] {
+  const rows = [...(tallies ?? [])]
+    .sort((a, b) => b.credits - a.credits || b.calls - a.calls)
+    .map((t) => ({ label: t.key ?? unknownLabel, calls: t.calls, creditCalls: t.creditCalls, credits: t.credits }));
+  if (rows.length <= CREDIT_ROWS + 1) {
+    return rows;
+  }
+  const rest = rows.slice(CREDIT_ROWS);
+  return [
+    ...rows.slice(0, CREDIT_ROWS),
+    rest.reduce(
+      (sum, r) => ({
+        ...sum, calls: sum.calls + r.calls, creditCalls: sum.creditCalls + r.creditCalls, credits: sum.credits + r.credits
+      }),
+      { label: `${rest.length} more`, calls: 0, creditCalls: 0, credits: 0 }
+    )
+  ];
+}
+
+export function buildTraceCredits(spans: SpanDigest): TraceCredits {
+  const calls = spans.chatCalls ?? 0;
+  return {
+    available: calls > 0,
+    sinceMs: spans.sinceMs,
+    calls,
+    creditCalls: spans.creditCalls ?? 0,
+    credits: spans.credits ?? 0,
+    sessionlessCalls: spans.sessionlessCalls ?? 0,
+    sessionlessCreditCalls: spans.sessionlessCreditCalls ?? 0,
+    sessionlessCredits: spans.sessionlessCredits ?? 0,
+    byModel: creditRows(spans.byModel, 'unknown model'),
+    byRepository: creditRows(spans.byRepository, 'no repository'),
+    byCaller: creditRows(spans.byCaller, 'unnamed caller'),
+    byEffort: creditRows(spans.byEffort, 'not reported')
+  };
+}
+
+/** `owner/name@branch` for a session's work context, when its agent spans reported one. */
+export function sessionWorkLabel(session: Pick<SessionComparison, 'trace'>): string | undefined {
+  const trace = session.trace;
+  if (!trace?.repository) {
+    return trace?.branch;
+  }
+  return trace.branch ? `${trace.repository}@${trace.branch}` : trace.repository;
 }
 
 /** Tokens per hour over the span the series actually covers. */
@@ -521,7 +648,7 @@ function tokenThroughput(input: SummaryInput): number {
   return windowTokens / (busyMs / 60_000);
 }
 
-export function buildQuality(input: SummaryInput): QualitySection {
+export function buildQuality(input: Pick<SummaryInput, 'rollup'> & Partial<Pick<SummaryInput, 'spans'>>): QualitySection {
   const { rollup } = input;
 
   const editsAccepted = Math.round(rollup.total(EDIT_ACCEPTANCE, { 'copilot_chat.edit.outcome': 'accepted' }));
@@ -553,8 +680,16 @@ export function buildQuality(input: SummaryInput): QualitySection {
   const actionApply = Math.round(rollup.total(USER_ACTIONS, { action: 'apply' }));
   const actionFollowup = Math.round(rollup.total(USER_ACTIONS, { action: 'followup' }));
 
-  const toolCalls = Math.round(rollup.total(TOOL_CALL_COUNT));
-  const toolFailures = Math.round(rollup.total(TOOL_CALL_COUNT, { success: 'false' }));
+  const metricToolCalls = Math.round(rollup.total(TOOL_CALL_COUNT));
+  const metricToolFailures = Math.round(rollup.total(TOOL_CALL_COUNT, { success: 'false' }));
+  // Span status is a fallback for trace-store-only setups. A feed measurement,
+  // even of zero calls, wins; tool spans without a reported status are left out
+  // rather than counted as successes.
+  const spanToolCalls = input.spans?.toolStatusCalls ?? 0;
+  const toolSource: MetricSource =
+    rollup.observations(TOOL_CALL_COUNT) > 0 ? 'metrics' : spanToolCalls > 0 ? 'spans' : 'none';
+  const toolCalls = toolSource === 'spans' ? spanToolCalls : metricToolCalls;
+  const toolFailures = toolSource === 'spans' ? input.spans?.toolFailures ?? 0 : metricToolFailures;
 
   const editResponseErrors = Math.round(rollup.total(EDIT_RESPONSES, { outcome: 'error' }));
   const summarizationsApplied = Math.round(rollup.total(SUMMARIZATIONS, { outcome: 'applied' }));
@@ -612,6 +747,7 @@ export function buildQuality(input: SummaryInput): QualitySection {
     toolCalls,
     toolFailures,
     toolSuccessRate: toolCalls > 0 ? (toolCalls - toolFailures) / toolCalls : undefined,
+    toolSource,
     editResponseErrors,
     summarizationsApplied,
     summarizationsFailed,

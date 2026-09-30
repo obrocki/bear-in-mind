@@ -16,6 +16,7 @@ the extension actually looks like.
 | `dashboard.png` | Representative session comparisons with the default unscaled ice gauge. |
 | `dashboard-context.png` | The same dashboard with a reported prompt allowance. |
 | `dashboard-waiting.png` | A flowing telemetry feed awaiting quality signals. |
+| `dashboard-credits.png` | Retained-trace credits by model, repository, caller and reasoning effort. |
 | `dashboard-empty.png` | The dashboard before any telemetry is connected. |
 
 ## How they are produced

@@ -1,5 +1,11 @@
 import { hrToMs } from './otelParse';
-import { emptySpanDigest, type SpanDigest, type SpanSession } from './otelSummary';
+import { emptySpanDigest, type CallTally, type SpanDigest, type SpanSession } from './otelSummary';
+
+/** OTel span status codes. UNSET (0) means no status was reported, so it is unknown. */
+const SPAN_STATUS_OK = 1;
+const SPAN_STATUS_ERROR = 2;
+/** Request-option blobs larger than this are skipped rather than parsed. */
+const MAX_OPTIONS_CHARS = 64 * 1024;
 
 /** Metadata only. Never retain prompts, tool arguments, events or response text. */
 export interface UsageSpan {
@@ -19,6 +25,17 @@ export interface UsageSpan {
   tool?: string;
   promptLimit?: number;
   auxiliary: boolean;
+  /** `gen_ai.agent.name`: the Copilot component that made the call. */
+  agent?: string;
+  /** Chat session a sub-agent call belongs to. */
+  parentSessionId?: string;
+  /** Reported reasoning effort; only this value is kept from the request options. */
+  effort?: string;
+  /** `owner/name` from agent-span git attributes, credentials removed. */
+  repository?: string;
+  branch?: string;
+  /** Span status ERROR; undefined when the source reported no status. */
+  failed?: boolean;
 }
 
 export function nonnegative(value: unknown): number | undefined {
@@ -32,11 +49,76 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : undefined;
 }
 
+/**
+ * `owner/name` for github.com, `host/path` elsewhere. Remote URLs can carry
+ * credentials, so only the host and path of a parsed URL survive. Local
+ * filesystem remotes (absolute, home-relative, Windows or `file:` paths) are
+ * rejected so no local path reaches the dashboard.
+ */
+export function repositoryName(value: unknown): string | undefined {
+  const raw = text(value)?.trim();
+  if (!raw || /^(file:|[/\\~.]|[a-z]:)/i.test(raw) || raw.includes('\\')) {
+    return undefined;
+  }
+  let name = raw.replace(/^git@([^:/]+):/, 'https://$1/').replace(/^ssh:\/\/(?:[^@/]+@)?/, 'https://');
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(name)) {
+    try {
+      const url = new URL(name);
+      if (!url.hostname) {
+        return undefined;
+      }
+      const pathname = url.pathname.replace(/^\/+/, '');
+      name = url.hostname.toLowerCase() === 'github.com' ? pathname : `${url.hostname}/${pathname}`;
+    } catch {
+      return undefined;
+    }
+  } else if (name.includes('@')) {
+    return undefined;
+  }
+  name = name.replace(/\.git$/i, '').replace(/\/+$/, '');
+  return name || undefined;
+}
+
+/**
+ * Copilot records reasoning effort inside `copilot_chat.request.options`, a
+ * JSON blob of request settings. Only a short effort word is kept from it.
+ */
+export function reasoningEffort(attributes: Record<string, unknown>): string | undefined {
+  // An unusable options blob is treated as absent, not as a reason to drop the
+  // standard attribute.
+  let options = attributes['copilot_chat.request.options'];
+  if (typeof options === 'string') {
+    try {
+      options = options.length > MAX_OPTIONS_CHARS ? undefined : JSON.parse(options);
+    } catch {
+      options = undefined;
+    }
+  }
+  const o = options && typeof options === 'object' ? (options as Record<string, unknown>) : {};
+  const reasoning = o.reasoning && typeof o.reasoning === 'object' ? (o.reasoning as Record<string, unknown>) : {};
+  for (const effort of [reasoning.effort, o.reasoning_effort, attributes['gen_ai.request.reasoning.level']]) {
+    if (typeof effort === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(effort)) {
+      return effort.toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+/** OK is a success and ERROR a failure; UNSET and anything else are unknown. */
+function spanFailed(status: unknown): boolean | undefined {
+  const code = typeof status === 'string' && status.trim() !== '' ? Number(status) : status;
+  if (code === SPAN_STATUS_OK) {
+    return false;
+  }
+  return code === SPAN_STATUS_ERROR ? true : undefined;
+}
+
 export function usageSpan(
   id: unknown,
   attributes: Record<string, unknown>,
   start: number,
-  end: number
+  end: number,
+  status?: unknown
 ): UsageSpan | undefined {
   const key = text(id);
   const operation = text(attributes['gen_ai.operation.name']);
@@ -58,7 +140,14 @@ export function usageSpan(
     turns: nonnegative(attributes['copilot_chat.turn_count']),
     tool: text(attributes['gen_ai.tool.name']),
     promptLimit: nonnegative(attributes['copilot_chat.request.max_prompt_tokens']),
-    auxiliary: !!attributes['copilot_chat.parent_chat_session_id'] || !!attributes['copilot_chat.debug_log_label']
+    auxiliary: !!attributes['copilot_chat.parent_chat_session_id'] || !!attributes['copilot_chat.debug_log_label'],
+    agent: text(attributes['gen_ai.agent.name']),
+    parentSessionId: text(attributes['copilot_chat.parent_chat_session_id']),
+    effort: operation === 'chat' ? reasoningEffort(attributes) : undefined,
+    repository: repositoryName(attributes['github.copilot.git.repository']) ??
+      repositoryName(attributes['copilot_chat.repo.remote_url']),
+    branch: text(attributes['github.copilot.git.branch']) ?? text(attributes['copilot_chat.repo.head_branch_name']),
+    failed: spanFailed(status)
   };
 }
 
@@ -71,7 +160,20 @@ export function fileUsageSpan(record: unknown): UsageSpan | undefined {
   if (!r.attributes || typeof r.attributes !== 'object' || r.ended === false) {
     return undefined;
   }
-  return usageSpan(r.spanId, r.attributes as Record<string, unknown>, hrToMs(r.startTime), hrToMs(r.endTime));
+  const status = r.status && typeof r.status === 'object' ? (r.status as Record<string, unknown>).code : undefined;
+  return usageSpan(
+    r.spanId, r.attributes as Record<string, unknown>, hrToMs(r.startTime), hrToMs(r.endTime), status
+  );
+}
+
+function tally(rows: Map<string | null, CallTally>, key: string | null, credits: number | undefined): void {
+  const row = rows.get(key) ?? { key, calls: 0, creditCalls: 0, credits: 0 };
+  row.calls++;
+  if (credits !== undefined) {
+    row.creditCalls++;
+    row.credits += credits;
+  }
+  rows.set(key, row);
 }
 
 export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
@@ -79,11 +181,30 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   const sessions = new Map<string, SpanSession>();
   const latestCalls = new Map<string, UsageSpan>();
   const seen = new Set<string>();
+  const unique: UsageSpan[] = [];
   for (const span of spans) {
-    if (seen.has(span.id)) {
-      continue;
+    if (!seen.has(span.id)) {
+      seen.add(span.id);
+      unique.push(span);
     }
-    seen.add(span.id);
+  }
+
+  // Agent spans carry the git context; the model calls under them do not.
+  const work = new Map<string, { repository?: string; branch?: string; at: number }>();
+  for (const span of unique) {
+    if (span.operation === 'invoke_agent' && span.sessionId && (span.repository || span.branch)) {
+      const known = work.get(span.sessionId);
+      if (!known || known.at <= span.start) {
+        work.set(span.sessionId, { repository: span.repository, branch: span.branch, at: span.start });
+      }
+    }
+  }
+  const byModel = new Map<string | null, CallTally>();
+  const byCaller = new Map<string | null, CallTally>();
+  const byEffort = new Map<string | null, CallTally>();
+  const byRepository = new Map<string | null, CallTally>();
+
+  for (const span of unique) {
     digest.available = true;
     let session: SpanSession | undefined;
     if (span.sessionId) {
@@ -111,6 +232,23 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       digest.outputTokens += span.output ?? 0;
       digest.cachedTokens += span.cached ?? 0;
       digest.reasoningTokens += span.reasoning ?? 0;
+      digest.chatCalls++;
+      if (span.credits !== undefined) {
+        digest.creditCalls++;
+        digest.credits += span.credits;
+      }
+      if (!span.sessionId) {
+        digest.sessionlessCalls++;
+        if (span.credits !== undefined) {
+          digest.sessionlessCreditCalls++;
+          digest.sessionlessCredits += span.credits;
+        }
+      }
+      const repository = work.get(span.sessionId ?? '')?.repository ?? work.get(span.parentSessionId ?? '')?.repository;
+      tally(byModel, span.model, span.credits);
+      tally(byCaller, span.agent ?? null, span.credits);
+      tally(byEffort, span.effort ?? null, span.credits);
+      tally(byRepository, repository ?? null, span.credits);
       if (span.ttft !== undefined) {
         digest.ttftMs.push(span.ttft);
       }
@@ -139,6 +277,9 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       if (span.turns !== undefined) {
         digest.turnCounts.push(span.turns);
       }
+      if (session && span.agent) {
+        session.agentName = span.agent;
+      }
     } else if (span.operation === 'execute_tool') {
       if (session) {
         session.toolCalls++;
@@ -147,8 +288,23 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       const values = digest.toolDurationsMs.get(name) ?? [];
       values.push(duration);
       digest.toolDurationsMs.set(name, values);
+      if (span.failed !== undefined) {
+        digest.toolStatusCalls++;
+        digest.toolFailures += span.failed ? 1 : 0;
+      }
     }
   }
+  for (const [sessionId, context] of work) {
+    const session = sessions.get(sessionId);
+    if (session) {
+      session.repository = context.repository;
+      session.branch = context.branch;
+    }
+  }
+  digest.byModel = [...byModel.values()];
+  digest.byCaller = [...byCaller.values()];
+  digest.byEffort = [...byEffort.values()];
+  digest.byRepository = [...byRepository.values()];
   for (const span of latestCalls.values()) {
     if (span.promptLimit && span.input !== undefined) {
       const context = {

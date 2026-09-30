@@ -304,6 +304,10 @@
         ])
       );
       node.append(renderGauge(cost));
+      // Retained traces are adopted without charging the meter, so they can
+      // exist before any new usage does.
+      const retained = renderTraceCredits(cost);
+      if (retained) node.append(retained);
       return node;
     }
 
@@ -376,8 +380,68 @@
       );
     }
 
+    const traceCredits = renderTraceCredits(cost);
+    if (traceCredits) node.append(traceCredits);
+
     node.append(driftNote(cost.drift, cost.source));
     return node;
+  }
+
+  /**
+   * Where reported model-call credits went in retained traces. Token share is
+   * not credit share, so this is grouped by credits rather than tokens.
+   */
+  function renderTraceCredits(cost) {
+    const trace = cost.traceCredits;
+    if (!trace || !trace.available) return null;
+    const block = el('div', 'gauge');
+    block.append(el('h3', null, 'Model-call credits · retained traces'));
+    const rows = [
+      { label: 'Reported credits', value: trace.creditCalls > 0 ? credits(trace.credits) : '—', qualifier: 'credits' },
+      { label: 'Calls reporting credits', value: count(trace.creditCalls) + ' / ' + count(trace.calls) }
+    ];
+    if (cost.cacheReadRatio !== undefined && cost.cacheReadRatio !== null) {
+      rows.push({ label: 'Cache-read share', value: percent(cost.cacheReadRatio), qualifier: 'of trace input' });
+    }
+    block.append(stats(rows));
+    const groups = [
+      ['By model', trace.byModel],
+      ['By repository', trace.byRepository],
+      ['By caller', trace.byCaller],
+      ['By reasoning effort', trace.byEffort]
+    ];
+    for (const [title, rows] of groups) {
+      if (!rows || !rows.length) continue;
+      block.append(el('h4', null, title));
+      const list = barList(
+        rows.map((row) => ({ label: row.label + ' ×' + count(row.calls), value: row.credits })),
+        credits
+      );
+      list.style.color = palette.cost;
+      block.append(list);
+    }
+    block.append(el('p', 'viz-caption',
+      'Sums of reported copilot_usage_nano_aiu on unique chat spans' +
+      (trace.sinceMs !== undefined ? ' since ' + new Date(trace.sinceMs).toLocaleDateString() : ' in the last 7 days') +
+      '. A diagnostic: never added to the meter or to transcript Session Cost. ×N is model calls.'));
+    block.append(el('p', 'viz-caption',
+      'Repository comes from agent spans (github.copilot.git.*) in the same session or its parent session.'));
+    if (trace.sessionlessCalls > 0) {
+      const reported = trace.sessionlessCreditCalls || 0;
+      block.append(el('p', 'viz-caption',
+        count(trace.sessionlessCalls) + ' / ' + count(trace.calls) +
+        ' calls carry no session ID (helper calls such as titles, progress messages and language-model API requests); ' +
+        (reported === 0
+          ? 'none of them reported credits.'
+          : (reported < trace.sessionlessCalls ? count(reported) + ' of them' : 'they') +
+            ' reported ' + credits(trace.sessionlessCredits) + ' credits.')));
+    }
+    if (trace.creditCalls < trace.calls) {
+      const unknown = trace.calls - trace.creditCalls;
+      block.append(el('p', 'missing', count(unknown) + (unknown === 1 ? ' call' : ' calls') +
+        ' reported no credits: unknown, not free.'));
+    }
+    return block;
   }
 
   /** Names beat GUIDs in a list; the ID stays available as the subtitle. */
@@ -442,12 +506,13 @@
       block.append(renderPeriod(period));
       return block;
     }
+    const transcript = session.transcript;
+    const trace = session.trace;
     block.append(el('p', 'headline-note',
       (session.pinned ? 'Pinned: ' : 'Latest observed: ') + sessionLabel(session) +
       (session.name ? ' (' + shortSessionId(session.sessionId) + ')' : '') +
+      (session.work ? ' · ' + session.work : '') +
       '. Not automatically the active VS Code chat.'));
-    const transcript = session.transcript;
-    const trace = session.trace;
     block.append(stats([
       { label: 'Session Cost · transcript', value: transcript && transcript.credits !== undefined ? credits(transcript.credits) : '—', qualifier: 'credits' },
       { label: 'Model-call credits · traces', value: trace && trace.credits !== undefined ? credits(trace.credits) : '—', qualifier: 'credits' }
@@ -654,7 +719,11 @@
     if (quality.pullRequests > 0) rows.push({ label: 'Pull requests', value: count(quality.pullRequests) });
     if (quality.cloudSessions > 0) rows.push({ label: 'Cloud sessions', value: count(quality.cloudSessions) });
     if (quality.toolSuccessRate !== undefined) {
-      rows.push({ label: 'Tool success', value: percent(quality.toolSuccessRate, 1) });
+      rows.push({
+        label: quality.toolSource === 'spans' ? 'Tool success · traces' : 'Tool success',
+        value: percent(quality.toolSuccessRate, 1),
+        qualifier: quality.toolSource === 'spans' ? count(quality.toolCalls) + ' calls' : undefined
+      });
     }
     if (quality.editResponseErrors > 0) {
       rows.push({ label: 'Edit errors', value: count(quality.editResponseErrors) });
@@ -672,6 +741,10 @@
 
     if (quality.missing.length) {
       node.append(el('p', 'missing', 'Not reported yet: ' + quality.missing.join(', ') + '.'));
+    }
+    if (quality.toolSource === 'spans' && !feed.jsonlActive) {
+      node.append(el('p', 'missing',
+        'Tool success comes from span status in the local trace store. Edit, survival and feedback signals need the file feed.'));
     }
     return node;
   }

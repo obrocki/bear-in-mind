@@ -8,6 +8,7 @@ const { it } = require('node:test');
 const build = process.env.BEAR_TEST_BUILD;
 const { OtelRollup } = require(path.join(build, 'otelParse.js'));
 const { buildSnapshot, buildPeriod, emptySpanDigest, computeDrift, periodStart, sessionLabel } = require(path.join(build, 'otelSummary.js'));
+const { digestSpans, usageSpan } = require(path.join(build, 'spanUsage.js'));
 const renderer = fs.readFileSync(path.join(__dirname, '..', 'media', 'dashboard.js'), 'utf8');
 
 class Element {
@@ -436,4 +437,82 @@ it('renders standalone quality metrics instead of the empty state, including zer
     assert.ok(quality.textContent.includes(label), name);
     assert.doesNotMatch(quality.textContent, /No quality signals|Connect telemetry/);
   }
+});
+
+function tracedSpans() {
+  const at = Date.UTC(2026, 8, 29, 12);
+  const base = (id, operation, attributes, offset = 0, status) => usageSpan(id, {
+    'gen_ai.operation.name': operation, 'copilot_chat.chat_session_id': 'chat-1', ...attributes
+  }, at + offset, at + offset + 500, status);
+  const digest = digestSpans([
+    base('agent', 'invoke_agent', { 'github.copilot.git.repository': 'o/r', 'github.copilot.git.branch': 'main' }),
+    base('a', 'chat', {
+      'gen_ai.response.model': 'opus', 'gen_ai.agent.name': 'panel/editAgent', 'gen_ai.usage.input_tokens': 1000,
+      'gen_ai.usage.output_tokens': 10, 'gen_ai.usage.cache_read.input_tokens': 900,
+      'copilot_chat.copilot_usage_nano_aiu': 149.5e9, 'copilot_chat.request.options': '{"reasoning":{"effort":"high"}}'
+    }, 10),
+    base('t', 'chat', {
+      'copilot_chat.chat_session_id': undefined, 'gen_ai.response.model': 'mini', 'gen_ai.agent.name': 'title',
+      'gen_ai.usage.input_tokens': 100, 'gen_ai.usage.output_tokens': 5
+    }, 20),
+    base('ok', 'execute_tool', { 'gen_ai.tool.name': 'read_file' }, 30, 1),
+    base('bad', 'execute_tool', { 'gen_ai.tool.name': 'read_file' }, 40, 2)
+  ]);
+  digest.sinceMs = at - 7 * 86400000;
+  return digest;
+}
+
+it('breaks retained trace credits down by model, repository, caller and effort', () => {
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans() });
+  const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
+  const text = cost.textContent;
+  assert.match(text, /Model-call credits · retained traces/);
+  assert.match(text, /Calls reporting credits 1 \/ 2/);
+  assert.match(text, /By model opus ×1 149\.5/);
+  assert.match(text, /By repository o\/r ×1 149\.5/);
+  assert.match(text, /no repository ×1 0/);
+  assert.match(text, /By caller panel\/editAgent ×1/);
+  assert.match(text, /By reasoning effort high ×1/);
+  assert.match(text, /1 \/ 2 calls carry no session ID.*none of them reported credits/);
+  assert.match(text, /1 call reported no credits: unknown, not free/);
+  assert.match(text, /never added to the meter or to transcript Session Cost/);
+  assert.match(text, /Cache-read share 82%\s+of trace input/);
+  assert.match(text, /Latest observed: chat-1 · o\/r@main/);
+});
+
+it('shows trace-store tool success when the file feed is not connected', () => {
+  const quality = dashboard().render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans() });
+  assert.match(quality.textContent, /Tool success · traces 50\.0%\s+2 calls/);
+  assert.match(quality.textContent, /Edit, survival and feedback signals need the file feed/);
+  assert.doesNotMatch(quality.textContent, /Connect telemetry/);
+});
+
+it('omits the trace credit breakdown without retained model calls', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {});
+  assert.doesNotMatch(d.nodes.sections.textContent, /Model-call credits · retained traces|Cache-read share/);
+});
+
+it('shows retained trace credits before the local meter has charged any usage', () => {
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    spans: tracedSpans(), totals: { input: 0, output: 0, credits: 0 }, countedTokens: 0
+  });
+  const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
+  assert.match(cost.textContent, /No new token counts/);
+  assert.match(cost.textContent, /Model-call credits · retained traces/);
+  assert.match(cost.textContent, /Cache-read share 82%\s+of trace input/);
+});
+
+it('labels a session with a branch even when no repository is reported', () => {
+  const at = Date.UTC(2026, 8, 29, 12);
+  const spans = digestSpans([
+    usageSpan('agent', {
+      'gen_ai.operation.name': 'invoke_agent', 'copilot_chat.chat_session_id': 'solo', 'github.copilot.git.branch': 'topic'
+    }, at, at + 100)
+  ]);
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans });
+  assert.match(d.nodes.sections.textContent, /Latest observed: solo · topic\./);
 });
