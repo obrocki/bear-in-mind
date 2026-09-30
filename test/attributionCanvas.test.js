@@ -502,6 +502,7 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   assert.deepEqual(store.freshness, { first: '2026-09-23T13:30:00.000Z', last: '2026-09-25T00:00:00.000Z' });
   assert.equal(stage.workRef.emitted, false);
   assert.equal(stage.pullRequest.emitted, false);
+  assert.equal(store.metrics.creditsToPrShare, null);
   assert.match(store.notes.join(' '), /session_refs is missing or lacks session_id \/ ref_type/);
 
   assert.equal(timestampMs('2026-09-23 18:00:00').ms, Date.UTC(2026, 8, 23, 18));
