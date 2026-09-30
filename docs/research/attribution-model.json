@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "title": "Measuring ROI on AI-assisted development",
   "updated": "2026-09-30",
-  "workstream": "Workstream 2: Data and Attribution Model",
+  "workstream": "Data and Attribution Model",
   "question": "What does AI-assisted development cost, what value does it deliver, and can we credibly attribute the difference?",
   "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
   "surfaces": [

@@ -1,6 +1,6 @@
 # Measuring ROI on AI-assisted development across GitHub Copilot surfaces
 
-Research for **Workstream 2: Data and Attribution Model**. The question: *what
+Research for **Data and Attribution Model**. The question: *what
 does AI-assisted development cost, what value does it deliver, and how can we
 attribute the difference?* Compiled
 30 September 2026.

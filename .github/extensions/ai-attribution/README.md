@@ -1,7 +1,7 @@
 # AI attribution canvas
 
 A [GitHub Copilot app](https://docs.github.com/en/copilot/how-tos/github-copilot-app/agent-sessions)
-canvas for Workstream 2 (Data and Attribution Model). It examines what is
+canvas for Data and Attribution Model. It examines what is
 needed to measure ROI on AI-assisted development across VS Code, Copilot CLI,
 the Copilot app and the cloud agent. Live local measurements show reported
 usage and work-link coverage, not monetary ROI or proven value.
