@@ -1,6 +1,6 @@
 # Change Log
 
-## Unreleased
+## 0.6.2
 
 - Dashboard: a **Model-call credits · retained traces** block groups reported
   credits by model, repository, caller and reasoning effort, because token share

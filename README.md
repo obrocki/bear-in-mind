@@ -20,7 +20,7 @@ Download a `.vsix` from [Releases](https://github.com/obrocki/bear-in-mind/relea
 then run:
 
 ```bash
-code --install-extension bear-in-mind-0.6.0.vsix
+code --install-extension bear-in-mind-0.6.2.vsix
 ```
 
 Use the downloaded filename if it differs. Open the Iceberg activity-bar icon.
