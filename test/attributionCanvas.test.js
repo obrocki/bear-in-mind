@@ -410,3 +410,49 @@ it('VS Code traces: an older store without status_code leaves tool failures unkn
   assert.equal(traces.status, 'ok');
   assert.deepEqual(traces.tools, [{ key: 'read_file', calls: 2, statusCalls: 0, failed: 0 }]);
 });
+
+it('session store: applies an exact rolling cutoff and tolerates an incompatible session_refs table', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { computeCoverage, timestampMs } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const file = path.join(dir, 'session-store.db');
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, repository TEXT, branch TEXT);
+    CREATE TABLE session_refs (id INTEGER PRIMARY KEY, value TEXT);
+    CREATE TABLE assistant_usage_events (session_id TEXT, model TEXT, total_nano_aiu INTEGER, created_at TEXT);
+    INSERT INTO sessions VALUES ('s', 'o/r', 'main');
+  `);
+  const usage = db.prepare('INSERT INTO assistant_usage_events VALUES (?, ?, ?, ?)');
+  usage.run('s', 'm', 1e9, '2026-09-23T06:00:00.000Z');
+  usage.run('s', 'm', 2e9, '2026-09-23 18:00:00');
+  usage.run('s', 'm', 4e9, '2026-09-23');
+  usage.run('s', 'm', 8e9, '2026-09-24');
+  usage.run('s', 'm', 16e9, 'garbage');
+  db.close();
+
+  const coverage = await computeCoverage({
+    windowDays: 7,
+    now: Date.UTC(2026, 8, 30, 12),
+    sessionStorePath: file,
+    tracesDbPath: path.join(dir, 'x.db'),
+  });
+  const store = coverage.sources[0];
+  assert.equal(store.status, 'ok', 'an incompatible optional table must not fail the source');
+  assert.equal(
+    store.totals.calls,
+    2,
+    'same-day-but-earlier, cutoff-day-only and unreadable rows are outside the window',
+  );
+  assert.equal(store.totals.credits, 10);
+  const stage = Object.fromEntries(store.funnel.map((f) => [f.id, f]));
+  assert.equal(stage.branch.credits, 10);
+  assert.equal(stage.workRef.emitted, false);
+  assert.equal(stage.pullRequest.emitted, false);
+  assert.match(store.notes.join(' '), /session_refs is missing or lacks session_id \/ ref_type/);
+
+  assert.equal(timestampMs('2026-09-23 18:00:00').ms, Date.UTC(2026, 8, 23, 18));
+  assert.equal(timestampMs('2026-09-23T18:00:00+01:00').ms, Date.UTC(2026, 8, 23, 17));
+  assert.deepEqual(timestampMs('2026-09-23'), { ms: null, dateOnly: true, day: '2026-09-23' });
+  assert.equal(timestampMs('garbage').ms, null);
+});

@@ -209,8 +209,33 @@ function addTo(acc, sessionKey, nano) {
 
 // ------------------------------------------------------- session store ---
 
+/**
+ * Milliseconds for a session-store timestamp: ISO 8601, or SQLite's
+ * `YYYY-MM-DD HH:MM:SS` (UTC). Date-only values are reported separately.
+ */
+export function timestampMs(value) {
+  if (!present(value)) return { ms: null, dateOnly: false };
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return { ms: null, dateOnly: true, day: text };
+  let iso = text.replace(/^(\d{4}-\d{2}-\d{2}) /, '$1T');
+  if (/T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(iso)) iso += 'Z';
+  const ms = Date.parse(iso);
+  return { ms: Number.isFinite(ms) ? ms : null, dateOnly: false };
+}
+
+/**
+ * Rolling-window policy: exact timestamps count from `sinceMs`; a date-only
+ * value counts only when its whole day lies after the cutoff day; values
+ * that cannot be read are left out.
+ */
+function withinWindow(value, sinceMs, sinceDay) {
+  const t = timestampMs(value);
+  if (t.ms !== null) return t.ms >= sinceMs;
+  return t.dateOnly && t.day > sinceDay;
+}
+
 /** Coverage for the Copilot CLI / GitHub Copilot app session store. */
-export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
+export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) {
   const tables = tableNames(db);
   if (!tables.has('assistant_usage_events')) {
     return {
@@ -237,7 +262,9 @@ export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
         'created_at',
       ])} FROM assistant_usage_events${windowed ? ' WHERE substr(created_at, 1, 10) >= ?' : ''}`,
     )
-    .all(...(windowed ? [sinceDay] : []));
+    .all(...(windowed ? [sinceDay] : []))
+    // The SQL prefilter is by calendar day; apply the exact rolling cutoff here.
+    .filter((row) => !windowed || withinWindow(row.created_at, sinceMs, sinceDay));
 
   const sessions = new Map();
   if (tables.has('sessions')) {
@@ -249,8 +276,12 @@ export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
     }
   }
 
+  // Optional: a missing or incompatible refs table means work references are
+  // unavailable, not that the whole source failed.
   const refs = new Map();
-  if (tables.has('session_refs')) {
+  const refCols = tables.has('session_refs') ? tableColumns(db, 'session_refs') : new Set();
+  const refsAvailable = refCols.has('session_id') && refCols.has('ref_type');
+  if (refsAvailable) {
     for (const row of db.prepare('SELECT session_id, ref_type FROM session_refs GROUP BY session_id, ref_type').all()) {
       const set = refs.get(String(row.session_id)) ?? new Set();
       set.add(String(row.ref_type));
@@ -340,8 +371,8 @@ export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
     stage('session', 'In a known session', stages.session),
     stage('repository', '…with a repository', stages.repository),
     stage('branch', '…and a branch', stages.branch),
-    stage('workRef', '…and a work reference (PR, issue or commit)', stages.workRef),
-    stage('pullRequest', '…and a pull request', stages.pullRequest),
+    stage('workRef', '…and a work reference (PR, issue or commit)', stages.workRef, refsAvailable),
+    stage('pullRequest', '…and a pull request', stages.pullRequest, refsAvailable),
   ];
 
   return {
@@ -376,10 +407,13 @@ export function sessionStoreCoverage(db, { sinceDay = null } = {}) {
       .map((d) => ({ day: d.day, calls: d.calls, credits: credits(d.nano) })),
     freshness: { first, last },
     notes: [
-      refs.size === 0
-        ? 'session_refs is empty: no session has a recorded PR, issue or commit reference, so work-item attribution needs a VCS join.'
-        : null,
+      !refsAvailable
+        ? 'session_refs is missing or lacks session_id / ref_type, so work references are unavailable in this store.'
+        : refs.size === 0
+          ? 'session_refs is empty: no session has a recorded PR, issue or commit reference, so work-item attribution needs a VCS join.'
+          : null,
       windowed || !sinceDay ? null : 'created_at is missing, so the window could not be applied.',
+      windowed ? 'Rows with only a date count when their whole day falls inside the window.' : null,
     ].filter(Boolean),
   };
 }
@@ -702,7 +736,7 @@ export async function computeCoverage(options = {}) {
   const storePath = options.sessionStorePath || defaultSessionStorePath({ env, home });
   const tracesPath = options.tracesDbPath || findTracesDb(vscodeGlobalStorageDirs({ env, platform, home }));
 
-  const store = await readDatabase(storePath, (db) => sessionStoreCoverage(db, { sinceDay }));
+  const store = await readDatabase(storePath, (db) => sessionStoreCoverage(db, { sinceDay, sinceMs }));
   const traces = await readDatabase(tracesPath, (db) => tracesCoverage(db, { sinceMs }));
 
   return {

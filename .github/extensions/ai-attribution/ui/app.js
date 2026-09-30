@@ -98,7 +98,11 @@ function renderOutcomes() {
             h(
               'div',
               { class: 'card' },
-              h('h3', {}, `${SOURCE_SHORT[s.id] ?? s.label} · credits reaching each stage`),
+              h(
+                'h3',
+                {},
+                `${SOURCE_SHORT[s.id] ?? s.label} · ${creditWeighted(s) ? 'credits' : 'model calls'} reaching each stage`,
+              ),
               funnel(s),
             ),
           ),
@@ -349,9 +353,14 @@ function renderGaps() {
   ];
 }
 
+/** Credit-weighted only when credits were reported; otherwise the funnel is labelled call-weighted. */
+function creditWeighted(source) {
+  return source.funnel[0].credits > 0;
+}
+
 function funnel(source) {
   const top = source.funnel[0];
-  const byCredits = top.credits > 0;
+  const byCredits = creditWeighted(source);
   return h(
     'div',
     { class: 'funnel' },
@@ -465,7 +474,13 @@ function sourceCard(s) {
         ),
     ),
     sparkline(s.daily),
-    h('h3', {}, 'Attribution funnel (credit-weighted)'),
+    h(
+      'h3',
+      {},
+      creditWeighted(s)
+        ? 'Attribution funnel (credit-weighted)'
+        : 'Attribution funnel (call-weighted: no credits reported)',
+    ),
     funnel(s),
     h(
       'div',
