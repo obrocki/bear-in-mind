@@ -134,6 +134,13 @@ function num(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** A reported nano-AIU value, or null when it is missing, non-numeric or negative (unknown, not zero). */
+export function nanoAiu(value) {
+  if (typeof value === 'bigint') value = Number(value);
+  if (typeof value === 'string') value = value.trim() === '' ? NaN : Number(value);
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 function present(value) {
   return value !== null && value !== undefined && String(value).trim() !== '';
 }
@@ -247,6 +254,9 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
   }
   const usageCols = tableColumns(db, 'assistant_usage_events');
   const windowed = Boolean(sinceDay) && usageCols.has('created_at');
+  // A day early, so timestamps with a negative UTC offset survive the textual
+  // prefilter; the exact rolling cutoff is applied after parsing.
+  const prefilterDay = windowed ? new Date(sinceMs - 86_400_000).toISOString().slice(0, 10) : null;
   const usageRows = db
     .prepare(
       `SELECT ${selectList(usageCols, [
@@ -264,8 +274,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
         'created_at',
       ])} FROM assistant_usage_events${windowed ? ' WHERE substr(created_at, 1, 10) >= ?' : ''}`,
     )
-    .all(...(windowed ? [sinceDay] : []))
-    // The SQL prefilter is by calendar day; apply the exact rolling cutoff here.
+    .all(...(windowed ? [prefilterDay] : []))
     .filter((row) => !windowed || withinWindow(row.created_at, sinceMs, sinceDay));
 
   const sessions = new Map();
@@ -320,8 +329,9 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
 
   for (const row of usageRows) {
     const sessionId = present(row.session_id) ? String(row.session_id) : null;
-    const hasCredit = row.total_nano_aiu !== null && row.total_nano_aiu !== undefined;
-    const nano = hasCredit ? num(row.total_nano_aiu) : 0;
+    const reportedNano = nanoAiu(row.total_nano_aiu);
+    const hasCredit = reportedNano !== null;
+    const nano = reportedNano ?? 0;
     totals.calls += 1;
     totals.creditedCalls += hasCredit ? 1 : 0;
     totals.nano += nano;
@@ -492,10 +502,12 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     }
 
     const gitKeys = Object.values(GIT_KEYS).flat();
-    const agentCols = selectList(cols, ['span_id', 'trace_id', 'conversation_id', 'chat_session_id'])
+    const agentCols = selectList(cols, ['span_id', 'trace_id', 'conversation_id', 'chat_session_id', 'start_time_ms'])
       .split(', ')
       .map((c) => (c.startsWith('NULL') ? c : `s.${c}`))
       .join(', ');
+    // Collect every git value first: SQL row order is unspecified, and the
+    // canonical key must win over its legacy fallback.
     const agents = new Map();
     for (const row of db
       .prepare(
@@ -504,20 +516,28 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
                  WHERE s.operation_name = 'invoke_agent'`,
       )
       .all(...gitKeys)) {
-      const agent = agents.get(String(row.span_id)) ?? { row, repository: null, branch: null, commit: null };
-      for (const [field, keys] of Object.entries(GIT_KEYS)) {
-        if (keys.includes(row.key) && present(row.value) && !agent[field]) {
-          agent[field] = field === 'repository' ? normalizeRepository(row.value) : String(row.value);
-        }
-      }
+      const agent = agents.get(String(row.span_id)) ?? { row, values: {} };
+      if (present(row.key) && present(row.value)) agent.values[row.key] = String(row.value);
       agents.set(String(row.span_id), agent);
     }
+    // The newest agent span per session, conversation or trace supplies its context.
+    const remember = (map, key, ctx, at) => {
+      if (!present(key)) return;
+      const known = map.get(String(key));
+      if (!known || known.at <= at) map.set(String(key), { ...ctx, at });
+    };
     for (const agent of agents.values()) {
-      if (!agent.repository && !agent.branch && !agent.commit) continue;
-      const ctx = { repository: agent.repository, branch: agent.branch, commit: agent.commit };
-      if (present(agent.row.chat_session_id)) agentContext.session.set(String(agent.row.chat_session_id), ctx);
-      if (present(agent.row.conversation_id)) agentContext.conversation.set(String(agent.row.conversation_id), ctx);
-      if (present(agent.row.trace_id)) agentContext.trace.set(String(agent.row.trace_id), ctx);
+      const pick = (keys) => keys.map((key) => agent.values[key]).find(present) ?? null;
+      const ctx = {
+        repository: normalizeRepository(pick(GIT_KEYS.repository)),
+        branch: pick(GIT_KEYS.branch),
+        commit: pick(GIT_KEYS.commit),
+      };
+      if (!ctx.repository && !ctx.branch && !ctx.commit) continue;
+      const at = num(agent.row.start_time_ms);
+      remember(agentContext.session, agent.row.chat_session_id, ctx, at);
+      remember(agentContext.conversation, agent.row.conversation_id, ctx, at);
+      remember(agentContext.trace, agent.row.trace_id, ctx, at);
     }
   }
 
@@ -549,9 +569,9 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   for (const chat of chats) {
     const attrs = chatAttributes.get(String(chat.span_id)) ?? {};
-    const rawNano = attrs['copilot_chat.copilot_usage_nano_aiu'];
-    const hasCredit = present(rawNano) && Number.isFinite(Number(rawNano));
-    const nano = hasCredit ? Number(rawNano) : 0;
+    const reportedNano = nanoAiu(attrs['copilot_chat.copilot_usage_nano_aiu']);
+    const hasCredit = reportedNano !== null;
+    const nano = reportedNano ?? 0;
     totals.calls += 1;
     totals.creditedCalls += hasCredit ? 1 : 0;
     totals.nano += nano;

@@ -79,24 +79,24 @@ export function repositoryName(value: unknown): string | undefined {
  * JSON blob of request settings. Only a short effort word is kept from it.
  */
 export function reasoningEffort(attributes: Record<string, unknown>): string | undefined {
+  // An unusable options blob is treated as absent, not as a reason to drop the
+  // standard attribute.
   let options = attributes['copilot_chat.request.options'];
   if (typeof options === 'string') {
-    if (options.length > MAX_OPTIONS_CHARS) {
-      return undefined;
-    }
     try {
-      options = JSON.parse(options);
+      options = options.length > MAX_OPTIONS_CHARS ? undefined : JSON.parse(options);
     } catch {
-      return undefined;
+      options = undefined;
     }
   }
-  let effort: unknown = attributes['gen_ai.request.reasoning.level'];
-  if (options && typeof options === 'object') {
-    const o = options as Record<string, unknown>;
-    const reasoning = o.reasoning && typeof o.reasoning === 'object' ? (o.reasoning as Record<string, unknown>) : undefined;
-    effort = reasoning?.effort ?? o.reasoning_effort ?? effort;
+  const o = options && typeof options === 'object' ? (options as Record<string, unknown>) : {};
+  const reasoning = o.reasoning && typeof o.reasoning === 'object' ? (o.reasoning as Record<string, unknown>) : {};
+  for (const effort of [reasoning.effort, o.reasoning_effort, attributes['gen_ai.request.reasoning.level']]) {
+    if (typeof effort === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(effort)) {
+      return effort.toLowerCase();
+    }
   }
-  return typeof effort === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(effort) ? effort.toLowerCase() : undefined;
+  return undefined;
 }
 
 /** OK is a success and ERROR a failure; UNSET and anything else are unknown. */

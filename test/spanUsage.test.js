@@ -179,6 +179,11 @@ it('keeps only a short reasoning-effort word from request options', () => {
   assert.equal(reasoningEffort({ 'copilot_chat.request.options': '{broken' }), undefined);
   assert.equal(reasoningEffort({ 'copilot_chat.request.options': JSON.stringify({ pad: 'x'.repeat(70000) }) }), undefined);
   assert.equal(reasoningEffort({ 'gen_ai.request.reasoning.level': 'low' }), 'low');
+  assert.equal(reasoningEffort({ 'copilot_chat.request.options': '{broken', 'gen_ai.request.reasoning.level': 'low' }), 'low',
+    'an unusable options blob does not hide the standard attribute');
+  assert.equal(reasoningEffort({
+    'copilot_chat.request.options': JSON.stringify({ reasoning: { effort: 'not a word!' } }), 'gen_ai.request.reasoning.level': 'medium'
+  }), 'medium');
   assert.equal(span('t', 'execute_tool', { 'copilot_chat.request.options': '{"reasoning_effort":"high"}' }).effort, undefined);
 });
 

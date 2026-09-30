@@ -449,6 +449,9 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   usage.run('s', 'm', 4e9, '2026-09-23');
   usage.run('s', 'm', 8e9, '2026-09-24');
   usage.run('s', 'm', 16e9, 'garbage');
+  usage.run('s', 'm', 32e9, '2026-09-22T23:30:00-14:00');
+  usage.run('s', 'm', 'abc', '2026-09-25T00:00:00Z');
+  usage.run('s', 'm', -5e9, '2026-09-25T00:00:00Z');
   db.close();
 
   const coverage = await computeCoverage({
@@ -461,12 +464,13 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   assert.equal(store.status, 'ok', 'an incompatible optional table must not fail the source');
   assert.equal(
     store.totals.calls,
-    2,
-    'same-day-but-earlier, cutoff-day-only and unreadable rows are outside the window',
+    5,
+    'same-day-but-earlier, cutoff-day-only and unreadable rows are outside; a negative-offset row inside is kept',
   );
-  assert.equal(store.totals.credits, 10);
+  assert.equal(store.totals.creditedCalls, 3, 'non-numeric and negative credits are unknown, not reported');
+  assert.equal(store.totals.credits, 42);
   const stage = Object.fromEntries(store.funnel.map((f) => [f.id, f]));
-  assert.equal(stage.branch.credits, 10);
+  assert.equal(stage.branch.credits, 42);
   assert.equal(stage.workRef.emitted, false);
   assert.equal(stage.pullRequest.emitted, false);
   assert.match(store.notes.join(' '), /session_refs is missing or lacks session_id \/ ref_type/);
@@ -475,4 +479,48 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   assert.equal(timestampMs('2026-09-23T18:00:00+01:00').ms, Date.UTC(2026, 8, 23, 17));
   assert.deepEqual(timestampMs('2026-09-23'), { ms: null, dateOnly: true, day: '2026-09-23' });
   assert.equal(timestampMs('garbage').ms, null);
+});
+
+it('VS Code traces: the newest agent span wins, and canonical git keys beat legacy ones in any row order', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { computeCoverage, nanoAiu } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const file = path.join(dir, 'agent-traces.db');
+  const now = Date.UTC(2026, 8, 30, 12);
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT, start_time_ms INTEGER, operation_name TEXT,
+      chat_session_id TEXT, conversation_id TEXT);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+  `);
+  const span = db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?)');
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  // The newer agent span is inserted first so row order cannot decide.
+  span.run('new', 't2', now - 1000, 'invoke_agent', 'chat-9', null);
+  attr.run('new', 'copilot_chat.repo.remote_url', 'https://github.com/o/legacy.git');
+  attr.run('new', 'github.copilot.git.repository', 'o/new');
+  span.run('old', 't1', now - 5000, 'invoke_agent', 'chat-9', null);
+  attr.run('old', 'github.copilot.git.repository', 'o/old');
+  span.run('call', 't2', now - 900, 'chat', 'chat-9', null);
+  attr.run('call', 'copilot_chat.copilot_usage_nano_aiu', '2000000000');
+  db.close();
+
+  const coverage = await computeCoverage({
+    windowDays: 7,
+    now,
+    sessionStorePath: path.join(dir, 'none.db'),
+    tracesDbPath: file,
+  });
+  const traces = coverage.sources.find((s) => s.id === 'traces');
+  assert.deepEqual(
+    traces.breakdowns.repository.map((r) => r.key),
+    ['o/new'],
+  );
+
+  assert.equal(nanoAiu('12'), 12);
+  assert.equal(nanoAiu(0), 0);
+  assert.equal(nanoAiu(-1), null);
+  assert.equal(nanoAiu('abc'), null);
+  assert.equal(nanoAiu(''), null);
+  assert.equal(nanoAiu(null), null);
 });
