@@ -391,7 +391,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     stage('repository', '…with a repository', stages.repository),
     stage('branch', '…and a branch', stages.branch),
     stage('workRef', '…and a work reference (PR, issue or commit)', stages.workRef, refsAvailable),
-    stage('pullRequest', '…and a pull request', stages.pullRequest, refsAvailable),
+    stage('pullRequest', '…and a recorded PR reference', stages.pullRequest, refsAvailable),
   ];
 
   return {
@@ -411,7 +411,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     metrics: {
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
-      creditsToPrShare: share(stages.pullRequest.nano, totals.nano),
+      creditsToPrShare: refsAvailable ? share(stages.pullRequest.nano, totals.nano) : null,
       cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
       subAgentShare: share(subAgentNano, totals.nano),
     },
@@ -665,7 +665,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     stage('repository', '…resolved to a repository via invoke_agent', stages.repository),
     stage('branch', '…and a branch or commit', stages.branch),
     stage('workRef', '…and a work reference', stages.workRef, false),
-    stage('pullRequest', '…and a pull request', stages.pullRequest, false),
+    stage('pullRequest', '…and a recorded PR reference', stages.pullRequest, false),
   ];
 
   return {
@@ -685,7 +685,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     metrics: {
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
-      creditsToPrShare: share(stages.pullRequest.nano, totals.nano),
+      creditsToPrShare: null,
       cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
       subAgentShare: null,
     },

@@ -19,6 +19,7 @@ const AVAILABILITY_TEXT = {
   local: 'Available locally',
   'needs-vcs-join': 'Needs VCS join',
   'needs-org-api': 'Needs org API',
+  'needs-baseline': 'Needs value & baseline',
 };
 const SOURCE_SHORT = { sessionStore: 'CLI / app', traces: 'VS Code' };
 
@@ -63,7 +64,7 @@ function renderOutcomes() {
   const live = m.outcomes.filter((o) => o.liveMetric);
   return [
     h('p', { class: 'lede' }, m.summary),
-    h('h2', {}, 'Measured locally now'),
+    h('h2', {}, 'Measured locally · ROI readiness, not return'),
     sources.length
       ? h(
           'div',
@@ -93,6 +94,28 @@ function renderOutcomes() {
     sources.length
       ? h(
           'div',
+          { class: 'grid two' },
+          sources.map((s) => {
+            const pr = s.funnel.find((f) => f.id === 'pullRequest');
+            return h(
+              'div',
+              { class: 'card' },
+              h('h3', {}, `${SOURCE_SHORT[s.id] ?? s.label} · reported credits and PR references`),
+              h(
+                'p',
+                {},
+                pr?.emitted && s.totals.creditedCalls
+                  ? `${fmtCredits.format(pr.credits)} credits in sessions reaching repository + branch + PR reference; ${fmtCredits.format(s.totals.credits - pr.credits)} credits without one.`
+                  : 'PR-reference credit split unavailable.',
+              ),
+              h('p', { class: 'muted small' }, 'Only calls reporting credits contribute. A reference does not establish a merged PR or delivered value. Sources are not added together.'),
+            );
+          }),
+        )
+      : null,
+    sources.length
+      ? h(
+          'div',
           { class: 'grid two', style: { marginTop: '12px' } },
           sources.map((s) =>
             h(
@@ -112,9 +135,9 @@ function renderOutcomes() {
       'div',
       { class: 'callout' },
       h('strong', {}, 'Next step: '),
-      'a deterministic (T1) join from (repository, branch) and (repository, head commit) to pull requests turns work-context coverage into PR coverage, and unlocks cost per delivered change, AI-assisted share and lead time.',
+      'join repository/branch or commit to verified PR and quality outcomes, reconcile billed costs and human oversight, and compare with a matched non-AI baseline before estimating incremental return.',
     ),
-    h('h2', {}, 'Desired outcomes'),
+    h('h2', {}, 'Measurements needed for ROI'),
     h(
       'table',
       {},
@@ -176,7 +199,7 @@ function renderSurfaces() {
     h(
       'p',
       { class: 'lede' },
-      'What each surface emits for every canonical concept. The common spine is the OTel GenAI span tree, a session ID, repository/branch/commit and per-call model and tokens; pull request and actor are the keys every design has to add.',
+      'What each surface emits for ROI inputs. The common spine is the OTel GenAI span tree, a session ID, repository/branch/commit and per-call model and tokens; verified outcomes, billed cost, human effort and a baseline still need to be joined.',
     ),
     h(
       'div',
@@ -239,7 +262,7 @@ function renderModel() {
     h(
       'p',
       { class: 'lede' },
-      'Canonical entities connecting consumption to work to outcomes. Every session carries weighted, tiered attribution links; whatever is not attributed stays visible as unattributed.',
+      'Canonical entities connecting consumption to work to verified outcomes. Attribution weights and the unattributed remainder make coverage visible; neither a work link nor a reported credit is a return.',
     ),
     h(
       'div',
@@ -378,7 +401,9 @@ function funnel(source) {
         h(
           'span',
           { class: 'stats' },
-          `${pct(ratio)} · ${fmtCredits.format(f.credits)} cr · ${fmtInt.format(f.calls)} calls · ${fmtInt.format(f.sessions)} sess`,
+          f.emitted
+            ? `${pct(ratio)} · ${fmtCredits.format(f.credits)} cr · ${fmtInt.format(f.calls)} calls · ${fmtInt.format(f.sessions)} sess`
+            : 'Not emitted',
         ),
       );
     }),

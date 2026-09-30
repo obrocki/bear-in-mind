@@ -1,9 +1,10 @@
 # AI attribution canvas
 
 A [GitHub Copilot app](https://docs.github.com/en/copilot/how-tos/github-copilot-app/agent-sessions)
-canvas for Workstream 2 (Data and Attribution Model). It shows how Copilot
-telemetry from VS Code, Copilot CLI, the Copilot app and the cloud agent connects
-AI usage to work and outcomes.
+canvas for Data and Attribution Model. It examines what is
+needed to measure ROI on AI-assisted development across VS Code, Copilot CLI,
+the Copilot app and the cloud agent. Live local measurements show reported
+usage and work-link coverage, not monetary ROI or proven value.
 
 It renders [the research](../../../docs/research/ai-telemetry-attribution.md) and
 [the model spec](../../../docs/research/attribution-model.json), and adds live,
@@ -13,7 +14,7 @@ read-only coverage from this machine.
 
 | Tab | Shows |
 | --- | --- |
-| Outcomes | Live coverage metrics, credit-weighted funnels, desired outcomes and what unlocks each |
+| Outcomes | ROI-readiness metrics, reported credits with/without a PR reference, and the cost, value and baseline inputs still needed |
 | Surfaces | Concept × surface matrix with native / partial / missing / unverified fields |
 | Data model | Entities, relationships, attribution tiers and accounting invariants |
 | Gaps | Gaps by impact, verification status and prior art |

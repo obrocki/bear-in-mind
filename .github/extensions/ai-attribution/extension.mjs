@@ -1,5 +1,5 @@
 // Extension: ai-attribution
-// Canvas for Workstream 2 (Data and Attribution Model): how Copilot surfaces'
+// Canvas for Data and Attribution Model: how Copilot surfaces'
 // telemetry connects AI usage to work and outcomes, plus live, read-only
 // attribution coverage from local stores. Research lives in docs/research/.
 

@@ -198,6 +198,7 @@ main {
 }
 .badge.partial,
 .badge.needs-vcs-join,
+.badge.needs-baseline,
 .badge.medium {
   color: var(--yellow);
   background: color-mix(in srgb, var(--yellow) 16%, transparent);

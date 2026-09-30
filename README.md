@@ -220,14 +220,16 @@ scale, status bar and bear name. Turning telemetry off does not erase counted us
 - **Duplicate menus:** remove old `local.iceberg-copilot` or
   `obrocki.iceberg-copilot` installs, then reload. `iceberg.*` settings remain valid.
 
-## Research: AI usage to work and outcomes
+## Research: ROI on AI-assisted development
 
-[Connecting AI usage to work and outcomes](docs/research/ai-telemetry-attribution.md)
+[Measuring ROI on AI-assisted development](docs/research/ai-telemetry-attribution.md)
 compares what VS Code, Copilot CLI, the GitHub Copilot app and Copilot cloud agent
 emit. It proposes a data and attribution model that links consumption to pull
 requests and outcomes. The [AI attribution canvas](.github/extensions/ai-attribution/README.md)
 renders that model in the GitHub Copilot app, with live read-only coverage from
-local stores. Neither ships in the VSIX.
+local stores. These measurements indicate readiness to measure ROI, not
+monetary return: verified delivery and quality, billed costs, human effort and
+a comparable non-AI baseline are still needed. Neither ships in the VSIX.
 
 ## Development
 

@@ -48,7 +48,7 @@ it('model spec: outcomes, gaps, tiers and sources are well formed', () => {
     'subAgentShare',
   ]);
   for (const outcome of model.outcomes) {
-    assert.ok(['local', 'needs-vcs-join', 'needs-org-api'].includes(outcome.availability), outcome.id);
+    assert.ok(['local', 'needs-vcs-join', 'needs-org-api', 'needs-baseline'].includes(outcome.availability), outcome.id);
     if (outcome.liveMetric) assert.ok(liveMetrics.has(outcome.liveMetric), outcome.id);
   }
   for (const gap of model.gaps) {
@@ -65,6 +65,17 @@ it('model spec: outcomes, gaps, tiers and sources are well formed', () => {
   for (const r of model.relationships) {
     assert.ok(entities.has(r.from) && entities.has(r.to), `${r.from} -> ${r.to}`);
   }
+});
+
+it('ROI model separates locally measured work links from return and baseline', () => {
+  const outcomes = Object.fromEntries(model.outcomes.map((o) => [o.id, o]));
+  assert.match(model.title, /ROI/);
+  assert.equal(outcomes.coverage.liveMetric, 'creditsToPrShare');
+  assert.match(outcomes.coverage.measure, /not verified delivery or value/);
+  assert.equal(outcomes.roi.availability, 'needs-baseline');
+  assert.equal(outcomes.roi.liveMetric, undefined);
+  assert.equal(outcomes.human_effort.availability, 'needs-baseline');
+  assert.equal(outcomes.reconciliation.availability, 'needs-org-api');
 });
 
 it('normalises repository identifiers and drops credentials', async () => {
@@ -302,6 +313,7 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   assert.equal(stage.branch.credits, 4);
   assert.equal(stage.pullRequest.emitted, false);
   assert.equal(stage.pullRequest.credits, 0);
+  assert.equal(traces.metrics.creditsToPrShare, null, 'a PR share cannot be measured on VS Code traces');
   assert.equal(traces.metrics.creditsToRepoShare, 1);
   assert.equal(traces.metrics.creditCoverage, 0.75);
   assert.deepEqual(Object.fromEntries(traces.breakdowns.link.map((r) => [r.key, r.calls])), {
@@ -490,6 +502,7 @@ it('session store: applies an exact rolling cutoff and tolerates an incompatible
   assert.deepEqual(store.freshness, { first: '2026-09-23T13:30:00.000Z', last: '2026-09-25T00:00:00.000Z' });
   assert.equal(stage.workRef.emitted, false);
   assert.equal(stage.pullRequest.emitted, false);
+  assert.equal(store.metrics.creditsToPrShare, null);
   assert.match(store.notes.join(' '), /session_refs is missing or lacks session_id \/ ref_type/);
 
   assert.equal(timestampMs('2026-09-23 18:00:00').ms, Date.UTC(2026, 8, 23, 18));
