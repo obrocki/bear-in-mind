@@ -392,12 +392,20 @@ async function connectTelemetry(
 
   const applied: string[] = [];
   const failed: string[] = [];
+  // Another window may have restored defaults while the picker was open.
+  if (globalState.isSealed) {
+    await promptReload('Bear in Mind was restored to its defaults in another window. Reload before connecting again.');
+    return;
+  }
   let backup = globalState.get<SettingsBackup>(BACKUP_KEY);
+  // Configuration objects are snapshots; read the values as they are now, after
+  // the picker, so the backup records what the user actually had.
+  const live = vscode.workspace.getConfiguration(OTEL_SECTION);
   // Values an earlier Bear in Mind wrote, before backups existed, are not the
   // user's originals; recording them would make a later restore a no-op.
   const before: Record<string, unknown> = {};
   for (const key of CONNECT_KEYS) {
-    before[key] = config.inspect(key)?.globalValue;
+    before[key] = live.inspect(key)?.globalValue;
   }
   const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
   const ownedEarlier = new Set(
@@ -412,14 +420,14 @@ async function connectTelemetry(
     // A setting this build of Copilot Chat does not register cannot be written —
     // `update` rejects. Writing them one at a time, and checking first, means one
     // unknown key cannot abort the rest of the setup.
-    const known = config.inspect(key);
+    const known = live.inspect(key);
     if (!known || known.defaultValue === undefined) {
       failed.push(key);
       output.appendLine(`[iceberg] ${OTEL_SECTION}.${key} is not a setting in this VS Code build; skipped.`);
       continue;
     }
     try {
-      await config.update(key, value, vscode.ConfigurationTarget.Global);
+      await live.update(key, value, vscode.ConfigurationTarget.Global);
       applied.push(key);
       // Remember the user's own value so Restore Defaults can put it back.
       backup = recordBackup(backup, key, ownedEarlier.has(key) ? undefined : known.globalValue, value);
@@ -485,26 +493,34 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
   }
 
   const copilot = vscode.workspace.getConfiguration(OTEL_SECTION);
-  const current: Record<string, unknown> = {};
-  for (const key of CONNECT_KEYS) {
-    current[key] = copilot.inspect(key)?.globalValue;
-  }
-  const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
-  const copilotPlan = planCopilotRestore({
-    current,
-    backup: globalState.get<SettingsBackup>(BACKUP_KEY),
-    feedPaths: [otel.defaultFeedPath(), feedOverride].filter(Boolean),
-    collectorConfigured: !!(copilot.get<string>('otlpEndpoint', '') || '').trim()
-  });
-  const copilotChanges = copilotPlan.filter((action) => action.kind !== 'keep');
-  const copilotKept = copilotPlan.filter((action) => action.kind === 'keep');
-
-  // Only user settings are reset: workspace settings belong to the project and
-  // may be shared with others through source control.
   const root = vscode.workspace.getConfiguration();
-  const settingsPlan = planSettingsReset(contributedSettings(context.extension?.packageJSON), (key) => root.inspect(key));
-  const userSettings = settingsPlan.filter((entry) => entry.scopes.includes('global')).map((entry) => entry.key);
-  const workspaceSettings = settingsPlan.filter((entry) => entry.scopes.some((scope) => scope !== 'global')).map((entry) => entry.key);
+  const plan = () => {
+    // Configuration objects are snapshots, so fetch fresh ones on every call.
+    const copilotNow = vscode.workspace.getConfiguration(OTEL_SECTION);
+    const rootNow = vscode.workspace.getConfiguration();
+    const current: Record<string, unknown> = {};
+    for (const key of CONNECT_KEYS) {
+      current[key] = copilotNow.inspect(key)?.globalValue;
+    }
+    const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
+    const copilotPlan = planCopilotRestore({
+      current,
+      backup: globalState.get<SettingsBackup>(BACKUP_KEY),
+      feedPaths: [otel.defaultFeedPath(), feedOverride].filter(Boolean),
+      collectorConfigured: !!(copilotNow.get<string>('otlpEndpoint', '') || '').trim()
+    });
+    // Only user settings are reset: workspace settings belong to the project and
+    // may be shared with others through source control.
+    const settingsPlan = planSettingsReset(contributedSettings(context.extension?.packageJSON), (key) => rootNow.inspect(key));
+    return {
+      copilotChanges: copilotPlan.filter((action) => action.kind !== 'keep'),
+      copilotKept: copilotPlan.filter((action) => action.kind === 'keep'),
+      userSettings: settingsPlan.filter((entry) => entry.scopes.includes('global')).map((entry) => entry.key),
+      workspaceSettings: settingsPlan.filter((entry) => entry.scopes.some((scope) => scope !== 'global')).map((entry) => entry.key)
+    };
+  };
+  const confirmed = plan();
+  const { copilotChanges, copilotKept, userSettings, workspaceSettings } = confirmed;
 
   const detail = [
     'Copilot Chat telemetry settings:',
@@ -527,6 +543,18 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
     confirm
   );
   if (answer !== confirm) {
+    return;
+  }
+  // The dialog is modal only to this window: another window may have restored
+  // defaults, or the user may have changed a listed setting, while it was open.
+  if (globalState.isSealed) {
+    await promptReload('Bear in Mind was restored to its defaults in another window. Reload the window to finish.');
+    return;
+  }
+  if (JSON.stringify(plan()) !== JSON.stringify(confirmed)) {
+    void vscode.window.showWarningMessage(
+      'Settings changed while the confirmation was open, so nothing was changed. Run Restore Defaults again to review the new plan.'
+    );
     return;
   }
 
