@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "title": "AI usage → work → outcome attribution",
+  "title": "Measuring ROI on AI-assisted development",
   "updated": "2026-09-30",
   "workstream": "Workstream 2: Data and Attribution Model",
-  "question": "How do we connect AI usage to the work and outcomes it influenced?",
-  "summary": "Every local Copilot surface reports per-call model and token consumption plus repository context, but VS Code emits no pull request or work-item ID, and Copilot CLI and the app record one only when the agent references it. The cloud agent owns its pull request but has no per-session cost. Organisation APIs hold authoritative credits and delivery metrics without session IDs. Attribution therefore needs a deterministic VCS join (branch/commit → pull request) and an actor key, then reconciliation against the billing ledger.",
+  "question": "What does AI-assisted development cost, what value does it deliver, and can we credibly attribute the difference?",
+  "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
   "surfaces": [
     {
       "id": "vscode",
@@ -460,18 +460,21 @@
     "Credits = nano-AIU / 1,000,000,000; no token-to-currency estimate without an explicit, labelled rate.",
     "Attribution weights per session sum to at most 1; the remainder stays unattributed.",
     "Local observations are not a bill; reconcile against the billing usage API at day/user/model grain.",
-    "No prompt or response content; pseudonymise actors; keep MCP names hashed unless governed."
+    "No prompt or response content; pseudonymise actors; keep MCP names hashed unless governed.",
+    "Never present credits, cache ratios or PR references as monetary ROI or proof of value; report cost, outcome and baseline coverage separately."
   ],
   "outcomes": [
-    { "id": "coverage", "name": "Attribution coverage", "measure": "% of credits traced session → repo → branch/commit → PR → outcome", "availability": "local", "liveMetric": "creditsToPrShare" },
+    { "id": "coverage", "name": "PR-reference coverage", "measure": "% of reported credits in sessions with a repository, branch and recorded PR reference; not verified delivery or value", "availability": "local", "liveMetric": "creditsToPrShare" },
     { "id": "repo_coverage", "name": "Work-context coverage", "measure": "% of credits in sessions with a repository", "availability": "local", "liveMetric": "creditsToRepoShare" },
     { "id": "credit_coverage", "name": "Credit coverage", "measure": "% of model calls that report credits", "availability": "local", "liveMetric": "creditCoverage" },
     { "id": "cost_per_change", "name": "Cost per delivered change", "measure": "Credits per merged PR, per work-item type", "availability": "needs-vcs-join" },
     { "id": "ai_share", "name": "AI-assisted share", "measure": "% of merged PRs with T0/T1 attribution", "availability": "needs-vcs-join" },
-    { "id": "efficiency", "name": "Efficiency", "measure": "Cache-read ratio, sub-agent share, model and reasoning-effort mix, credits in sessions with no outcome", "availability": "local", "liveMetric": "cacheReadRatio" },
+    { "id": "efficiency", "name": "Cache-read share", "measure": "Cached input tokens / reported input tokens; a usage mix indicator, not time or money saved", "availability": "local", "liveMetric": "cacheReadRatio" },
     { "id": "speed", "name": "Speed", "measure": "PR lead time AI-assisted vs baseline; agent latency and TTFT", "availability": "needs-vcs-join" },
     { "id": "quality", "name": "Quality", "measure": "Edit acceptance, survival, review rounds, CI pass rate, revert rate, task completion", "availability": "needs-vcs-join" },
-    { "id": "reconciliation", "name": "Reconciliation", "measure": "Local credits vs billing netQuantity by user/day/model", "availability": "needs-org-api" }
+    { "id": "reconciliation", "name": "Billed AI cost", "measure": "Reconcile reported credits with billed net amount by user/day/model; include seat and infrastructure costs", "availability": "needs-org-api" },
+    { "id": "human_effort", "name": "Human effort and rework", "measure": "Developer time spent prompting, reviewing, correcting and maintaining delivered work vs comparable non-AI work", "availability": "needs-baseline" },
+    { "id": "roi", "name": "Incremental return", "measure": "(Value of verified incremental outcomes − incremental AI and human costs) / incremental AI and human costs; requires an explicit value model and comparable baseline", "availability": "needs-baseline" }
   ],
   "gaps": [
     { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },

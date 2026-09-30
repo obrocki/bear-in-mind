@@ -1,7 +1,8 @@
-# Connecting AI usage to work and outcomes across GitHub Copilot surfaces
+# Measuring ROI on AI-assisted development across GitHub Copilot surfaces
 
-Research for **Workstream 2: Data and Attribution Model**. The question: *how do
-we connect AI usage to the work and outcomes it influenced?* Compiled
+Research for **Workstream 2: Data and Attribution Model**. The question: *what
+does AI-assisted development cost, what value does it deliver, and how can we
+attribute the difference?* Compiled
 30 September 2026.
 
 Scope: VS Code (Copilot Chat agents), Copilot CLI, the GitHub Copilot app,
@@ -14,6 +15,35 @@ The structured model behind this document is
 [`attribution-model.json`](attribution-model.json). The
 [AI attribution canvas](../../.github/extensions/ai-attribution/README.md) renders
 it in the GitHub Copilot app, along with live coverage from local stores.
+
+## ROI measurement contract
+
+**Reported usage is an input, not a return.** The local coverage funnel measures
+the share of *reported* credits that can be traced to a session, repository,
+branch and recorded PR reference. A PR reference is not evidence that the PR
+merged, that AI caused the result, or that the result had value. Cache-read
+share, sub-agent share and latency describe usage patterns, not savings.
+Missing credits remain unknown; the CLI/app and VS Code windows and sources
+must be shown separately rather than added.
+
+To evaluate ROI, compare a defined population of AI-assisted work with
+comparable non-AI work over the same period, accounting for task mix,
+complexity, team and quality. Collect:
+
+| Component | Measurement needed | Available here |
+| --- | --- | --- |
+| Investment | Billed AI spend, seats/infrastructure, setup, prompting, review and rework time | Local reported credits and tokens only; not a bill or human effort |
+| Delivered value | Verified merged/deployed work, cycle time, quality/reverts, and a declared valuation of time or business outcomes | Some local activity proxies; no verified PR/CI linkage or monetary value |
+| Baseline | Comparable non-AI delivery and quality, with the same value and cost definitions | Not collected |
+| Attribution confidence | Session → work item → verified outcome, with tier and unattributed share | Local repository and sometimes PR references; no outcome join |
+
+An illustrative return is **(incremental valued benefit − AI investment) /
+AI investment**, with the investment including the full incremental spend
+and human oversight. Define the benefit and counterfactual before computing
+it; do not count saved time again as avoided cost if it is already valued as
+benefit. If any of these inputs is absent, report coverage and directional
+proxies rather than a percentage ROI. Faster PRs or more merged PRs alone do
+not establish business value or causation.
 
 ## 1. Headline findings
 
@@ -171,15 +201,17 @@ erDiagram
 
 | Outcome | Measure | Status |
 | --- | --- | --- |
-| Attribution coverage | % credits traced session → repo → branch/commit → PR → outcome | Local, stops at branch |
+| PR-reference coverage | % reported credits in sessions with a repository, branch and recorded PR reference (not verified outcome attribution) | Local, generally stops at branch |
 | Work-context coverage | % credits in sessions with a repository | Local |
 | Credit coverage | % model calls reporting credits | Local |
 | Cost per delivered change | Credits per merged PR, per work-item type | Needs T1 join |
 | AI-assisted share | % merged PRs with T0/T1 attribution | Needs T1 join + org repo report |
-| Efficiency | Cache-read ratio, sub-agent share, model and reasoning-effort mix, credits in sessions with no outcome | Local |
+| Usage mix | Cache-read ratio, sub-agent share, model and reasoning-effort mix; not time or money saved | Local |
 | Speed | PR lead time AI-assisted vs baseline; agent latency and TTFT | Local latency; lead time needs PR data |
 | Quality | Edit acceptance, survival, review rounds, CI pass rate, revert rate, task completion | VS Code local; the rest needs PR/CI data |
 | Reconciliation | Local credits vs billing `netQuantity` by user/day/model | Needs org API |
+| Human effort and rework | Prompting, review, correction and maintenance time for comparable tasks | Needs time/effort data and baseline |
+| Incremental return | Valued incremental benefit less AI investment, divided by AI investment, with quality guardrails | Needs verified outcome, valuation, full costs and baseline |
 
 ### Recommended next steps
 
@@ -190,6 +222,7 @@ erDiagram
    the billing API at day grain.
 4. **Reconcile.** Compare local credits with the billing usage API by user, day and model, and publish the gap.
 5. **Align naming.** Emit or map to OTel `vcs.*` and `cicd.*` so external pipelines can join by commit.
+6. **Establish the counterfactual.** Record comparable non-AI delivery, rework and quality, full AI and human costs, and a declared valuation before publishing ROI.
 
 ## 8. Verification
 
