@@ -78,12 +78,8 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   // Restore stops the watchers; its own setting changes must not restart them.
   let suspended = false;
-  const setSuspended = (on: boolean) => {
-    suspended = on;
-    if (!on) {
-      watcher.reconfigure();
-      otel.reconfigure();
-    }
+  const suspend = () => {
+    suspended = true;
   };
 
   context.subscriptions.push(
@@ -204,7 +200,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output, globalState)),
 
     vscode.commands.registerCommand('iceberg.restoreDefaults', () =>
-      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, setSuspended })
+      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, suspend })
     ),
 
     vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output, snapshot().session)),
@@ -401,6 +397,15 @@ async function connectTelemetry(
   // Configuration objects are snapshots; read the values as they are now, after
   // the picker, so the backup records what the user actually had.
   const live = vscode.workspace.getConfiguration(OTEL_SECTION);
+  const liveEndpoint = (live.get<string>('otlpEndpoint', '') || '').trim();
+  const liveCollector = !!liveEndpoint && (live.get<string>('exporterType', '') || '').trim() !== 'file';
+  if (liveEndpoint !== endpoint || liveCollector !== collectorInUse) {
+    // The warning about replacing a collector was based on the old values.
+    void vscode.window.showWarningMessage(
+      "Copilot's telemetry exporter changed while the picker was open, so nothing was changed. Run Connect again."
+    );
+    return;
+  }
   // Values an earlier Bear in Mind wrote, before backups existed, are not the
   // user's originals; recording them would make a later restore a no-op.
   const before: Record<string, unknown> = {};
@@ -477,8 +482,8 @@ interface RestoreContext {
   globalState: SealableMemento;
   workspaceState: SealableMemento;
   output: vscode.OutputChannel;
-  /** Stops configuration changes restarting the watchers; turning it off restarts them. */
-  setSuspended(on: boolean): void;
+  /** Stops configuration changes restarting the watchers until the window reloads. */
+  suspend(): void;
 }
 
 /**
@@ -486,7 +491,7 @@ interface RestoreContext {
  * back to the user's own values, Bear in Mind's user settings to their defaults,
  * and its stored data and feed file removed. Copilot's own files are untouched.
  */
-async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, setSuspended }: RestoreContext): Promise<void> {
+async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, suspend }: RestoreContext): Promise<void> {
   if (globalState.isSealed) {
     await promptReload('Bear in Mind is already restored to its defaults. Reload the window to finish.');
     return;
@@ -531,9 +536,10 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
     '',
     `Bear in Mind settings: ${userSettings.length > 0 ? `${userSettings.length} reset to default (${userSettings.join(', ')})` : 'already at defaults'}.`,
     ...(workspaceSettings.length > 0 ? [`Workspace settings left alone: ${workspaceSettings.join(', ')}.`] : []),
-    'Stored data: the meter history, session pin and local telemetry feed are deleted. Other open windows stop saving and start fresh when reloaded.',
+    'Stored data: the meter history, session pin and Bear in Mind\'s own storage folder (the default feed file) are deleted. ' +
+      'A custom iceberg.otel.feedPath file is kept. Other open windows stop saving and start fresh when reloaded.',
     '',
-    "Copilot's own trace store and transcripts are not touched. Reload the window afterwards so Copilot Chat picks up the change."
+    "Copilot's own trace store and transcripts are not touched. Reload the window afterwards so Copilot Chat applies the restored settings."
   ].join('\n');
 
   const confirm = 'Restore and Disconnect';
@@ -558,9 +564,13 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
     return;
   }
 
-  setSuspended(true);
+  suspend();
   otel.stop();
   watcher.stop();
+  // Announce the reset before touching settings, so a Connect running in
+  // another window refuses rather than re-enabling telemetry mid-restore.
+  await globalState.seal();
+  await workspaceState.seal();
   output.appendLine(`[${new Date().toISOString()}] restoring defaults`);
 
   const failed: string[] = [];
@@ -574,16 +584,19 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
     }
   }
   if (failed.length > 0) {
-    // The backup is the only record of the user's previous values, so keep it
-    // and everything else, and let a retry pick up where this left off.
-    setSuspended(false);
+    // The backup is the only record of the user's previous values, so it and
+    // all other stored data are kept; after a reload a retry finishes the job.
     const show = 'Show Log';
     const choice = await vscode.window.showErrorMessage(
-      `Could not restore ${failed.join(', ')}. Bear in Mind's settings and stored data were kept so you can try again.`,
+      `Could not restore ${failed.join(', ')}. Bear in Mind's settings and stored data were kept. ` +
+        'Reload the window, then run Restore Defaults again.',
+      'Reload Window',
       show
     );
     if (choice === show) {
       output.show(true);
+    } else if (choice) {
+      await vscode.commands.executeCommand('workbench.action.reloadWindow');
     }
     return;
   }
@@ -623,8 +636,8 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
   const reload = 'Reload Window';
   const uninstall = 'Uninstall Bear in Mind';
   const choice = await vscode.window.showInformationMessage(
-    `Bear in Mind is disconnected and back to its defaults.${note} Reload so Copilot Chat stops exporting ` +
-      'telemetry, or uninstall to remove the extension as well.',
+    `Bear in Mind is disconnected and back to its defaults.${note} Reload so Copilot Chat applies the ` +
+      'restored telemetry settings, or uninstall to remove the extension as well.',
     reload,
     uninstall
   );

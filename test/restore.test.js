@@ -167,6 +167,18 @@ it('clears stored state and refuses writes afterwards, including on dispose', as
   assert.equal(store.get('iceberg.usage.v4', 'fallback'), 'fallback');
 });
 
+it('sealing announces the reset to other windows without deleting data, so a failed restore can retry', async () => {
+  const shared = memory({ [BACKUP_KEY]: { enabled: { hadValue: false, applied: true } } });
+  const resetter = new SealableMemento(shared, RESET_KEY);
+  const other = new SealableMemento(shared, RESET_KEY);
+  await resetter.seal(7);
+  assert.equal(other.isSealed, true);
+  assert.deepEqual(shared.get(BACKUP_KEY), { enabled: { hadValue: false, applied: true } });
+  const afterReload = new SealableMemento(shared, RESET_KEY);
+  assert.equal(afterReload.isSealed, false);
+  assert.deepEqual(afterReload.get(BACKUP_KEY), { enabled: { hadValue: false, applied: true } });
+});
+
 it('publishes the reset marker before deleting anything', async () => {
   const order = [];
   const shared = memory({ a: 1, b: 2 });

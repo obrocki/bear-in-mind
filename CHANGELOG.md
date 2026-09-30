@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-- **Restore defaults and disconnect**: a fourth option in the connect picker, a
+- **Restore defaults and disconnect**: the last option in the connect picker, a
   dashboard footer button and menu entry, and the **Iceberg: Restore Defaults and
   Disconnect…** command. After confirming a listed plan, it returns the Copilot
   Chat telemetry settings Bear in Mind changed to their previous user values,
-  resets Bear in Mind's user settings, deletes its stored state and feed file,
-  and offers to reload or uninstall. Settings changed by the user after
-  connecting, workspace settings and Copilot's own files are left alone.
+  resets Bear in Mind's user settings, deletes its stored state and its own
+  storage folder with the default feed file, and offers to reload or uninstall.
+  Settings changed by the user after connecting, workspace settings, custom
+  `iceberg.otel.feedPath` files and Copilot's own files are left alone.
 - Connecting now records the previous user value of each Copilot setting it
   writes, so a later restore can put it back.
 - AI attribution canvas README: screenshots of the Outcomes, Surfaces, Data

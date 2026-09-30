@@ -137,21 +137,24 @@ require reconnecting.
 
 ### Disconnecting and restoring defaults
 
-To undo the connection, choose **Restore defaults and disconnect…** as the
-fourth option in the connect picker, the button at the foot of the dashboard,
-the dashboard's **…** menu, or run **Iceberg: Restore Defaults and Disconnect…**.
+To undo the connection, choose **Restore defaults and disconnect…**, the last
+option in the connect picker, the button at the foot of the dashboard, the
+dashboard's **…** menu, or run **Iceberg: Restore Defaults and Disconnect…**.
 A confirmation lists every change first. It then:
 
 - returns each Copilot Chat telemetry setting it changed to your previous user
   value (or the default), leaving any you changed yourself afterwards alone;
 - resets Bear in Mind's user settings, but not workspace settings;
-- deletes its meter history, session pin and local feed file. Other open windows
-  stop saving their copies and start fresh when reloaded.
+- deletes its meter history, session pin and its own storage folder, which holds
+  the default feed file. The folder is kept while Copilot is still set to write
+  there, and a feed at a custom `iceberg.otel.feedPath` is never deleted. Other
+  open windows stop saving their copies and start fresh when reloaded.
 
 Copilot's own trace store and transcripts are untouched. Reload the window so
-Copilot Chat stops exporting, or pick **Uninstall Bear in Mind** to remove the
-extension as well. Connections made before 0.6.3 kept no record of previous
-values, so only settings that still hold what Bear in Mind writes are reset.
+Copilot Chat applies the restored telemetry settings (which may be your own
+OTLP exporter), or pick **Uninstall Bear in Mind** to remove the extension as
+well. Connections made before 0.6.3 kept no record of previous values, so only
+settings that still hold what Bear in Mind writes are reset.
 
 Quality uses cumulative metrics when present, otherwise documented edit,
 survival, feedback, cloud-session and tool-call events. Matching metrics and

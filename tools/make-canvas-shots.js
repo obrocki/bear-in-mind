@@ -517,7 +517,13 @@ async function setServerView(serverUrl, view) {
     if (browser) browser.kill();
     if (server) await server.close().catch(() => {});
     await sleep(500);
-    fs.rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    // Best effort: on Windows the browser can hold its profile open briefly
+    // after exiting, and a leftover temp directory is not worth failing on.
+    try {
+      fs.rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      /* ignore */
+    }
     try {
       fs.rmdirSync(WORK);
     } catch {

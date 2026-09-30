@@ -37,8 +37,10 @@ Disable readers with `iceberg.trackCopilotChat: false` and
 `iceberg.otel.enabled: false`. This does not delete Copilot's existing files.
 **Restore Defaults and Disconnect** puts the Copilot settings back to their
 previous values, resets Bear in Mind's user settings, and deletes its stored
-state and feed directory. It too leaves Copilot's trace store and transcripts
-untouched.
+state and its own global-storage folder (the default feed). That folder is kept
+while Copilot is still set to write there, and a feed at a custom
+`iceberg.otel.feedPath` is not deleted. Copilot's trace store and transcripts
+are untouched.
 
 ## Reporting a vulnerability
 
