@@ -1,7 +1,8 @@
 import { hrToMs } from './otelParse';
 import { emptySpanDigest, type CallTally, type SpanDigest, type SpanSession } from './otelSummary';
 
-/** OTel span status code for ERROR; UNSET (0) and OK (1) are not failures. */
+/** OTel span status codes. UNSET (0) means no status was reported, so it is unknown. */
+const SPAN_STATUS_OK = 1;
 const SPAN_STATUS_ERROR = 2;
 /** Request-option blobs larger than this are skipped rather than parsed. */
 const MAX_OPTIONS_CHARS = 64 * 1024;
@@ -98,9 +99,13 @@ export function reasoningEffort(attributes: Record<string, unknown>): string | u
   return typeof effort === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(effort) ? effort.toLowerCase() : undefined;
 }
 
+/** OK is a success and ERROR a failure; UNSET and anything else are unknown. */
 function spanFailed(status: unknown): boolean | undefined {
   const code = typeof status === 'string' && status.trim() !== '' ? Number(status) : status;
-  return typeof code === 'number' && Number.isInteger(code) ? code === SPAN_STATUS_ERROR : undefined;
+  if (code === SPAN_STATUS_OK) {
+    return false;
+  }
+  return code === SPAN_STATUS_ERROR ? true : undefined;
 }
 
 export function usageSpan(

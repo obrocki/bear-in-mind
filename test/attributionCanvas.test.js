@@ -239,7 +239,23 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
     null,
     null,
   );
-  span.run('tool-ok', 't1', at + 50, at + 60, 0, 'execute_tool', null, null, null, null, null, null, 'read_file', null);
+  span.run('tool-ok', 't1', at + 50, at + 60, 1, 'execute_tool', null, null, null, null, null, null, 'read_file', null);
+  span.run(
+    'tool-unset',
+    't1',
+    at + 60,
+    at + 65,
+    0,
+    'execute_tool',
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    'read_file',
+    null,
+  );
   span.run(
     'tool-bad',
     't1',
@@ -284,7 +300,11 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   });
   assert.equal(traces.breakdowns.repository[0].key, 'o/r');
   assert.equal(traces.breakdowns.reasoningEffort.find((r) => r.key === 'high').credits, 3);
-  assert.deepEqual(traces.tools, [{ key: 'read_file', calls: 2, statusCalls: 2, failed: 1 }]);
+  assert.deepEqual(
+    traces.tools,
+    [{ key: 'read_file', calls: 3, statusCalls: 2, failed: 1 }],
+    'UNSET status is unknown',
+  );
   assert.equal(coverage.sources.find((s) => s.id === 'sessionStore').status, 'missing');
 
   assert.equal(reasoningEffortFromOptions('{"reasoning_effort":"max"}'), 'max');

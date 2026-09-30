@@ -16,6 +16,8 @@ import path from 'node:path';
 export const NANO_AIU_PER_CREDIT = 1_000_000_000;
 const DAY_MS = 86_400_000;
 const TOP_N = 8;
+/** OTel status codes. UNSET (0) means no status was reported, so it is unknown. */
+const SPAN_STATUS_OK = 1;
 const SPAN_STATUS_ERROR = 2;
 /** Request-option blobs larger than this are skipped rather than parsed. */
 const MAX_OPTIONS_CHARS = 64 * 1024;
@@ -335,9 +337,11 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     const sessionRefs = (sessionId && refs.get(sessionId)) || new Set();
 
     addTo(stages.observed, sessionId, nano);
-    if (session) {
+    // The event's own session ID establishes the stage; the optional sessions
+    // table only adds repository and branch.
+    if (sessionId) {
       addTo(stages.session, sessionId, nano);
-      if (repository) {
+      if (session && repository) {
         addTo(stages.repository, sessionId, nano);
         if (present(session.branch)) {
           addTo(stages.branch, sessionId, nano);
@@ -368,7 +372,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
 
   const funnel = [
     stage('observed', 'Model calls observed', stages.observed),
-    stage('session', 'In a known session', stages.session),
+    stage('session', 'With a session ID', stages.session),
     stage('repository', '…with a repository', stages.repository),
     stage('branch', '…and a branch', stages.branch),
     stage('workRef', '…and a work reference (PR, issue or commit)', stages.workRef, refsAvailable),
@@ -579,11 +583,13 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     }
 
     addTo(stages.observed, sessionKey, nano);
-    if (sessionKey || ctx) {
-      addTo(stages.session, sessionKey, nano);
+    // Only an ID on the call itself counts; trace-only links show in the link breakdown.
+    const stageKey = sessionKey ?? (present(parent) ? String(parent) : null);
+    if (stageKey) {
+      addTo(stages.session, stageKey, nano);
       if (ctx?.repository) {
-        addTo(stages.repository, sessionKey, nano);
-        if (ctx.branch || ctx.commit) addTo(stages.branch, sessionKey, nano);
+        addTo(stages.repository, stageKey, nano);
+        if (ctx.branch || ctx.commit) addTo(stages.branch, stageKey, nano);
       }
     }
 
@@ -620,7 +626,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     const t = toolTally.get(key) ?? { key, calls: 0, statusCalls: 0, failed: 0 };
     t.calls += 1;
     const status = present(tool.status_code) ? Number(tool.status_code) : NaN;
-    if (Number.isInteger(status)) {
+    if (status === SPAN_STATUS_OK || status === SPAN_STATUS_ERROR) {
       t.statusCalls += 1;
       t.failed += status === SPAN_STATUS_ERROR ? 1 : 0;
     }
@@ -629,7 +635,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   const funnel = [
     stage('observed', 'Model calls (chat spans) observed', stages.observed),
-    stage('session', 'With a session or conversation ID', stages.session),
+    stage('session', 'With a session, conversation or parent-session ID', stages.session),
     stage('repository', '…resolved to a repository via invoke_agent', stages.repository),
     stage('branch', '…and a branch or commit', stages.branch),
     stage('workRef', '…and a work reference', stages.workRef, false),

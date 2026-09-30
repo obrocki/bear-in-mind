@@ -11,7 +11,7 @@
 - Cost shows the cache-read share of retained trace input.
 - Quality falls back to `execute_tool` span status for tool success when the feed
   has no tool-call metrics or events, so trace-store-only setups get a signal.
-  Spans without a reported status are not counted as successes.
+  Only OK and ERROR span statuses count; UNSET or missing statuses are left out.
 - The trace-store reader tolerates older `agent-traces.db` schemas without
   `agent_name` or `status_code`.
 - Research: [connecting AI usage to work and outcomes](docs/research/ai-telemetry-attribution.md)

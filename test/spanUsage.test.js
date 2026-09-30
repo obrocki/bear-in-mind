@@ -186,7 +186,7 @@ it('counts tool failures from reported span status only, preferring feed metrics
   const tool = (id, status) => usageSpan(id, { 'gen_ai.operation.name': 'execute_tool', 'gen_ai.tool.name': 'read_file' },
     start, start + 10, status);
   const digest = digestSpans([tool('a', 2), tool('b', 0), tool('c', '1'), tool('d', undefined), tool('e', 'nope')]);
-  assert.equal(digest.toolStatusCalls, 3);
+  assert.equal(digest.toolStatusCalls, 2, 'UNSET (0), missing and invalid statuses are unknown');
   assert.equal(digest.toolFailures, 1);
   const record = {
     spanId: 'f', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0], status: { code: 2 },
@@ -196,8 +196,8 @@ it('counts tool failures from reported span status only, preferring feed metrics
 
   const fromSpans = buildQuality({ rollup: new OtelRollup(), spans: digest });
   assert.equal(fromSpans.toolSource, 'spans');
-  assert.equal(fromSpans.toolCalls, 3);
-  assert.equal(fromSpans.toolSuccessRate, 2 / 3);
+  assert.equal(fromSpans.toolCalls, 2);
+  assert.equal(fromSpans.toolSuccessRate, 0.5);
   assert.equal(fromSpans.available, true);
 
   const rollup = new OtelRollup();

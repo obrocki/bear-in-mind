@@ -139,8 +139,9 @@ Quality uses cumulative metrics when present, otherwise documented edit,
 survival, feedback, cloud-session and tool-call events. Matching metrics and
 events are never added together; inference events alone are not quality signals.
 Without tool-call metrics or events, tool success falls back to the status of
-retained `execute_tool` spans, labeled **Tool success · traces**; spans with no
-reported status are left out rather than counted as successes.
+retained `execute_tool` spans, labeled **Tool success · traces**. Only OK and
+ERROR statuses count; UNSET or missing statuses are left out rather than counted
+as successes.
 
 ## How tokens get counted
 

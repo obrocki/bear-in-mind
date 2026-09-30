@@ -60,7 +60,8 @@ dependencies; reload extensions in the app after editing. Its tests run with
   have no measurements. Keep compact event totals beyond the recent-event cap;
   ignore branch-changed survival samples and never add events to matching metrics.
   Tool success falls back to `execute_tool` span status only when the feed has no
-  tool-call measurements; spans without a status are excluded, not successes.
+  tool-call measurements (a measured zero counts). Only OK and ERROR count; UNSET
+  is unknown, not a success.
 - Retained-trace credit breakdowns (model, repository, caller, reasoning effort)
   are diagnostics over the seven-day span window: never add them to the meter or
   to transcript credits. Keep only `owner/name` repository identifiers (no URL

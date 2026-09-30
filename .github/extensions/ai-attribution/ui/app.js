@@ -353,7 +353,7 @@ function renderGaps() {
   ];
 }
 
-/** Credit-weighted only when credits were reported; otherwise the funnel is labelled call-weighted. */
+/** Credit-weighted only when some credits are positive; otherwise the funnel is labelled call-weighted. */
 function creditWeighted(source) {
   return source.funnel[0].credits > 0;
 }
@@ -479,7 +479,7 @@ function sourceCard(s) {
       {},
       creditWeighted(s)
         ? 'Attribution funnel (credit-weighted)'
-        : 'Attribution funnel (call-weighted: no credits reported)',
+        : 'Attribution funnel (call-weighted: no positive credits)',
     ),
     funnel(s),
     h(

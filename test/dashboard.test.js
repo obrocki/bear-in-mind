@@ -455,7 +455,7 @@ function tracedSpans() {
       'copilot_chat.chat_session_id': undefined, 'gen_ai.response.model': 'mini', 'gen_ai.agent.name': 'title',
       'gen_ai.usage.input_tokens': 100, 'gen_ai.usage.output_tokens': 5
     }, 20),
-    base('ok', 'execute_tool', { 'gen_ai.tool.name': 'read_file' }, 30, 0),
+    base('ok', 'execute_tool', { 'gen_ai.tool.name': 'read_file' }, 30, 1),
     base('bad', 'execute_tool', { 'gen_ai.tool.name': 'read_file' }, 40, 2)
   ]);
   digest.sinceMs = at - 7 * 86400000;

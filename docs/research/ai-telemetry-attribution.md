@@ -31,8 +31,10 @@ it in the GitHub Copilot app, along with live coverage from local stores.
    `copilot_usage.total_nano_aiu`, so credits are comparable across surfaces.
 3. **Work linkage stops at the branch.** Repository, branch and commit exist
    locally: on VS Code `invoke_agent` spans and in CLI/app `session.start.context`.
-   No local surface emits a pull request, issue or work-item ID. The cloud agent
-   is the exception, because its session owns a branch and pull request.
+   VS Code emits no pull request, issue or work-item ID. Copilot CLI and the app
+   record one in `session_refs` only when the agent happens to reference it; the
+   measured store had none. The cloud agent is the exception, because its session
+   owns a branch and pull request.
 4. **Outcomes are fragmented and scoped differently.** VS Code reports edit
    acceptance, survival and feedback. CLI/app report lines changed and task
    completion. The cloud agent produces pull requests. The organisation plane
@@ -100,7 +102,7 @@ the actor.
 
 | Gap | Where | Consequence | Mitigation |
 | --- | --- | --- | --- |
-| No PR / issue / work-item ID locally | VS Code, CLI, app | Consumption stops at branch/commit | Resolve `(repo, branch)` and `(repo, commit)` to PRs through the GitHub API; adopt `vcs.change.id` |
+| No reliable PR / issue ID locally | VS Code (none), CLI and app (only when referenced) | Consumption stops at branch/commit | Resolve `(repo, branch)` and `(repo, commit)` to PRs through the GitHub API; adopt `vcs.change.id` |
 | No per-session credits for cloud agent | Cloud agent, audit log | PR-linked work has no cost | Session streaming / usage records; billing API at day grain; allocate |
 | No session ID in org data | Usage metrics, billing | Authoritative credits cannot join to sessions | Reconcile at user/day/model; allocate by local share |
 | No actor locally | VS Code, CLI, app | Cannot join to org per-user data | Collector adds salted pseudonym of the signed-in login |

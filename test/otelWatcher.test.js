@@ -309,7 +309,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   span.run('title', at + 20, at + 100, 0, 'chat', 'title', null, 'mini', 50, 5, 0, null);
   attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', '0');
   attr.run('title', 'copilot_chat.request.options', 'not json');
-  span.run('ok', at + 30, at + 40, 0, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
+  span.run('ok', at + 30, at + 40, 1, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
   span.run('bad', at + 50, at + 60, 2, 'execute_tool', null, 'chat-1', null, null, null, null, 'read_file');
   db.close();
   globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = dbFile;

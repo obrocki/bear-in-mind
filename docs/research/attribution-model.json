@@ -4,7 +4,7 @@
   "updated": "2026-09-30",
   "workstream": "Workstream 2: Data and Attribution Model",
   "question": "How do we connect AI usage to the work and outcomes it influenced?",
-  "summary": "Every local Copilot surface reports per-call model and token consumption plus repository context, but no local surface emits a pull request or work-item ID. The cloud agent owns its pull request but has no per-session cost. Organisation APIs hold authoritative credits and delivery metrics without session IDs. Attribution therefore needs a deterministic VCS join (branch/commit → pull request) and an actor key, then reconciliation against the billing ledger.",
+  "summary": "Every local Copilot surface reports per-call model and token consumption plus repository context, but VS Code emits no pull request or work-item ID, and Copilot CLI and the app record one only when the agent references it. The cloud agent owns its pull request but has no per-session cost. Organisation APIs hold authoritative credits and delivery metrics without session IDs. Attribution therefore needs a deterministic VCS join (branch/commit → pull request) and an actor key, then reconciliation against the billing ledger.",
   "surfaces": [
     {
       "id": "vscode",
@@ -474,7 +474,7 @@
     { "id": "reconciliation", "name": "Reconciliation", "measure": "Local credits vs billing netQuantity by user/day/model", "availability": "needs-org-api" }
   ],
   "gaps": [
-    { "id": "no-pr-locally", "title": "No PR / issue / work-item ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
+    { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
     { "id": "no-cloud-cost", "title": "No per-session credits for the cloud agent", "severity": "high", "surfaces": ["cloud"], "consequence": "PR-linked work has no cost.", "mitigation": "Session streaming / usage records; billing API at day grain; allocate." },
     { "id": "no-session-in-org", "title": "No session ID in organisation data", "severity": "high", "surfaces": ["org"], "consequence": "Authoritative credits cannot join to sessions.", "mitigation": "Reconcile at user/day/model; allocate by local share." },
     { "id": "no-actor", "title": "No actor locally", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Cannot join to organisation per-user data.", "mitigation": "Collector adds a salted pseudonym of the signed-in login." },
