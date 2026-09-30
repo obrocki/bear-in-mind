@@ -1,5 +1,13 @@
 # Change Log
 
+## Unreleased
+
+- Research: [connecting AI usage to work and outcomes](docs/research/ai-telemetry-attribution.md)
+  across VS Code, Copilot CLI, the GitHub Copilot app and Copilot cloud agent, with a
+  structured attribution model. Repository-only; not part of the VSIX.
+- Added the **AI attribution** GitHub Copilot app canvas (`.github/extensions/ai-attribution/`)
+  showing the model, surface matrix, gaps and live read-only coverage from local stores.
+
 ## 0.6.1
 
 - Session selection now lists the name the user gave a chat session, with the

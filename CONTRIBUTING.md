@@ -20,10 +20,18 @@ then press `F5` for an Extension Development Host.
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
+| `.github/extensions/ai-attribution/` | GitHub Copilot app canvas for the attribution research; not packaged. |
 
 Watchers → meter/summary → snapshots → webviews. Renderers format data; they do
 not decide accounting. Tests bundle TypeScript with a small VS Code stub and use
 Node's test runner; feed tests use temporary files and renderer tests use a DOM shim.
+
+Research on connecting Copilot usage to work and outcomes lives in
+[docs/research](docs/research/ai-telemetry-attribution.md). The
+[AI attribution canvas](.github/extensions/ai-attribution/README.md) renders it
+with live coverage. It is plain ES modules with no build step and no
+dependencies; reload extensions in the app after editing. Its tests run with
+`npm test`.
 
 ## Accounting invariants
 
