@@ -208,10 +208,13 @@ export class SealableMemento implements vscode.Memento {
 
   async clear(now = Date.now()): Promise<void> {
     this.sealed = true;
-    await Promise.all(this.inner.keys().map((key) => this.inner.update(key, undefined)));
+    // Publish the reset first, so other windows stop writing before the
+    // deletions below rather than after them.
     if (this.resetKey) {
       await this.inner.update(this.resetKey, now);
     }
+    const keys = this.inner.keys().filter((key) => key !== this.resetKey);
+    await Promise.all(keys.map((key) => this.inner.update(key, undefined)));
   }
 }
 

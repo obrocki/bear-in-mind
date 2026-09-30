@@ -254,7 +254,7 @@
     "test": "node tools/run-tests.js",
     "check:docs": "node tools/check-docs.js",
     "vsix": "node tools/build-vsix.js",
-    "media": "node tools/make-screenshots.js && node tools/make-gif.js",
+    "media": "node tools/make-screenshots.js && node tools/make-gif.js && node tools/make-canvas-shots.js",
     "media:shots": "node tools/make-screenshots.js",
     "media:gif": "node tools/make-gif.js",
     "media:canvas": "node tools/make-canvas-shots.js",

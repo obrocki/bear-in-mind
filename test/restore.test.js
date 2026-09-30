@@ -167,6 +167,17 @@ it('clears stored state and refuses writes afterwards, including on dispose', as
   assert.equal(store.get('iceberg.usage.v4', 'fallback'), 'fallback');
 });
 
+it('publishes the reset marker before deleting anything', async () => {
+  const order = [];
+  const shared = memory({ a: 1, b: 2 });
+  const update = shared.update;
+  shared.update = (key, value) => { order.push(key); return update(key, value); };
+  await new SealableMemento(shared, RESET_KEY).clear(99);
+  assert.equal(order[0], RESET_KEY);
+  assert.deepEqual(shared.keys(), [RESET_KEY]);
+  assert.equal(shared.get(RESET_KEY), 99);
+});
+
 it('other windows sharing global state stop saving after a reset, and new windows start fresh', async () => {
   const shared = memory({ 'iceberg.usage.v4': { since: 1 } });
   const resetter = new SealableMemento(shared, RESET_KEY);

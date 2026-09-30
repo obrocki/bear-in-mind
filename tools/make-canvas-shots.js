@@ -10,7 +10,7 @@ const ROOT = path.resolve(__dirname, '..');
 const EXTENSION_DIR = path.join(ROOT, '.github', 'extensions', 'ai-attribution');
 const OUT = path.join(ROOT, 'docs', 'media');
 const WORK = path.join(ROOT, '.canvas-shot-work');
-const PORT = Number(process.env.CDP_PORT || 9334);
+const PORT = Number(process.env.CDP_PORT || 0);
 const NANO = 1_000_000_000;
 const DAY = 86_400_000;
 
@@ -351,14 +351,20 @@ function send(ws, method, params, sessionId) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function waitForDevTools() {
+async function waitForDevTools(profile, browser) {
+  // Chrome writes the port it actually bound, and its browser endpoint, into
+  // this profile's DevToolsActivePort, so the endpoint always belongs to the
+  // browser spawned here, never to another one already on a fixed port.
+  const file = path.join(profile, 'DevToolsActivePort');
   for (let i = 0; i < 100; i++) {
+    if (browser.exitCode !== null) break;
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json/version`);
-      return await res.json();
+      const [port, endpoint] = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+      if (port && endpoint) return `ws://127.0.0.1:${port.trim()}${endpoint.trim()}`;
     } catch {
-      await sleep(200);
+      /* not written yet */
     }
+    await sleep(200);
   }
   throw new Error('the browser never opened its DevTools endpoint');
 }
@@ -469,8 +475,8 @@ async function setServerView(serverUrl, view) {
       { stdio: 'ignore' },
     );
 
-    const version = await waitForDevTools();
-    ws = new WebSocket(version.webSocketDebuggerUrl);
+    const endpoint = await waitForDevTools(profile, browser);
+    ws = new WebSocket(endpoint);
     ws.addEventListener('message', (ev) => {
       const msg = JSON.parse(ev.data);
       if (!msg.id || !pending.has(msg.id)) return;

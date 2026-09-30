@@ -76,8 +76,21 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   );
   updateContext();
 
+  // Restore stops the watchers; its own setting changes must not restart them.
+  let suspended = false;
+  const setSuspended = (on: boolean) => {
+    suspended = on;
+    if (!on) {
+      watcher.reconfigure();
+      otel.reconfigure();
+    }
+  };
+
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
+      if (suspended || globalState.isSealed) {
+        return;
+      }
       if (
         e.affectsConfiguration('iceberg.trackCopilotChat') ||
         e.affectsConfiguration('iceberg.chatPollIntervalMs')
@@ -191,7 +204,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output, globalState)),
 
     vscode.commands.registerCommand('iceberg.restoreDefaults', () =>
-      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output })
+      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, setSuspended })
     ),
 
     vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output, snapshot().session)),
@@ -456,6 +469,8 @@ interface RestoreContext {
   globalState: SealableMemento;
   workspaceState: SealableMemento;
   output: vscode.OutputChannel;
+  /** Stops configuration changes restarting the watchers; turning it off restarts them. */
+  setSuspended(on: boolean): void;
 }
 
 /**
@@ -463,7 +478,7 @@ interface RestoreContext {
  * back to the user's own values, Bear in Mind's user settings to their defaults,
  * and its stored data and feed file removed. Copilot's own files are untouched.
  */
-async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output }: RestoreContext): Promise<void> {
+async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, setSuspended }: RestoreContext): Promise<void> {
   if (globalState.isSealed) {
     await promptReload('Bear in Mind is already restored to its defaults. Reload the window to finish.');
     return;
@@ -515,6 +530,7 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
     return;
   }
 
+  setSuspended(true);
   otel.stop();
   watcher.stop();
   output.appendLine(`[${new Date().toISOString()}] restoring defaults`);
@@ -528,6 +544,20 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
       failed.push(`${OTEL_SECTION}.${action.key}`);
       output.appendLine(`  could not change ${OTEL_SECTION}.${action.key}: ${String(err)}`);
     }
+  }
+  if (failed.length > 0) {
+    // The backup is the only record of the user's previous values, so keep it
+    // and everything else, and let a retry pick up where this left off.
+    setSuspended(false);
+    const show = 'Show Log';
+    const choice = await vscode.window.showErrorMessage(
+      `Could not restore ${failed.join(', ')}. Bear in Mind's settings and stored data were kept so you can try again.`,
+      show
+    );
+    if (choice === show) {
+      output.show(true);
+    }
+    return;
   }
   for (const action of copilotKept) {
     output.appendLine(`  ${describeAction(OTEL_SECTION, action)}`);

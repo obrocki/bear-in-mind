@@ -56,8 +56,8 @@ any mock of it:
 None of these paths needs a native dependency or VS Code running.
 
 ```bash
-npm run media
-npm run media:canvas
+npm run media          # everything, including the canvas shots
+npm run media:canvas   # canvas shots only
 ```
 
 See [`tools/README.md`](../../tools/README.md) for the details.
