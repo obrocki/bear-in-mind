@@ -55,8 +55,10 @@ export interface SpanSession {
   /** From the session's agent spans (`github.copilot.git.*`), when reported. */
   repository?: string;
   branch?: string;
-  /** `user.name` from the session's agent spans, when Copilot's identity capture is on. */
+  /** Display label from the session's agent-span `user.name` values, when identity capture is on. */
   user?: string;
+  /** Distinct `user.name` values from the session's agent spans, in first-seen order. */
+  users?: string[];
 }
 
 /** Model calls and their reported credits under one grouping key. */

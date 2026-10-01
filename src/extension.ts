@@ -734,7 +734,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
     output.appendLine(`  session work        ${session.work ?? 'not reported'} (agent span git attributes)`);
-    output.appendLine(`  session user        ${session.trace?.user ?? 'not reported'} (user.name on agent spans)`);
+    output.appendLine(`  session user(s)     ${session.trace?.user ?? 'not reported'} (user.name on agent spans)`);
   }
   const spans = otel.spanDigest;
   output.appendLine(

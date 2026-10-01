@@ -220,6 +220,28 @@ function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | und
   return match.user;
 }
 
+function distinctActorUsers(entries: ActorIdentity[]): string[] {
+  const seen = new Set<string>();
+  const users: string[] = [];
+  for (const entry of entries) {
+    if (!seen.has(entry.user)) {
+      seen.add(entry.user);
+      users.push(entry.user);
+    }
+  }
+  return users;
+}
+
+function sessionActorLabel(users: string[]): string | undefined {
+  if (users.length === 0) {
+    return undefined;
+  }
+  if (users.length <= 3) {
+    return users.join(', ');
+  }
+  return `${users.slice(0, 3).join(', ')}, +${users.length - 3} more`;
+}
+
 export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   const digest = emptySpanDigest();
   const sessions = new Map<string, SpanSession>();
@@ -236,7 +258,6 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   // Agent spans carry the git context; the model calls under them do not.
   const work = new Map<string, { repository?: string; branch?: string; at: number }>();
   // Keep per-call user attribution time-ordered so account switches do not rewrite earlier calls.
-  const actors = new Map<string, { user: string; at: number }>();
   const actorTimeline = new Map<string, ActorIdentity[]>();
   for (const span of unique) {
     if (span.operation === 'invoke_agent' && span.sessionId && (span.repository || span.branch)) {
@@ -247,10 +268,6 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
     }
     if (span.operation === 'invoke_agent' && span.sessionId && span.user) {
       rememberActor(actorTimeline, span.sessionId, { user: span.user, at: span.start });
-      const known = actors.get(span.sessionId);
-      if (!known || known.at <= span.start) {
-        actors.set(span.sessionId, { user: span.user, at: span.start });
-      }
     }
   }
   for (const entries of actorTimeline.values()) {
@@ -361,10 +378,12 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       session.branch = context.branch;
     }
   }
-  for (const [sessionId, actor] of actors) {
+  for (const [sessionId, timeline] of actorTimeline) {
     const session = sessions.get(sessionId);
     if (session) {
-      session.user = actor.user;
+      const users = distinctActorUsers(timeline);
+      session.users = users;
+      session.user = sessionActorLabel(users);
     }
   }
   digest.byModel = [...byModel.values()];

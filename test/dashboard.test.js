@@ -505,6 +505,26 @@ it('groups retained trace credits by the user.name on agent spans and labels the
   assert.match(text, /Latest observed: chat-1 · o\/r@main · by octocat\./);
 });
 
+it('labels retained sessions with multiple observed users explicitly', () => {
+  const at = Date.UTC(2026, 8, 29, 12);
+  const base = (id, operation, attributes, offset = 0) => usageSpan(id, {
+    'gen_ai.operation.name': operation, 'copilot_chat.chat_session_id': 'chat-1', ...attributes
+  }, at + offset, at + offset + 500);
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    spans: digestSpans([
+      base('agent-1', 'invoke_agent', { 'user.name': 'mona' }),
+      base('before-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 1e9 }, 10),
+      base('agent-2', 'invoke_agent', { 'user.name': 'hubot' }, 1000),
+      base('after-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 2e9 }, 1010)
+    ])
+  });
+  const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
+  assert.match(text, /By user hubot ×1 2/);
+  assert.match(text, /mona ×1 1/);
+  assert.match(text, /Latest observed: chat-1 · by mona, hubot\./);
+});
+
 it('shows trace-store tool success when the file feed is not connected', () => {
   const quality = dashboard().render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans() });
   assert.match(quality.textContent, /Tool success · traces 50\.0%\s+2 calls/);

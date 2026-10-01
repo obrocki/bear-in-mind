@@ -169,6 +169,7 @@ it('attributes model-call credits to user.name inherited from agent spans, never
   ]);
   const sessions = Object.fromEntries(digest.sessions.map((s) => [s.sessionId, s]));
   assert.equal(sessions['vscode-session'].user, 'octocat');
+  assert.deepEqual(sessions['vscode-session'].users, ['octocat']);
   assert.equal(sessions['other-session'].user, undefined, 'an oversized identity is dropped, and the device is not an account');
 
   const trace = buildTraceCredits(digest);
@@ -190,7 +191,8 @@ it('keeps model-call user attribution time-ordered across account switches', () 
     span('agent-2', 'invoke_agent', { 'user.name': 'hubot' }, 2000),
     span('after-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 2_000_000_000 }, 2010)
   ]);
-  assert.equal(digest.sessions[0].user, 'hubot', 'the session label remains the newest account');
+  assert.equal(digest.sessions[0].user, 'mona, hubot');
+  assert.deepEqual(digest.sessions[0].users, ['mona', 'hubot']);
 
   const trace = buildTraceCredits(digest);
   assert.equal(trace.userCalls, 2);

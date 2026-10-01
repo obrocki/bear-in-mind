@@ -6,9 +6,9 @@
   `user.name` (the signed-in GitHub account) is read from agent spans in the
   trace store and file feed, inherited by model calls from the time-appropriate
   agent span in the same or parent session, and used to group retained-trace
-  credits **by user**. Sessions show their user in the dashboard, the session
-  picker (searchable) and diagnostics. Calls without a user stay visible as *no
-  user identity*.
+  credits **by user**. Sessions show their user, or the observed user list after
+  an account switch, in the dashboard, the session picker (searchable) and
+  diagnostics. Calls without a user stay visible as *no user identity*.
 - **Connect Copilot Telemetry** asks separately whether to turn on
   `github.copilot.chat.otel.captureIdentity`, noting when a connected OTLP
   collector would receive the identity too. **Restore Defaults** puts the

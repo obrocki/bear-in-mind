@@ -48,8 +48,9 @@ language-model API requests) are visible as many calls with few credits, and the
 repository and branch each session worked in come from its agent spans. With
 Copilot's identity capture on (VS Code 1.140+), the same agent spans carry
 `user.name`, the signed-in GitHub account, so credits are also grouped **by user**
-and each session shows who ran it. Calls that cannot be linked to an agent span
-stay visible as *no user identity*.
+and each session shows who ran it. If accounts switch within one retained
+session, the session label lists the observed users. Calls that cannot be linked
+to an agent span stay visible as *no user identity*.
 
 ![Retained-trace credits by model, repository, caller and reasoning effort](docs/media/dashboard-credits.png)
 
@@ -80,8 +81,8 @@ These readings have different units and scopes, even when viewed during one chat
 Use **Iceberg: Select Comparison Session** (or **Select session…** in the
 dashboard) to pin the session you are examining in Copilot. Sessions are listed
 by the name you gave them in VS Code, with model, `repository@branch` (when its
-agent spans report one), user (when they report `user.name`) and the session ID
-as searchable detail;
+agent spans report one), user or users (when they report `user.name`) and the
+session ID as searchable detail;
 unnamed sessions fall back to a shortened ID. The default is the latest observed
 session, **not automatically the active chat**. A missing pinned session stays
 missing rather than switching to somebody else's reading. When no session is
