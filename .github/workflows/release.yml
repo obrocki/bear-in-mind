@@ -28,7 +28,7 @@ jobs:
 
       - name: Plan an unpublished version
         id: release
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const { version } = require(`${process.env.GITHUB_WORKSPACE}/package.json`);
