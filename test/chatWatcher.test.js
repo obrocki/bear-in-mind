@@ -16,18 +16,18 @@ function replay(records) {
 }
 const set = (index, field, v) => ({ kind: 1, k: ['requests', index, field], v });
 
-it('replays context growth and compaction without banking snapshots as usage', () => {
+it('replays transcript mutations but retains only model and credit metadata', () => {
   const state = replay([
-    { kind: 0, v: { sessionId: 's', requests: [{ requestId: 'r', promptTokens: 90000, completionTokens: 20, copilotCredits: 2 }] } },
+    { kind: 0, v: { sessionId: 's', requests: [{ requestId: 'r', modelId: 'gpt-test', promptTokens: 90000, completionTokens: 20, copilotCredits: 2 }] } },
     set(0, 'promptTokens', 95000), set(0, 'promptTokens', 5000),
     set(0, 'completionTokens', 50), set(0, 'copilotCredits', 3),
     set(0, 'outputBuffer', 32000)
   ]);
   const session = sessionUsage(state, 'fallback', 1);
-  assert.equal(session.latestPromptTokens, 5000);
   assert.equal(session.credits, 3);
-  assert.equal(session.requests, 1);
+  assert.equal(session.model, 'gpt-test');
   assert.equal(session.sessionId, 's');
+  assert.doesNotMatch(JSON.stringify(state), /requestId|promptTokens|completionTokens|outputBuffer/);
 });
 
 it('carries the name the user gave the session and drops derived transcript titles', () => {
@@ -105,7 +105,7 @@ it('reconstructs full session cost across restart, partial append and snapshot r
   assert.equal(first.sessions[0].credits, 10);
   fs.appendFileSync(file, update.slice(-2));
   first.scan();
-  assert.equal(deltas[0].credits, 2);
+  assert.equal(deltas[0], 2);
   first.dispose();
   const restarted = new ChatUsageWatcher(context, (delta) => deltas.push(delta));
   t.after(() => restarted.dispose());
@@ -114,8 +114,7 @@ it('reconstructs full session cost across restart, partial append and snapshot r
   assert.equal(deltas.length, 1);
   fs.appendFileSync(file, JSON.stringify(set(0, 'copilotCredits', 13)) + '\n');
   restarted.scan();
-  assert.equal(deltas[1].credits, 1);
-  assert.equal(deltas.every((d) => d.input === 0 && d.output === 0), true);
+  assert.equal(deltas[1], 1);
   fs.writeFileSync(file, initial);
   restarted.scan();
   assert.equal(restarted.sessions[0].credits, 10);

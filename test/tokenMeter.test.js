@@ -17,10 +17,10 @@ function fixture(t, settings = {}, entries = []) {
   return { meter, store, memory };
 }
 
-it('does not count transcript context snapshots as consumed tokens', (t) => {
+it('keeps transcript-reported credits separate from metered tokens', (t) => {
   const { meter } = fixture(t);
-  meter.observe('transcripts', 90000, 1000, 1, 2.5);
-  meter.observe('transcripts', 5000, 200, 1, 1.5);
+  meter.observeTranscriptCredits(2.5);
+  meter.observeTranscriptCredits(1.5);
   assert.equal(meter.snapshot().total, 0);
   assert.equal(meter.snapshot().requests, 0);
   assert.equal(meter.snapshot().credits, 4);
@@ -45,10 +45,10 @@ it('never adds cached or reasoning subtotals to input/output', (t) => {
 it('does not copy ledgers after idle, disablement, or delayed exports', (t) => {
   const { meter } = fixture(t);
   meter.observe('traces', 2000, 100, 2);
-  meter.noteOtelAlive(false);
+  meter.refreshBasis();
   meter.observe('otel', 2000, 100, 0);
   assert.equal(meter.snapshot().total, 2100);
-  meter.noteOtelAlive(false);
+  meter.refreshBasis();
   meter.observe('otel', 500, 50, 0);
   meter.observe('traces', 500, 50, 1);
   assert.equal(meter.snapshot().total, 2650);

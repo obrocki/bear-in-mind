@@ -7,10 +7,7 @@ const STATE_KEY = 'iceberg.chatCredits.v1';
 const MAX_FILE_BYTES = 96 * 1024 * 1024;
 
 interface RequestUsage {
-  requestId?: string;
   modelId?: string;
-  promptTokens?: number;
-  completionTokens?: number;
   copilotCredits?: number;
   sessionCopilotCredits?: number;
 }
@@ -20,11 +17,8 @@ export interface ChatSessionUsage {
   /** The name VS Code shows for the session, when the user gave it one. */
   title?: string;
   updatedAt: number;
-  requests: number;
   credits?: number;
-  creditRequests: number;
   model?: string;
-  latestPromptTokens?: number;
 }
 
 export interface ParserState {
@@ -37,7 +31,7 @@ export function newParserState(): ParserState {
   return { requests: [] };
 }
 
-const FIELDS = ['requestId', 'modelId', 'promptTokens', 'completionTokens', 'copilotCredits', 'sessionCopilotCredits'] as const;
+const FIELDS = ['modelId', 'copilotCredits', 'sessionCopilotCredits'] as const;
 
 function requestUsage(raw: unknown): RequestUsage {
   const result: RequestUsage = {};
@@ -46,7 +40,7 @@ function requestUsage(raw: unknown): RequestUsage {
   }
   const value = raw as Record<string, unknown>;
   for (const field of FIELDS) {
-    if (field === 'requestId' || field === 'modelId') {
+    if (field === 'modelId') {
       if (typeof value[field] === 'string' && value[field].length <= 512) {
         result[field] = value[field];
       }
@@ -137,12 +131,10 @@ export function applyLine(line: string, state: ParserState): boolean {
 export function sessionUsage(state: ParserState, fallbackId: string, updatedAt: number): ChatSessionUsage {
   let summed = 0;
   let reported = 0;
-  let creditRequests = 0;
   let hasCredits = false;
   for (const request of state.requests) {
     if (request.copilotCredits !== undefined) {
       summed += request.copilotCredits;
-      creditRequests++;
       hasCredits = true;
     }
     if (request.sessionCopilotCredits !== undefined) {
@@ -150,12 +142,11 @@ export function sessionUsage(state: ParserState, fallbackId: string, updatedAt: 
       hasCredits = true;
     }
   }
-  const last = [...state.requests].reverse().find((r) => r.promptTokens !== undefined);
+  const last = [...state.requests].reverse().find((request) => request.modelId !== undefined);
   return {
     sessionId: state.sessionId ?? fallbackId, title: state.title, updatedAt,
-    requests: state.requests.length,
     credits: hasCredits ? Math.max(summed, reported) : undefined,
-    creditRequests, model: last?.modelId, latestPromptTokens: last?.promptTokens
+    model: last?.modelId
   };
 }
 
@@ -167,7 +158,7 @@ interface LiveFile {
   usage?: ChatSessionUsage;
 }
 
-/** Transcript prompt/completion fields are snapshots, never a token ledger. */
+/** Reads transcript metadata and reported credits; token snapshots are ignored. */
 export class ChatUsageWatcher implements vscode.Disposable {
   private readonly files = new Map<string, LiveFile>();
   private readonly _onDidScan = new vscode.EventEmitter<void>();
@@ -180,7 +171,7 @@ export class ChatUsageWatcher implements vscode.Disposable {
 
   constructor(
     private readonly context: Pick<vscode.ExtensionContext, 'globalStorageUri'> & { readonly globalState: vscode.Memento },
-    private readonly onUsage: (delta: { input: number; output: number; credits: number; requests: number }) => void,
+    private readonly onUsage: (credits: number) => void,
     private readonly log?: (message: string) => void
   ) {
     const stored = context.globalState.get<{ seeded: boolean; credits: Record<string, number> }>(STATE_KEY);
@@ -325,7 +316,7 @@ export class ChatUsageWatcher implements vscode.Disposable {
     }
     this.seeded = true;
     if (delta > 0) {
-      this.onUsage({ input: 0, output: 0, credits: delta, requests: 0 });
+      this.onUsage(delta);
     }
     void this.context.globalState.update(STATE_KEY, { seeded: this.seeded, credits: this.credits });
     this._onDidScan.fire();

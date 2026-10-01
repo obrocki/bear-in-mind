@@ -155,17 +155,15 @@ export class TokenMeter implements vscode.Disposable {
     }
   }
 
-  observe(from: 'otel' | 'traces' | 'transcripts', input: number, output: number, requests: boolean | number = true, credits = 0): void {
-    if (from === 'transcripts') {
-      // Neither promptTokens nor serialized completionTokens identifies billed
-      // model calls. Only Copilot's explicitly reported credits belong here.
-      if (Number.isFinite(credits) && credits > 0) {
-        this.state.credits += credits;
-        this.persist();
-        this.publish();
-      }
-      return;
+  observeTranscriptCredits(credits: number): void {
+    if (Number.isFinite(credits) && credits > 0) {
+      this.state.credits += credits;
+      this.persist();
+      this.publish();
     }
+  }
+
+  observe(from: 'otel' | 'traces', input: number, output: number, requests: boolean | number = true): void {
     if (!this.config.get<boolean>('otel.enabled', true) || !this.config.get<boolean>('otel.authoritative', true)) {
       return;
     }
@@ -177,8 +175,8 @@ export class TokenMeter implements vscode.Disposable {
     this.publish();
   }
 
-  /** A missing or delayed export must never promote, copy or reset a ledger. */
-  noteOtelAlive(_alive: boolean): void {
+  /** Refreshes context expiry and publishes when the gauge basis changes. */
+  refreshBasis(): void {
     if (this.lastBasis !== this.basis) {
       this.publish();
     }

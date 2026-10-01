@@ -247,7 +247,6 @@ const MAX_FOLDED = 4000;
  * cannot grow for ever.
  */
 const MAX_SEALED_MARKS = 50_000;
-const MAX_EVENTS = 2000;
 const MAX_BUCKETS = 240;
 
 /**
@@ -288,8 +287,7 @@ export class OtelRollup {
    */
   private readonly sealed = new Map<string, Series>();
   private readonly sealedMarks = new Map<string, { value: number; count: number; aggKey: string }>();
-  private readonly events: LogEvent[] = [];
-  /** Fixed instrument/outcome keys, independent of the bounded recent-event buffer. */
+  /** Compact quality aggregates keyed only by known instrument and outcome. */
   private readonly eventSeries = new Map<string, Series>();
   private buckets: TokenBucket[] = [];
   private lastTokenTotals = { input: 0, output: 0 };
@@ -333,10 +331,6 @@ export class OtelRollup {
         const event = toLogEvent(record);
         if (event) {
           this.absorbQualityEvent(event);
-          this.events.push(event);
-          if (this.events.length > MAX_EVENTS) {
-            this.events.splice(0, this.events.length - MAX_EVENTS);
-          }
           this.stats.lastRecordAtMs = Math.max(this.stats.lastRecordAtMs, event.timeMs);
         }
         break;
@@ -760,34 +754,6 @@ export class OtelRollup {
       seen = next;
     }
     return boundaries[boundaries.length - 1];
-  }
-
-  /** Distinct values of one attribute across a metric's series. */
-  groupBy(metric: string, attribute: string): Map<string, number> {
-    const out = new Map<string, number>();
-    for (const s of this.allSeries()) {
-      if (s.metric !== metric) {
-        continue;
-      }
-      const key = String(s.attributes[attribute] ?? 'unknown');
-      out.set(key, (out.get(key) ?? 0) + contribution(s));
-    }
-    return out;
-  }
-
-  recentEvents(name?: string, limit = 50): LogEvent[] {
-    const matched = name ? this.events.filter((e) => e.name === name) : this.events.slice();
-    return matched.slice(-limit);
-  }
-
-  countEvents(name: string, predicate?: (e: LogEvent) => boolean): number {
-    let n = 0;
-    for (const e of this.events) {
-      if (e.name === name && (!predicate || predicate(e))) {
-        n++;
-      }
-    }
-    return n;
   }
 
   // ----------------------------------------------------------- token view ----
