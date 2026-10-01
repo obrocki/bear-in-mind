@@ -7,7 +7,8 @@ Only the latest released version receives fixes.
 Bear in Mind meters local files:
 
 - VS Code chat transcripts under `globalStorage/emptyWindowChatSessions/` and
-  `workspaceStorage/<id>/chatSessions/`, for token counts and premium credits.
+  `workspaceStorage/<id>/chatSessions/`, for session IDs, custom titles, model
+  names and reported credits. Token snapshots and transcript content are not retained.
 - The configured Copilot OpenTelemetry JSON-lines feed and read-only
   `agent-traces.db`, for metrics, timings and outcome labels.
 
@@ -23,10 +24,11 @@ sessions. These are held in memory for the retained seven-day window and are
 not persisted.
 
 Raw records may contain prompts, responses or tool content, especially with
-`captureContent` enabled. Reading/parsing JSON is not content isolation: records
-pass through memory. Known content-bearing attributes are discarded at the parser
-boundary, not retained in aggregates, persisted or logged. Keep Copilot's
-`captureContent` off when content should not be written to its feed at all.
+`captureContent` enabled. Parsing briefly passes records through memory.
+Transcript prompt/response/tool content and token snapshots are not retained;
+custom session titles are. Known telemetry content attributes are removed
+before aggregation, persistence or logging. Keep Copilot's `captureContent` off
+when content should not be written to its feed at all.
 
 Metering makes no network requests. The optional `@iceberg` participant sends its
 chat request through VS Code's language-model API, like other chat participants.

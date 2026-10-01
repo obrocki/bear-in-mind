@@ -1,30 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-/**
- * Builds the distributable `.vsix` — and then opens it back up and checks it.
- *
- * Packaging is the one step where a mistake is invisible until someone installs
- * the result: a stray `.vscodeignore` line can drop `dist/extension.js`, and the
- * extension still packages "successfully". So this does the build and then reads
- * the archive's central directory to confirm what actually shipped.
- *
- *   node tools/build-vsix.js [options]
- *
- *   --out-dir <dir>     Directory for the .vsix (default: repo root)
- *   --out <file>        Exact output path (overrides --out-dir and --label)
- *   --label <text>      Suffix the file name, e.g. --label 3f2a1c9 gives
- *                       bear-in-mind-0.4.0+3f2a1c9.vsix
- *   --version <x.y.z>   Package as this version without touching package.json
- *   --pre-release       Flag the build as a Marketplace pre-release
- *   --skip-typecheck    Don't run tsc
- *   --skip-bundle       Reuse whatever is already in dist/
- *   --no-verify         Skip the archive checks (not recommended)
- *   --github            Write GitHub Actions outputs and a job summary
- *   --quiet             Only print the final line
- *
- * Exit code is non-zero if any step or any check fails.
- */
+/** Build and verify a VSIX archive. Run `node tools/build-vsix.js --help` for options. */
 
 const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');

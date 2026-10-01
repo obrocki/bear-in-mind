@@ -51,7 +51,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   // Watchers observe the same traffic; the meter reconciles their cumulative totals.
   const watcher = new ChatUsageWatcher(
     storage,
-    (delta) => meter.observe('transcripts', delta.input, delta.output, delta.requests, delta.credits),
+    (credits) => meter.observeTranscriptCredits(credits),
     log
   );
   context.subscriptions.push(watcher);
@@ -68,7 +68,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   const updateContext = () => {
     const session = selectedSession({ transcripts: watcher.sessions, spans: otel.spanDigest, selectedSessionId });
     meter.setContext(session?.trace?.context);
-    meter.noteOtelAlive(otel.producing);
+    meter.refreshBasis();
   };
   context.subscriptions.push(
     otel.onDidScan(updateContext),
@@ -263,10 +263,6 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   registerChatParticipant(context, meter);
 
   return api;
-}
-
-export function deactivate(): void {
-  /* disposables handle cleanup */
 }
 
 /** Trace storage is additive; the file feed replaces OTLP, so ask before changing it. */
@@ -966,17 +962,14 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
           vscode.LanguageModelChatMessage.User(request.prompt)
         ];
 
-        let reply = '';
         try {
           const response = await request.model.sendRequest(messages, {}, token);
           for await (const chunk of response.text) {
-            reply += chunk;
             stream.markdown(chunk);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          reply = `The bear could not reach the model (${message}).`;
-          stream.markdown(reply);
+          stream.markdown(`The bear could not reach the model (${message}).`);
         }
 
         stream.markdown(

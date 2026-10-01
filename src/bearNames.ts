@@ -11,14 +11,7 @@ interface NameGroup {
   names: BearName[];
 }
 
-/**
- * Suggestions offered by `Iceberg: Name the Bear`.
- *
- * The setting is free text and always will be — this is a shortcut, not a
- * whitelist. Grouped because the three registers are genuinely different
- * moods: keep the arctic ones for atmosphere, the burn puns to make the point,
- * the soft ones if the guilt is getting too much.
- */
+/** Suggestions grouped by theme; users can still enter any name. */
 export const BEAR_NAMES: NameGroup[] = [
   {
     heading: 'Arctic',

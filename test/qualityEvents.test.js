@@ -124,14 +124,13 @@ it('does not fabricate quality from inference, unknown outcomes or invalid measu
   assert.equal(q.toolSuccessRate, undefined);
 });
 
-it('retains compact event totals beyond the recent-event cap without retaining content', () => {
+it('keeps compact quality totals without retaining event records or content', () => {
   const rollup = new OtelRollup();
   for (let i = 0; i < 2100; i++) {
     event(rollup, 'copilot_chat.user.feedback', {
       rating: 'positive', request_id: `request-${i}`, 'gen_ai.input.messages': 'PRIVATE-CONTENT'
     });
   }
-  assert.equal(rollup.recentEvents(undefined, 5000).length, 2000);
   assert.equal(quality(rollup).feedbackPositive, 2100);
   assert.equal(rollup.eventSeries.size, 1, 'request IDs must not expand the aggregate key space');
   assert.equal(JSON.stringify(rollup).includes('PRIVATE-CONTENT'), false);

@@ -29,7 +29,9 @@ const {
   TOKEN_USAGE,
   EDIT_ACCEPTANCE,
   LINES_OF_CODE,
-  TOOL_CALL_COUNT
+  TOOL_CALL_COUNT,
+  SURVIVAL_FOUR_GRAM,
+  USER_FEEDBACK
 } = require(path.join(build, 'otelParse.js'));
 
 const { computeDrift, percentile, buildQuality, buildSpeed, buildCost, redactUrl } = require(
@@ -620,8 +622,7 @@ describe('log events', () => {
     assert.ok(!('some.future.content' in event.attributes));
   });
 
-  it('keeps content out of the parsed object, not just out of the result', () => {
-    // The reviver strips known content from records before aggregation.
+  it('does not retain captured content after ingestion', () => {
     const rollup = new OtelRollup();
     const secret = 'sk-live-' + 'x'.repeat(4000);
     rollup.ingestLine(
@@ -636,9 +637,8 @@ describe('log events', () => {
         _body: 'gen_ai.client.inference.operation.details'
       })
     );
-    const [event] = rollup.recentEvents('gen_ai.client.inference.operation.details');
-    assert.equal(event.attributes['gen_ai.usage.input_tokens'], 42);
-    assert.ok(!JSON.stringify(event).includes('sk-live-'));
+    assert.equal(rollup.stats.logs, 1);
+    assert.ok(!JSON.stringify(rollup).includes('sk-live-'));
   });
 
   it('names an event from its attribute, falling back to the body', () => {
@@ -647,12 +647,11 @@ describe('log events', () => {
     assert.equal(toLogEvent({ attributes: {} }), undefined);
   });
 
-  it('collects the events from the feed', () => {
+  it('aggregates quality events from the feed without retaining event records', () => {
     const rollup = loaded();
-    assert.equal(rollup.countEvents('copilot_chat.edit.feedback'), 1);
-    assert.equal(rollup.countEvents('copilot_chat.user.feedback'), 1);
-    const [survival] = rollup.recentEvents('copilot_chat.edit.survival');
-    assert.equal(survival.attributes.survival_rate_four_gram, 0.82);
+    assert.equal(rollup.total(EDIT_ACCEPTANCE), 4);
+    assert.equal(rollup.total(USER_FEEDBACK, { rating: 'positive' }), 1);
+    assert.equal(rollup.mean(SURVIVAL_FOUR_GRAM), 0.82);
   });
 });
 

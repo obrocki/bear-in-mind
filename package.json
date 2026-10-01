@@ -175,7 +175,7 @@
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Read session IDs and reported credits from local Copilot transcripts for comparison with Session Cost. Prompt snapshots are not counted as consumed tokens. No account quota is read."
+          "description": "Read session metadata and reported credits from local Copilot transcripts for comparison with Session Cost. Token snapshots are ignored; account quotas are not read."
         },
         "iceberg.otel.enabled": {
           "type": "boolean",

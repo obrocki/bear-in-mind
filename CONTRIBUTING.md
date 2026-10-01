@@ -35,9 +35,9 @@ dependencies; reload extensions in the app after editing. Its tests run with
 
 ## Accounting invariants
 
-- Never meter transcript `promptTokens` as consumed input. Replay snapshot, set,
-  push/splice and delete records for session credit comparison. Use VS Code's
-  `max(sum(turn credits), reported session credits)` formula.
+- Read only transcript session metadata and reported credits; ignore token
+  snapshots and content. Replay snapshot, set, push/splice and delete records.
+  Use VS Code's `max(sum(turn credits), reported session credits)` formula.
 - Reconcile metrics and spans with `max()` per dimension, not addition. No
   promotion/idle rebasing. This is conservative when coverage/baselines differ.
 - Deduplicate file/SQLite spans by span ID; count tokens/credits on `chat` only,

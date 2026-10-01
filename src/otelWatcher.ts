@@ -23,8 +23,6 @@ const MAX_SIGNATURE_BYTES = 512;
 const PATH_REFRESH_MS = 30_000;
 /** Spans older than this are ignored, matching the store's own 7-day retention. */
 const SPAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
-/** How recently the feed must have exported token usage to count as live. */
-const FEED_FRESH_MS = 15 * 60 * 1000;
 /** `span_attributes` read as numbers. */
 const NUMERIC_SPAN_KEYS = [
   'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
@@ -202,29 +200,6 @@ export class OtelWatcher implements vscode.Disposable {
   private get pollMs(): number {
     const raw = this.config.get<number>('otel.pollIntervalMs', 4000);
     return Math.min(60_000, Math.max(1000, Math.round(raw) || 4000));
-  }
-
-  /** True once the feed has actually produced token counts. */
-  get live(): boolean {
-    const totals = this.rollup.tokenTotals();
-    return totals.input + totals.output > 0;
-  }
-
-  /**
-   * True while the feed is exporting token usage *now*.
-   *
-   * General feed activity is not evidence that the feed can meter: a writer can
-   * export logs or non-token metrics forever after token usage has stopped. Only
-   * the timestamp on a token-usage metric can keep telemetry authoritative.
-   */
-  get producing(): boolean {
-    const lastTokenUsageAtMs = this.rollup.stats.lastTokenUsageAtMs;
-    return lastTokenUsageAtMs > 0 && Date.now() - lastTokenUsageAtMs <= FEED_FRESH_MS;
-  }
-
-  get observedTokens(): number {
-    const totals = this.rollup.tokenTotals();
-    return totals.input + totals.output;
   }
 
   get spanDigest(): SpanDigest {
