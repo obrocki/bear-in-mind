@@ -450,13 +450,13 @@ it('renders standalone quality metrics instead of the empty state, including zer
   }
 });
 
-function tracedSpans() {
+function tracedSpans(agentAttributes = {}) {
   const at = Date.UTC(2026, 8, 29, 12);
   const base = (id, operation, attributes, offset = 0, status) => usageSpan(id, {
     'gen_ai.operation.name': operation, 'copilot_chat.chat_session_id': 'chat-1', ...attributes
   }, at + offset, at + offset + 500, status);
   const digest = digestSpans([
-    base('agent', 'invoke_agent', { 'github.copilot.git.repository': 'o/r', 'github.copilot.git.branch': 'main' }),
+    base('agent', 'invoke_agent', { 'github.copilot.git.repository': 'o/r', 'github.copilot.git.branch': 'main', ...agentAttributes }),
     base('a', 'chat', {
       'gen_ai.response.model': 'opus', 'gen_ai.agent.name': 'panel/editAgent', 'gen_ai.usage.input_tokens': 1000,
       'gen_ai.usage.output_tokens': 10, 'gen_ai.usage.cache_read.input_tokens': 900,
@@ -489,7 +489,40 @@ it('breaks retained trace credits down by model, repository, caller and effort',
   assert.match(text, /1 call reported no credits: unknown, not free/);
   assert.match(text, /never added to the meter or to transcript Session Cost/);
   assert.match(text, /Cache-read share 82%\s+of trace input/);
-  assert.match(text, /Latest observed: chat-1 · o\/r@main/);
+  assert.match(text, /Latest observed: chat-1 · o\/r@main\./);
+  assert.doesNotMatch(text, /By user/, 'no user group without captured identity');
+  assert.match(text, /No user\.name was observed\. Turn on github\.copilot\.chat\.otel\.captureIdentity/);
+});
+
+it('groups retained trace credits by the user.name on agent spans and labels the session', () => {
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans({ 'user.name': 'octocat' }) });
+  const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
+  assert.match(text, /By user octocat ×1 149\.5/);
+  assert.match(text, /no user identity ×1 0/);
+  assert.match(text, /1 \/ 2 calls are attributed to a user/);
+  assert.doesNotMatch(text, /No user\.name was observed/);
+  assert.match(text, /Latest observed: chat-1 · o\/r@main · by octocat\./);
+});
+
+it('labels retained sessions with multiple observed users explicitly', () => {
+  const at = Date.UTC(2026, 8, 29, 12);
+  const base = (id, operation, attributes, offset = 0) => usageSpan(id, {
+    'gen_ai.operation.name': operation, 'copilot_chat.chat_session_id': 'chat-1', ...attributes
+  }, at + offset, at + offset + 500);
+  const d = dashboard();
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    spans: digestSpans([
+      base('agent-1', 'invoke_agent', { 'user.name': 'mona' }),
+      base('before-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 1e9 }, 10),
+      base('agent-2', 'invoke_agent', { 'user.name': 'hubot' }, 1000),
+      base('after-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 2e9 }, 1010)
+    ])
+  });
+  const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
+  assert.match(text, /By user hubot ×1 2/);
+  assert.match(text, /mona ×1 1/);
+  assert.match(text, /Latest observed: chat-1 · by mona, hubot\./);
 });
 
 it('shows trace-store tool success when the file feed is not connected', () => {

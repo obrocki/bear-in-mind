@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "title": "Measuring ROI on AI-assisted development",
-  "updated": "2026-09-30",
+  "updated": "2026-10-01",
   "workstream": "Data and Attribution Model",
   "question": "What does AI-assisted development cost, what value does it deliver, and can we credibly attribute the difference?",
   "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
@@ -95,9 +95,9 @@
       "name": "Actor",
       "group": "identity",
       "canonical": "actor.actor_key",
-      "otel": "none (no enduser.* by default)",
+      "otel": "user.name (span); process.user.name, host.name (resource)",
       "surfaces": {
-        "vscode": { "availability": "missing", "field": "session.id is per window", "note": "No PII in default attributes." },
+        "vscode": { "availability": "partial", "field": "user.name on invoke_agent spans; process.user.name, host.name resource attributes", "note": "Opt-in since VS Code 1.140 (github.copilot.chat.otel.captureIdentity; managed telemetry.capture.identity / CopilotOtelCaptureIdentity policy wins). Local harness only. user.name is the signed-in GitHub account; chat spans inherit it through the session ID. agent-traces.db stores span attributes, not resource attributes." },
         "cli": { "availability": "missing", "field": "signed-in login not stored per row", "note": "A collector can add a salted pseudonym." },
         "app": { "availability": "missing", "field": "signed-in login not stored per row" },
         "cloud": { "availability": "native", "field": "audit user, commit co-author" },
@@ -391,7 +391,7 @@
       "id": "actor",
       "name": "actor",
       "grain": "person",
-      "fields": ["actor_key (salted pseudonym)", "org", "team / cost centre"]
+      "fields": ["actor_key (salted pseudonym of user.name / user_login)", "device key (process.user.name, host.name), optional", "org", "team / cost centre"]
     },
     {
       "id": "ai_session",
@@ -467,6 +467,7 @@
     { "id": "coverage", "name": "PR-reference coverage", "measure": "% of reported credits in sessions with a repository, branch and recorded PR reference; not verified delivery or value", "availability": "local", "liveMetric": "creditsToPrShare" },
     { "id": "repo_coverage", "name": "Work-context coverage", "measure": "% of credits in sessions with a repository", "availability": "local", "liveMetric": "creditsToRepoShare" },
     { "id": "credit_coverage", "name": "Credit coverage", "measure": "% of model calls that report credits", "availability": "local", "liveMetric": "creditCoverage" },
+    { "id": "actor_coverage", "name": "Actor coverage", "measure": "% of reported credits on model calls attributed to a user.name (opt-in identity capture); a join key to per-user organisation data, not a productivity measure", "availability": "local", "liveMetric": "creditsToActorShare" },
     { "id": "cost_per_change", "name": "Cost per delivered change", "measure": "Credits per merged PR, per work-item type", "availability": "needs-vcs-join" },
     { "id": "ai_share", "name": "AI-assisted share", "measure": "% of merged PRs with T0/T1 attribution", "availability": "needs-vcs-join" },
     { "id": "efficiency", "name": "Cache-read share", "measure": "Cached input tokens / reported input tokens; a usage mix indicator, not time or money saved", "availability": "local", "liveMetric": "cacheReadRatio" },
@@ -480,7 +481,7 @@
     { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
     { "id": "no-cloud-cost", "title": "No per-session credits for the cloud agent", "severity": "high", "surfaces": ["cloud"], "consequence": "PR-linked work has no cost.", "mitigation": "Session streaming / usage records; billing API at day grain; allocate." },
     { "id": "no-session-in-org", "title": "No session ID in organisation data", "severity": "high", "surfaces": ["org"], "consequence": "Authoritative credits cannot join to sessions.", "mitigation": "Reconcile at user/day/model; allocate by local share." },
-    { "id": "no-actor", "title": "No actor locally", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Cannot join to organisation per-user data.", "mitigation": "Collector adds a salted pseudonym of the signed-in login." },
+    { "id": "no-actor", "title": "No actor locally by default", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "CLI/app rows hold no user, and VS Code emits user.name only when identity capture is on (Local harness), so per-user organisation data cannot otherwise be joined.", "mitigation": "Turn on VS Code identity capture and join user.name to user_login at user/day/model grain; have the collector add the signed-in login for CLI/app; pseudonymise before storage." },
     { "id": "session-sparse", "title": "Session ID missing on many VS Code calls", "severity": "medium", "surfaces": ["vscode"], "consequence": "Auxiliary and language-model-API calls cannot inherit repository context.", "mitigation": "Fall back to conversation and trace IDs; report the rest as unattributed." },
     { "id": "overlap", "title": "Overlapping sources", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Double counting (metrics vs spans, transcript vs trace, CLI store vs OTel).", "mitigation": "Precedence or per-dimension max, never sum; dedupe on call IDs." },
     { "id": "no-ci", "title": "No CI/CD linkage", "severity": "medium", "surfaces": ["vscode", "cli", "app", "cloud", "org"], "consequence": "Build and deploy outcomes are unattributed.", "mitigation": "Join cicd.pipeline.run.* by repository and commit." },
@@ -489,7 +490,7 @@
     { "id": "naming-drift", "title": "Naming drift", "severity": "low", "surfaces": ["vscode", "cli", "app"], "consequence": "github.copilot.git.* vs vcs.*; reasoningEffort vs gen_ai.request.reasoning.level.", "mitigation": "Normalise to canonical fields at ingest." }
   ],
   "priorArt": [
-    { "name": "bear-in-mind", "proved": "Metering from VS Code OTel file feed, agent-traces.db and transcripts; cost/speed/quality dashboard with retained-trace credits by model, repository, caller and reasoning effort, and session repository labels.", "learned": "Count only chat spans; dedupe by span ID; metrics vs spans use max not sum; credits = nano-AIU / 1e9; token share is not credit share." },
+    { "name": "bear-in-mind", "proved": "Metering from VS Code OTel file feed, agent-traces.db and transcripts; cost/speed/quality dashboard with retained-trace credits by model, repository, user, caller and reasoning effort, and session repository and user labels.", "learned": "Count only chat spans; dedupe by span ID; metrics vs spans use max not sum; credits = nano-AIU / 1e9; token share is not credit share; user.name, like repository, sits on invoke_agent spans and must be inherited by chat spans." },
     { "name": "agentic-sdlc-prototypes-patterns", "proved": "OTLP receiver, CLI session-store ingestion, ELK documents with cost/speed/quality groups, pseudonymised developer_id.", "learned": "Spans rarely carried credits then; the CLI store was the reliable cost source; repository must be copied from invoke_agent to chat spans." },
     { "name": "copilot-insights (hackathon)", "proved": "Relational schema joining OTel spans, metrics and events with CLI llm_calls by session.", "learned": "Repo/branch/commit exist, but no PR join was built." },
     { "name": "vscode-insights (hackathon)", "proved": "Copilot SDK instrumentation (assistant.usage, subagent.*, skill.invoked, quota snapshots) into one records table.", "learned": "Stable call keys like sdk:<sessionId>:call:<apiCallId>; account checked against the signed-in login." }
@@ -498,6 +499,8 @@
     { "claim": "copilot_chat.copilot_usage_nano_aiu is emitted on VS Code chat spans", "status": "verified", "note": "genAiAttributes.ts in microsoft/vscode extensions/copilot; present on 124 of 125 local chat spans." },
     { "claim": "github.copilot.* attribute namespace (agent.type, git.*, tool.parameters.*)", "status": "verified", "note": "Defined in current source and observed locally on invoke_agent / execute_tool spans." },
     { "claim": "VS Code reasoning effort", "status": "verified", "note": "Carried inside the copilot_chat.request.options JSON blob, not a dedicated attribute." },
+    { "claim": "VS Code identity capture: user.name on agent invocation spans; process.user.name and host.name as resource attributes", "status": "verified", "note": "VS Code 1.140 release notes and otelIdentity.ts in microsoft/vscode extensions/copilot: off by default; user.name is the GitHub session account label; a managed policy overrides COPILOT_OTEL_CAPTURE_IDENTITY and the setting; agent-traces.db persists span attributes only; agent host support is tracked in microsoft/vscode#337413." },
+    { "claim": "VS Code user.name equals the usage metrics user_login", "status": "unverified", "note": "Both should be the GitHub login; not tested against an organisation export." },
     { "claim": "Copilot CLI OTel span, metric and environment-variable names", "status": "unverified", "note": "Primary docs section not retrieved." },
     { "claim": "copilot_chat.server_request_id equals CLI serviceRequestId", "status": "unverified", "note": "Both are service request IDs; equivalence not tested." },
     { "claim": "Cloud agent billing unit (premium request per session vs AI credits)", "status": "unverified", "note": "2025 and 2026 changelog statements differ." },
@@ -508,6 +511,8 @@
     { "title": "Optimize AI credit usage (VS Code)", "url": "https://code.visualstudio.com/docs/agents/guides/optimize-usage", "kind": "docs" },
     { "title": "Agent harnesses (VS Code)", "url": "https://code.visualstudio.com/docs/agents/run/agent-harnesses", "kind": "docs" },
     { "title": "genAiAttributes.ts (microsoft/vscode)", "url": "https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/otel/common/genAiAttributes.ts", "kind": "source" },
+    { "title": "otelIdentity.ts (microsoft/vscode)", "url": "https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/otel/common/otelIdentity.ts", "kind": "source" },
+    { "title": "VS Code 1.140: Capture user identity in OpenTelemetry", "url": "https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry", "kind": "changelog" },
     { "title": "OTel GenAI semantic conventions", "url": "https://github.com/open-telemetry/semantic-conventions-genai", "kind": "spec" },
     { "title": "OTel MCP attributes", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/mcp/", "kind": "spec" },
     { "title": "OTel VCS attributes", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/", "kind": "spec" },

@@ -62,11 +62,14 @@ dependencies; reload extensions in the app after editing. Its tests run with
   Tool success falls back to `execute_tool` span status only when the feed has no
   tool-call measurements (a measured zero counts). Only OK and ERROR count; UNSET
   is unknown, not a success.
-- Retained-trace credit breakdowns (model, repository, caller, reasoning effort)
+- Retained-trace credit breakdowns (model, repository, user, caller, reasoning effort)
   are diagnostics over the seven-day span window: never add them to the meter or
   to transcript credits. Keep only `owner/name` repository identifiers (no URL
   credentials, no local filesystem paths) and only the effort word from
-  `copilot_chat.request.options`.
+  `copilot_chat.request.options`. User attribution keys on `user.name` (opt-in
+  identity capture) inherited from agent spans; never substitute
+  `process.user.name` or `host.name`, which are a device, not an account. Leave
+  unlinked calls as *no user identity* rather than guessing.
   Select optional `agent-traces.db` columns defensively; older stores lack them.
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call

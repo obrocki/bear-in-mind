@@ -492,6 +492,9 @@ function sourceCard(s) {
         ['Input / output tokens', `${compact.format(t.inputTokens)} / ${compact.format(t.outputTokens)}`],
         ['Cache-read ratio', pct(s.metrics.cacheReadRatio)],
         s.metrics.subAgentShare !== null ? ['Sub-agent credit share', pct(s.metrics.subAgentShare)] : null,
+        s.metrics.creditsToActorShare !== null && s.metrics.creditsToActorShare !== undefined
+          ? ['Credits with a user', pct(s.metrics.creditsToActorShare)]
+          : null,
       ]
         .filter(Boolean)
         .map(([label, value]) =>
@@ -514,6 +517,7 @@ function sourceCard(s) {
       breakdownTable(b.agent ? 'By agent' : 'By initiator', b.agent ?? b.initiator),
       breakdownTable('By reasoning effort', b.reasoningEffort),
       breakdownTable('By repository', b.repository),
+      b.user ? breakdownTable('By user (user.name)', b.user) : null,
       b.link ? breakdownTable('By repository link method', b.link) : null,
       s.tools?.length
         ? h(

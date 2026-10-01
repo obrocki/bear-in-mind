@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { it } = require('node:test');
-const { OtelWatcher } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelWatcher.js'));
+const { OtelWatcher, identityCaptureOverride } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelWatcher.js'));
 const { buildPeriod, periodStart } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 
 const record = fs.readFileSync(path.join(__dirname, 'fixtures', 'otel-feed.jsonl'), 'utf8')
@@ -52,6 +52,34 @@ function fixture(t) {
   });
   return { dir, file: path.join(dir, 'feed.jsonl'), watcher, deltas, create };
 }
+
+it('reports whether identity capture is requested, with the environment variable taking precedence', (t) => {
+  const { watcher } = fixture(t);
+  const saved = process.env.COPILOT_OTEL_CAPTURE_IDENTITY;
+  t.after(() => {
+    if (saved === undefined) delete process.env.COPILOT_OTEL_CAPTURE_IDENTITY;
+    else process.env.COPILOT_OTEL_CAPTURE_IDENTITY = saved;
+  });
+  delete process.env.COPILOT_OTEL_CAPTURE_IDENTITY;
+  assert.equal(watcher.health().identityCapture, false, 'off by default');
+  globalThis.__BEAR_SETTINGS__['github.copilot.chat.otel.captureIdentity'] = true;
+  assert.equal(watcher.health().identityCapture, true);
+  process.env.COPILOT_OTEL_CAPTURE_IDENTITY = 'false';
+  assert.equal(watcher.health().identityCapture, false);
+  globalThis.__BEAR_SETTINGS__['github.copilot.chat.otel.captureIdentity'] = false;
+  process.env.COPILOT_OTEL_CAPTURE_IDENTITY = 'true';
+  assert.equal(watcher.health().identityCapture, true);
+  process.env.COPILOT_OTEL_CAPTURE_IDENTITY = 'TRUE';
+  assert.equal(watcher.health().identityCapture, false, 'parsed exactly as Copilot Chat does');
+});
+
+it('parses the identity-capture environment override exactly as Copilot Chat does', () => {
+  assert.equal(identityCaptureOverride({}), undefined, 'unset defers to the setting');
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: 'true' }), true);
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: '1' }), true);
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: '' }), false, 'set but empty is off, not unset');
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: 'yes' }), false);
+});
 
 it('does not carry a missing-feed flag onto a different existing feed', (t) => {
   const { dir, watcher, deltas } = fixture(t);
@@ -303,6 +331,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   span.run('agent', at, at + 9000, 0, 'invoke_agent', 'GitHub Copilot Chat', 'chat-1', null, null, null, null, null);
   attr.run('agent', 'github.copilot.git.repository', 'https://github.com/o/r.git');
   attr.run('agent', 'github.copilot.git.branch', 'feature');
+  attr.run('agent', 'user.name', 'octocat');
   span.run('call', at + 10, at + 900, 0, 'chat', 'panel/editAgent', 'chat-1', 'opus', 1000, 20, 750, null);
   attr.run('call', 'copilot_chat.copilot_usage_nano_aiu', '3000000000');
   attr.run('call', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
@@ -324,9 +353,15 @@ it('reads work context, callers, reasoning effort and tool status from a current
   assert.equal(digest.sessions[0].repository, 'o/r');
   assert.equal(digest.sessions[0].branch, 'feature');
   assert.equal(digest.sessions[0].agentName, 'GitHub Copilot Chat');
+  assert.equal(digest.sessions[0].user, 'octocat');
   assert.deepEqual(
     digest.byRepository.map((row) => [row.key, row.calls, row.credits]),
     [['o/r', 1, 3], [null, 1, 0]]
+  );
+  assert.deepEqual(
+    digest.byUser.map((row) => [row.key, row.calls, row.credits]),
+    [['octocat', 1, 3], [null, 1, 0]],
+    'the sessionless title call stays unattributed'
   );
   assert.deepEqual(digest.byCaller.map((row) => row.key), ['panel/editAgent', 'title']);
   assert.deepEqual(digest.byEffort.map((row) => [row.key, row.calls]), [['high', 1], [null, 1]]);

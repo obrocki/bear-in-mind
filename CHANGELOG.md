@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **User attribution** from VS Code 1.140's OpenTelemetry identity capture:
+  `user.name` (the signed-in GitHub account) is read from agent spans in the
+  trace store and file feed, inherited by model calls from the time-appropriate
+  agent span in the same or parent session, and used to group retained-trace
+  credits **by user**. Sessions show their user, or the observed user list after
+  an account switch, in the dashboard, the session picker (searchable) and
+  diagnostics. Calls without a user stay visible as *no user identity*.
+- **Connect Copilot Telemetry** asks separately whether to turn on
+  `github.copilot.chat.otel.captureIdentity`, noting when a connected OTLP
+  collector would receive the identity too. It writes that setting last and
+  skips it if replacing a collector failed, and does not offer it when
+  `COPILOT_OTEL_CAPTURE_IDENTITY` overrides it. **Restore Defaults** puts the
+  previous value back.
+- Telemetry diagnostics report whether identity capture is requested and how
+  many retained calls are attributed to a user.
+- AI attribution canvas: VS Code coverage resolves `user.name` from agent spans
+  and adds a **By user** breakdown and an **Actor coverage** metric (share of
+  credits attributed to a user). The research and model spec record identity
+  capture as opt-in VS Code actor data and the `user.name` ↔ `user_login` join.
 - **Restore defaults and disconnect**: the last option in the connect picker, a
   dashboard footer button and menu entry, and the **Iceberg: Restore Defaults and
   Disconnect…** command. After confirming a listed plan, it returns the Copilot

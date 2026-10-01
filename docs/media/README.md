@@ -17,7 +17,7 @@ research model, regenerate the canvas shots too.
 | `dashboard.png` | Representative session comparisons with the default unscaled ice gauge. |
 | `dashboard-context.png` | The same dashboard with a reported prompt allowance. |
 | `dashboard-waiting.png` | A flowing telemetry feed awaiting quality signals. |
-| `dashboard-credits.png` | Retained-trace credits by model, repository, caller and reasoning effort. |
+| `dashboard-credits.png` | Retained-trace credits by model, repository, user, caller and reasoning effort. |
 | `dashboard-empty.png` | The dashboard before any telemetry is connected. |
 | `canvas-outcomes.png` | AI attribution canvas Outcomes tab with synthetic ROI-readiness coverage. |
 | `canvas-coverage.png` | AI attribution canvas Live coverage tab from synthetic stores. |

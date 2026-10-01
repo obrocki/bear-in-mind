@@ -1,4 +1,4 @@
-import { hrToMs } from './otelParse';
+import { hrToMs, resourceAttributes } from './otelParse';
 import { emptySpanDigest, type CallTally, type SpanDigest, type SpanSession } from './otelSummary';
 
 /** OTel span status codes. UNSET (0) means no status was reported, so it is unknown. */
@@ -34,6 +34,11 @@ export interface UsageSpan {
   /** `owner/name` from agent-span git attributes, credentials removed. */
   repository?: string;
   branch?: string;
+  /**
+   * `user.name`: the signed-in GitHub account, emitted on agent invocation
+   * spans only when Copilot's OTel identity capture is on (VS Code 1.140+).
+   */
+  user?: string;
   /** Span status ERROR; undefined when the source reported no status. */
   failed?: boolean;
 }
@@ -47,6 +52,12 @@ export function nonnegative(value: unknown): number | undefined {
 
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : undefined;
+}
+
+/** An account name: one short line, never a blob that could carry content. */
+export function identityName(value: unknown): string | undefined {
+  const name = typeof value === 'string' ? value.trim() : '';
+  return name.length > 0 && name.length <= 128 && !/[\u0000-\u001f\u007f]/.test(name) ? name : undefined;
 }
 
 /**
@@ -147,6 +158,7 @@ export function usageSpan(
     repository: repositoryName(attributes['github.copilot.git.repository']) ??
       repositoryName(attributes['copilot_chat.repo.remote_url']),
     branch: text(attributes['github.copilot.git.branch']) ?? text(attributes['copilot_chat.repo.head_branch_name']),
+    user: identityName(attributes['user.name']),
     failed: spanFailed(status)
   };
 }
@@ -161,8 +173,13 @@ export function fileUsageSpan(record: unknown): UsageSpan | undefined {
     return undefined;
   }
   const status = r.status && typeof r.status === 'object' ? (r.status as Record<string, unknown>).code : undefined;
+  // Identity can also be set explicitly as a resource attribute; the span's own value wins.
+  const resourceUser = resourceAttributes(record)['user.name'];
+  const attributes = r.attributes as Record<string, unknown>;
   return usageSpan(
-    r.spanId, r.attributes as Record<string, unknown>, hrToMs(r.startTime), hrToMs(r.endTime), status
+    r.spanId,
+    resourceUser !== undefined && attributes['user.name'] === undefined ? { ...attributes, 'user.name': resourceUser } : attributes,
+    hrToMs(r.startTime), hrToMs(r.endTime), status
   );
 }
 
@@ -174,6 +191,56 @@ function tally(rows: Map<string | null, CallTally>, key: string | null, credits:
     row.credits += credits;
   }
   rows.set(key, row);
+}
+
+type ActorIdentity = { user: string; at: number };
+
+function rememberActor(timeline: Map<string, ActorIdentity[]>, sessionId: string, actor: ActorIdentity): void {
+  const entries = timeline.get(sessionId) ?? [];
+  entries.push(actor);
+  timeline.set(sessionId, entries);
+}
+
+function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | undefined, at: number): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+  const entries = timeline.get(sessionId);
+  if (!entries?.length) {
+    return undefined;
+  }
+  // A call that started before every identity-bearing agent span stays unattributed rather than taking a later account.
+  let match: ActorIdentity | undefined;
+  for (const entry of entries) {
+    if (entry.at <= at) {
+      match = entry;
+    } else {
+      break;
+    }
+  }
+  return match?.user;
+}
+
+function distinctActorUsers(entries: ActorIdentity[]): string[] {
+  const seen = new Set<string>();
+  const users: string[] = [];
+  for (const entry of entries) {
+    if (!seen.has(entry.user)) {
+      seen.add(entry.user);
+      users.push(entry.user);
+    }
+  }
+  return users;
+}
+
+function sessionActorLabel(users: string[]): string | undefined {
+  if (users.length === 0) {
+    return undefined;
+  }
+  if (users.length <= 3) {
+    return users.join(', ');
+  }
+  return `${users.slice(0, 3).join(', ')}, +${users.length - 3} more`;
 }
 
 export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
@@ -191,6 +258,8 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
 
   // Agent spans carry the git context; the model calls under them do not.
   const work = new Map<string, { repository?: string; branch?: string; at: number }>();
+  // Keep per-call user attribution time-ordered so account switches do not rewrite earlier calls.
+  const actorTimeline = new Map<string, ActorIdentity[]>();
   for (const span of unique) {
     if (span.operation === 'invoke_agent' && span.sessionId && (span.repository || span.branch)) {
       const known = work.get(span.sessionId);
@@ -198,11 +267,18 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
         work.set(span.sessionId, { repository: span.repository, branch: span.branch, at: span.start });
       }
     }
+    if (span.operation === 'invoke_agent' && span.sessionId && span.user) {
+      rememberActor(actorTimeline, span.sessionId, { user: span.user, at: span.start });
+    }
+  }
+  for (const entries of actorTimeline.values()) {
+    entries.sort((a, b) => a.at - b.at);
   }
   const byModel = new Map<string | null, CallTally>();
   const byCaller = new Map<string | null, CallTally>();
   const byEffort = new Map<string | null, CallTally>();
   const byRepository = new Map<string | null, CallTally>();
+  const byUser = new Map<string | null, CallTally>();
 
   for (const span of unique) {
     digest.available = true;
@@ -245,10 +321,12 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
         }
       }
       const repository = work.get(span.sessionId ?? '')?.repository ?? work.get(span.parentSessionId ?? '')?.repository;
+      const user = span.user ?? actorAt(actorTimeline, span.sessionId, span.start) ?? actorAt(actorTimeline, span.parentSessionId, span.start);
       tally(byModel, span.model, span.credits);
       tally(byCaller, span.agent ?? null, span.credits);
       tally(byEffort, span.effort ?? null, span.credits);
       tally(byRepository, repository ?? null, span.credits);
+      tally(byUser, user ?? null, span.credits);
       if (span.ttft !== undefined) {
         digest.ttftMs.push(span.ttft);
       }
@@ -301,10 +379,19 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       session.branch = context.branch;
     }
   }
+  for (const [sessionId, timeline] of actorTimeline) {
+    const session = sessions.get(sessionId);
+    if (session) {
+      const users = distinctActorUsers(timeline);
+      session.users = users;
+      session.user = sessionActorLabel(users);
+    }
+  }
   digest.byModel = [...byModel.values()];
   digest.byCaller = [...byCaller.values()];
   digest.byEffort = [...byEffort.values()];
   digest.byRepository = [...byRepository.values()];
+  digest.byUser = [...byUser.values()];
   for (const span of latestCalls.values()) {
     if (span.promptLimit && span.input !== undefined) {
       const context = {

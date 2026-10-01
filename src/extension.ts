@@ -6,7 +6,7 @@ import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
-import { OtelWatcher } from './otelWatcher';
+import { identityCaptureOverride, OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import {
   BACKUP_KEY,
@@ -213,6 +213,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
           description: [
             session.trace?.model ?? session.transcript?.model ?? 'unknown model',
             session.work,
+            session.trace?.user ? `by ${session.trace.user}` : undefined,
             new Date(session.updatedAt).toLocaleString()
           ].filter(Boolean).join(' · '),
           detail: session.sessionId,
@@ -223,7 +224,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         title: 'Session to compare with Copilot',
         matchOnDescription: true,
         matchOnDetail: true,
-        placeHolder: 'Pick a session by name or repository, or follow the most recently observed session'
+        placeHolder: 'Pick a session by name, repository or user, or follow the most recently observed session'
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
@@ -351,6 +352,42 @@ async function connectTelemetry(
     }
   }
 
+  // Identity is opt-in upstream and reaches every exporter, so it is asked for
+  // separately and only offered where this Copilot Chat build has the setting.
+  // COPILOT_OTEL_CAPTURE_IDENTITY outranks the setting, so asking would offer a
+  // choice that has no effect.
+  let captureIdentity = false;
+  const identityOverride = identityCaptureOverride();
+  if (identityOverride !== undefined) {
+    output.appendLine(
+      `[iceberg] COPILOT_OTEL_CAPTURE_IDENTITY=${process.env.COPILOT_OTEL_CAPTURE_IDENTITY} turns identity capture ` +
+        `${identityOverride ? 'on' : 'off'} regardless of ${OTEL_SECTION}.captureIdentity, so that setting was not offered or changed.`
+    );
+  } else if (config.inspect('captureIdentity')?.defaultValue !== undefined && config.get<boolean>('captureIdentity') !== true) {
+    const attribute = 'Attribute to My Account';
+    const skip = 'Not Now';
+    const answer = await vscode.window.showInformationMessage(
+      'Attribute Copilot usage to your GitHub account?',
+      {
+        modal: true,
+        detail:
+          'Turns on github.copilot.chat.otel.captureIdentity (VS Code 1.140+). Agent spans then carry user.name, ' +
+          'your GitHub account, and telemetry resources carry process.user.name and host.name. Bear in Mind ' +
+          'reads it locally to group model-call credits by user and label sessions, and sends it nowhere. ' +
+          (collectorInUse && picked.id === 'sqlite'
+            ? `Your OTLP collector (${endpointLabel}) receives these attributes too. `
+            : '') +
+          'An organization policy can still deny identity capture. Restore Defaults puts your previous value back.'
+      },
+      attribute,
+      skip
+    );
+    if (answer === undefined) {
+      return;
+    }
+    captureIdentity = answer === attribute;
+  }
+
   const wanted: Array<[string, unknown]> = [['enabled', true]];
   if (picked.id === 'sqlite' || picked.id === 'both') {
     wanted.push([traceSetting, true]);
@@ -384,6 +421,10 @@ async function connectTelemetry(
       return;
     }
     wanted.push(['outfile', feed], ['exporterType', 'file']);
+  }
+  // Last, so it is written only after the exporter writes it depends on.
+  if (captureIdentity) {
+    wanted.push(['captureIdentity', true]);
   }
 
   const applied: string[] = [];
@@ -422,6 +463,17 @@ async function connectTelemetry(
     }).filter((action) => action.kind === 'remove').map((action) => action.key)
   );
   for (const [key, value] of wanted) {
+    // The identity prompt only disclosed a kept collector. If replacing it
+    // failed, that collector would receive the identity without the user being told.
+    if (key === 'captureIdentity' && collectorInUse && picked.id !== 'sqlite' &&
+        (failed.includes('outfile') || failed.includes('exporterType'))) {
+      failed.push(key);
+      output.appendLine(
+        `[iceberg] ${OTEL_SECTION}.${key} was not turned on: the OTLP exporter could not be replaced, ` +
+          `so ${endpointLabel} would have received your identity.`
+      );
+      continue;
+    }
     // A setting this build of Copilot Chat does not register cannot be written —
     // `update` rejects. Writing them one at a time, and checking first, means one
     // unknown key cannot abort the rest of the setup.
@@ -702,11 +754,18 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
     output.appendLine(`  session work        ${session.work ?? 'not reported'} (agent span git attributes)`);
+    output.appendLine(`  session user(s)     ${session.trace?.user ?? 'not reported'} (user.name on agent spans)`);
   }
   const spans = otel.spanDigest;
   output.appendLine(
     `  retained trace calls ${spans.creditCalls}/${spans.chatCalls} reported ${spans.credits} credits; ` +
     `${spans.sessionlessCalls} calls without a session ID; ${spans.toolFailures}/${spans.toolStatusCalls} tool spans failed`
+  );
+  const userCalls = spans.byUser.reduce((sum, row) => sum + (row.key === null ? 0 : row.calls), 0);
+  output.appendLine(
+    `  identity capture    ${feed.identityCapture ? 'requested' : 'off'} · ${userCalls}/${spans.chatCalls} retained calls ` +
+    `attributed to a user.name across ${spans.byUser.filter((row) => row.key !== null).length} user(s)` +
+    (feed.identityCapture ? '' : ' — turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+) to attribute calls')
   );
   output.appendLine(`  ice gauge           ${usage.basis}: ${iceReadout(usage)}`);
   if (usage.context) {
