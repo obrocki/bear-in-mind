@@ -148,6 +148,13 @@ function present(value) {
   return value !== null && value !== undefined && String(value).trim() !== '';
 }
 
+/** An account name: one short line, never a blob that could carry content. */
+export function identityName(value) {
+  if (typeof value !== 'string') return null;
+  const name = value.trim();
+  return name.length > 0 && name.length <= 128 && !/[\u0000-\u001f\u007f]/.test(name) ? name : null;
+}
+
 function share(part, whole) {
   return whole > 0 ? part / whole : null;
 }
@@ -412,6 +419,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
       creditsToPrShare: refsAvailable ? share(stages.pullRequest.nano, totals.nano) : null,
+      creditsToActorShare: null,
       cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
       subAgentShare: share(subAgentNano, totals.nano),
     },
@@ -433,6 +441,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
           : null,
       windowed || !sinceDay ? null : 'created_at is missing, so the window could not be applied.',
       windowed ? 'Rows with only a date count when their whole day falls inside the window.' : null,
+      'No user identity is stored per session, so credits cannot be attributed to an actor from this store.',
     ].filter(Boolean),
   };
 }
@@ -444,11 +453,31 @@ const GIT_KEYS = {
   branch: ['github.copilot.git.branch', 'copilot_chat.repo.head_branch_name'],
   commit: ['github.copilot.git.commit_sha', 'copilot_chat.repo.head_commit_hash'],
 };
+/** The signed-in GitHub account on agent invocation spans, when Copilot's identity capture is on (VS Code 1.140+). */
+const IDENTITY_KEY = 'user.name';
 const CHAT_KEYS = [
   'copilot_chat.copilot_usage_nano_aiu',
   'copilot_chat.request.options',
   'copilot_chat.parent_chat_session_id',
+  IDENTITY_KEY,
 ];
+
+/** The newest agent context for a chat span: its chat session, conversation, parent session, then trace. */
+function agentLink(maps, chat, parent) {
+  if (present(chat.chat_session_id) && maps.session.has(String(chat.chat_session_id))) {
+    return { ctx: maps.session.get(String(chat.chat_session_id)), link: 'chat session' };
+  }
+  if (present(chat.conversation_id) && maps.conversation.has(String(chat.conversation_id))) {
+    return { ctx: maps.conversation.get(String(chat.conversation_id)), link: 'conversation' };
+  }
+  if (present(parent) && maps.session.has(String(parent))) {
+    return { ctx: maps.session.get(String(parent)), link: 'parent session' };
+  }
+  if (present(chat.trace_id) && maps.trace.has(String(chat.trace_id))) {
+    return { ctx: maps.trace.get(String(chat.trace_id)), link: 'trace' };
+  }
+  return { ctx: null, link: 'none' };
+}
 
 export function reasoningEffortFromOptions(raw) {
   if (!present(raw) || String(raw).length > MAX_OPTIONS_CHARS) return null;
@@ -493,6 +522,8 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   const chatAttributes = new Map();
   const agentContext = { session: new Map(), conversation: new Map(), trace: new Map() };
+  // Tracked apart from git context, so an identity-only agent span never changes how repository is linked.
+  const agentIdentity = { session: new Map(), conversation: new Map(), trace: new Map() };
   if (hasAttributes) {
     const placeholders = CHAT_KEYS.map(() => '?').join(', ');
     for (const row of db
@@ -506,7 +537,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       chatAttributes.set(String(row.span_id), attrs);
     }
 
-    const gitKeys = Object.values(GIT_KEYS).flat();
+    const agentKeys = [...Object.values(GIT_KEYS).flat(), IDENTITY_KEY];
     const agentCols = selectList(cols, ['span_id', 'trace_id', 'conversation_id', 'chat_session_id', 'start_time_ms'])
       .split(', ')
       .map((c) => (c.startsWith('NULL') ? c : `s.${c}`))
@@ -517,10 +548,10 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     for (const row of db
       .prepare(
         `SELECT ${agentCols}, a.key, a.value FROM spans s
-                 LEFT JOIN span_attributes a ON a.span_id = s.span_id AND a.key IN (${gitKeys.map(() => '?').join(', ')})
+                 LEFT JOIN span_attributes a ON a.span_id = s.span_id AND a.key IN (${agentKeys.map(() => '?').join(', ')})
                  WHERE s.operation_name = 'invoke_agent'`,
       )
-      .all(...gitKeys)) {
+      .all(...agentKeys)) {
       const agent = agents.get(String(row.span_id)) ?? { row, values: {} };
       if (present(row.key) && present(row.value)) agent.values[row.key] = String(row.value);
       agents.set(String(row.span_id), agent);
@@ -531,18 +562,23 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       const known = map.get(String(key));
       if (!known || known.at <= at) map.set(String(key), { ...ctx, at });
     };
+    const rememberAll = (maps, row, ctx, at) => {
+      remember(maps.session, row.chat_session_id, ctx, at);
+      remember(maps.conversation, row.conversation_id, ctx, at);
+      remember(maps.trace, row.trace_id, ctx, at);
+    };
     for (const agent of agents.values()) {
       const pick = (keys) => keys.map((key) => agent.values[key]).find(present) ?? null;
+      const at = num(agent.row.start_time_ms);
+      const user = identityName(agent.values[IDENTITY_KEY]);
+      if (user) rememberAll(agentIdentity, agent.row, { user }, at);
       const ctx = {
         repository: normalizeRepository(pick(GIT_KEYS.repository)),
         branch: pick(GIT_KEYS.branch),
         commit: pick(GIT_KEYS.commit),
       };
       if (!ctx.repository && !ctx.branch && !ctx.commit) continue;
-      const at = num(agent.row.start_time_ms);
-      remember(agentContext.session, agent.row.chat_session_id, ctx, at);
-      remember(agentContext.conversation, agent.row.conversation_id, ctx, at);
-      remember(agentContext.trace, agent.row.trace_id, ctx, at);
+      rememberAll(agentContext, agent.row, ctx, at);
     }
   }
 
@@ -568,6 +604,8 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
   const byEffort = new Tally();
   const byRepository = new Tally();
   const byLink = new Tally();
+  const byUser = new Tally();
+  const actor = newAcc();
   const byDay = new Map();
   let first = null;
   let last = null;
@@ -591,21 +629,8 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
         ? String(chat.conversation_id)
         : null;
     const parent = attrs['copilot_chat.parent_chat_session_id'];
-    let ctx = null;
-    let link = 'none';
-    if (present(chat.chat_session_id) && agentContext.session.has(String(chat.chat_session_id))) {
-      ctx = agentContext.session.get(String(chat.chat_session_id));
-      link = 'chat session';
-    } else if (present(chat.conversation_id) && agentContext.conversation.has(String(chat.conversation_id))) {
-      ctx = agentContext.conversation.get(String(chat.conversation_id));
-      link = 'conversation';
-    } else if (present(parent) && agentContext.session.has(String(parent))) {
-      ctx = agentContext.session.get(String(parent));
-      link = 'parent session';
-    } else if (present(chat.trace_id) && agentContext.trace.has(String(chat.trace_id))) {
-      ctx = agentContext.trace.get(String(chat.trace_id));
-      link = 'trace';
-    }
+    const { ctx, link } = agentLink(agentContext, chat, parent);
+    const user = identityName(attrs[IDENTITY_KEY]) ?? agentLink(agentIdentity, chat, parent).ctx?.user ?? null;
 
     const stageKey = sessionKey ?? (present(parent) ? String(parent) : null);
     // Every stage, including "observed", counts sessions by the same key so
@@ -624,6 +649,8 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     byEffort.add(reasoningEffortFromOptions(attrs['copilot_chat.request.options']), 1, nano);
     byRepository.add(ctx?.repository, 1, nano);
     byLink.add(link, 1, nano);
+    byUser.add(user, 1, nano);
+    if (user) addTo(actor, stageKey, nano);
 
     const start = num(chat.start_time_ms);
     if (start > 0) {
@@ -686,6 +713,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
       creditsToPrShare: null,
+      creditsToActorShare: share(actor.nano, totals.nano),
       cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
       subAgentShare: null,
     },
@@ -694,6 +722,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       agent: byAgent.top(),
       reasoningEffort: byEffort.top(),
       repository: byRepository.top(),
+      user: byUser.top(),
       link: byLink.top(),
     },
     tools: [...toolTally.values()].sort((a, b) => b.calls - a.calls).slice(0, TOP_N),
@@ -705,6 +734,12 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       'VS Code emits no pull request or issue ID; the last two stages need a VCS join.',
       'Copilot Chat prunes this store to recent history (about seven days).',
       hasAttributes ? null : 'span_attributes not found: credits and repository context are unavailable.',
+      hasAttributes && actor.calls === 0
+        ? 'No user.name on agent spans: turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) to attribute calls to a GitHub account.'
+        : null,
+      actor.calls > 0
+        ? 'User comes from user.name on agent spans in the same session, conversation, parent session or trace. process.user.name and host.name are resource attributes and are not stored in this database.'
+        : null,
     ].filter(Boolean),
   };
 }

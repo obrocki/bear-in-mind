@@ -108,6 +108,11 @@
           { label: 'octo/web', calls: 20, creditCalls: 20, credits: 76.9 },
           { label: 'no repository', calls: 86, creditCalls: 85, credits: 0 }
         ],
+        userCalls: 35,
+        byUser: [
+          { label: 'octocat', calls: 35, creditCalls: 35, credits: 311.5 },
+          { label: 'no user identity', calls: 90, creditCalls: 89, credits: 0 }
+        ],
         byCaller: [
           { label: 'panel/editAgent', calls: 32, creditCalls: 32, credits: 311.3 },
           { label: 'executionSubagentTool', calls: 2, creditCalls: 2, credits: 0.2 },
@@ -155,7 +160,7 @@
       trace: {
         credits: 293.2, creditCalls: 32, llmCalls: 32,
         inputTokens: 2100000, outputTokens: 85000, durationMs: 74200,
-        repository: 'octo/api', branch: 'main'
+        repository: 'octo/api', branch: 'main', user: 'octocat'
       }
     },
     quality: {

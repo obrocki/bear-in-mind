@@ -6,6 +6,7 @@ const { it } = require('node:test');
 const build = process.env.BEAR_TEST_BUILD;
 const {
   BACKUP_KEY,
+  CONNECT_KEYS,
   RESET_KEY,
   SealableMemento,
   contributedSettings,
@@ -30,6 +31,26 @@ function memory(initial = {}) {
     }
   };
 }
+
+it('restores identity capture only when Bear in Mind turned it on, and never touches a user-set value', () => {
+  assert.ok(CONNECT_KEYS.includes('captureIdentity'), 'connect records a backup for identity capture');
+  const ours = planCopilotRestore({
+    current: { captureIdentity: true },
+    backup: { captureIdentity: { hadValue: false, applied: true } },
+    feedPaths: [FEED],
+    collectorConfigured: false
+  });
+  assert.deepEqual(ours, [{ key: 'captureIdentity', kind: 'remove' }]);
+  const userSet = planCopilotRestore({ current: { captureIdentity: true }, backup: {}, feedPaths: [FEED], collectorConfigured: false });
+  assert.deepEqual(userSet, [], 'with no backup entry the value is the user\'s own');
+  const changedSince = planCopilotRestore({
+    current: { captureIdentity: false },
+    backup: { captureIdentity: { hadValue: true, value: true, applied: true } },
+    feedPaths: [FEED],
+    collectorConfigured: false
+  });
+  assert.deepEqual(changedSince, [{ key: 'captureIdentity', kind: 'keep', reason: 'changed after Bear in Mind set it' }]);
+});
 
 it('keeps the first original value when connecting more than once', () => {
   let backup = recordBackup(undefined, 'enabled', undefined, true);

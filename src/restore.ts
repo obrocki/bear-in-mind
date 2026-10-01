@@ -10,7 +10,7 @@ import type * as vscode from 'vscode';
 export const BACKUP_KEY = 'iceberg.copilotSettingsBackup.v1';
 
 /** Copilot Chat OTel keys the connect command may write, relative to `github.copilot.chat.otel`. */
-export const CONNECT_KEYS = ['enabled', 'dbSpanExporter.enabled', 'dbSpanExporter', 'outfile', 'exporterType'] as const;
+export const CONNECT_KEYS = ['enabled', 'dbSpanExporter.enabled', 'dbSpanExporter', 'outfile', 'exporterType', 'captureIdentity'] as const;
 
 /** The user-scope value a Copilot setting held before Bear in Mind first wrote it. */
 export interface BackupEntry {

@@ -38,14 +38,18 @@ Open **Iceberg: Open Token Dashboard** or the sidebar's *Cost, Speed, Quality* v
 
 | Section | Signals |
 | --- | --- |
-| Cost | Reported model-call tokens, per-session transcript and trace credits, cache/reasoning subtotals, cache-read share and feed rate. Retained-trace credits broken down by model, repository, caller and reasoning effort. Not a bill. |
+| Cost | Reported model-call tokens, per-session transcript and trace credits, cache/reasoning subtotals, cache-read share and feed rate. Retained-trace credits broken down by model, repository, user, caller and reasoning effort. Not a bill. |
 | Speed | Elapsed session duration, agent-invocation latency, model-call latency, first token, output throughput and slow tools. |
 | Quality | Observed edit acceptance, code survival, pull requests, tool success and response feedback. Not a correctness score. |
 
 Token share is not credit share. The **Model-call credits · retained traces**
 block groups reported credits so small helper calls (titles, progress messages,
 language-model API requests) are visible as many calls with few credits, and the
-repository and branch each session worked in come from its agent spans.
+repository and branch each session worked in come from its agent spans. With
+Copilot's identity capture on (VS Code 1.140+), the same agent spans carry
+`user.name`, the signed-in GitHub account, so credits are also grouped **by user**
+and each session shows who ran it. Calls that cannot be linked to an agent span
+stay visible as *no user identity*.
 
 ![Retained-trace credits by model, repository, caller and reasoning effort](docs/media/dashboard-credits.png)
 
@@ -65,7 +69,7 @@ These readings have different units and scopes, even when viewed during one chat
 | Copilot status **Credits used / allowance** | Account/billing-period credits and the allowance Copilot reports. Bear in Mind does not read either value or the reset date. |
 | Copilot **Session Cost** | Compare with **Session Cost · transcript** for the same session ID. Uses VS Code's formula: `max(sum(turn copilotCredits), reported sessionCopilotCredits)`. Includes existing history, unlike the local meter. |
 | **Model-call credits · traces** | Sum of reported `copilot_chat.copilot_usage_nano_aiu / 1,000,000,000` on unique `chat` spans. Shows coverage (`reported / observed` calls); missing credits are unknown, not free. Never added to transcript credits. |
-| **Model-call credits · retained traces** breakdowns | The same trace credits across all retained calls, grouped by model, repository (`github.copilot.git.*` on the session's agent spans), caller (`gen_ai.agent.name`) and reasoning effort (from `copilot_chat.request.options`). Calls without a session ID are counted and shown separately. A diagnostic, never added to the meter. |
+| **Model-call credits · retained traces** breakdowns | The same trace credits across all retained calls, grouped by model, repository (`github.copilot.git.*` on the session's agent spans), user (`user.name` on those agent spans, when identity capture is on), caller (`gen_ai.agent.name`) and reasoning effort (from `copilot_chat.request.options`). Calls without a session ID are counted and shown separately. A diagnostic, never added to the meter. |
 | Copilot **Context Window** | Latest prompt plus completion tokens, divided by the selected model's full context window. The denominator can change immediately when you switch models. |
 | Dashboard **local tokens** | Persisted, conservative reconciliation of metric and span growth since the displayed meter start, plus explicitly labeled manual reports. Not a selected-chat total or billing-period total. |
 | **Session input/output · traces** | Sum of unique model-call spans retained for that session. Repeated context counts on every call, including cached input; it is not context occupancy. |
@@ -76,7 +80,8 @@ These readings have different units and scopes, even when viewed during one chat
 Use **Iceberg: Select Comparison Session** (or **Select session…** in the
 dashboard) to pin the session you are examining in Copilot. Sessions are listed
 by the name you gave them in VS Code, with model, `repository@branch` (when its
-agent spans report one) and the session ID as searchable detail;
+agent spans report one), user (when they report `user.name`) and the session ID
+as searchable detail;
 unnamed sessions fall back to a shortened ID. The default is the latest observed
 session, **not automatically the active chat**. A missing pinned session stays
 missing rather than switching to somebody else's reading. When no session is
@@ -110,7 +115,7 @@ Copilot's current implementation is under `extensions/copilot` in that repositor
 | Proposed/private APIs | `ChatResponseStream.usage`, model pricing, active chat session and debug APIs exist, but are not stable third-party extension contracts. This extension does not enable proposed APIs. |
 | Account status popup | Reads VS Code's internal entitlement/quota service. No supported third-party live quota API was found; account usage, allowance and reset date remain **Not read**. |
 | Local transcript storage | Internal/version-dependent mutation log. Supplies session IDs and reported credits. `promptTokens` is latest context, not cumulative consumed input. |
-| Copilot OTel | Metrics, spans and events. Current spans carry tokens, session identity, timing and optional nano-AIU credits; older exporters may emit empty `{}` spans. |
+| Copilot OTel | Metrics, spans and events. Current spans carry tokens, session identity, timing and optional nano-AIU credits; older exporters may emit empty `{}` spans. Since VS Code 1.140, opt-in [identity capture](https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry) adds `user.name` to agent spans and `process.user.name`/`host.name` to resources. |
 
 Source details: [native context widget](https://github.com/microsoft/vscode/blob/13de4561e248a9e0c4e1f832d5cf1793e6500a3c/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatContextUsageWidget.ts),
 [session cost model](https://github.com/microsoft/vscode/blob/13de4561e248a9e0c4e1f832d5cf1793e6500a3c/src/vs/workbench/contrib/chat/common/model/chatModel.ts),
@@ -125,7 +130,7 @@ then send a Copilot Chat request**. Allow an export interval for data to arrive.
 
 | Source | Provides | Exporter impact |
 | --- | --- | --- |
-| Local trace store (`agent-traces.db`) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
+| Local trace store (`agent-traces.db`) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch and user, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
 | JSON-lines file feed | Token metrics, quality signals and (in current Copilot) serialized spans with session details. | **Replaces the OTLP exporter.** The command warns first. |
 | Both | All available signals. | Same replacement caveat as the file feed. |
 
@@ -135,6 +140,24 @@ requests: accept/reject an edit or rate a response. A connected but empty Qualit
 section [waits for those signals](docs/media/dashboard-waiting.png); it does not
 require reconnecting.
 
+### Attributing usage to a user
+
+Copilot Chat can add your identity to its telemetry
+(`github.copilot.chat.otel.captureIdentity`, VS Code 1.140+). It is off by
+default, so after you pick a source, Connect asks separately whether to turn it
+on. When on, agent invocation spans carry `user.name` (your GitHub account) and
+telemetry resources carry `process.user.name` and `host.name`. Bear in Mind keys
+user attribution on `user.name`: model calls inherit it from the agent spans in
+their session or parent session, like the repository. The trace store keeps span
+attributes only, so the OS user and host name are not available from it.
+
+Identity capture also reaches an OTLP collector that stays connected, and the
+prompt says so. An organisation policy (`CopilotOtelCaptureIdentity`) overrides
+the setting and `COPILOT_OTEL_CAPTURE_IDENTITY`, and identity currently covers
+only the Local chat harness, not the Copilot harness. **Iceberg: Telemetry
+Diagnostics** shows whether capture is requested and how many retained calls
+are attributed to a user.
+
 ### Disconnecting and restoring defaults
 
 To undo the connection, choose **Restore defaults and disconnect…**, the last
@@ -142,8 +165,9 @@ option in the connect picker, the button at the foot of the dashboard, the
 dashboard's **…** menu, or run **Iceberg: Restore Defaults and Disconnect…**.
 A confirmation lists every change first. It then:
 
-- returns each Copilot Chat telemetry setting it changed to your previous user
-  value (or the default), leaving any you changed yourself afterwards alone;
+- returns each Copilot Chat telemetry setting it changed, including identity
+  capture, to your previous user value (or the default), leaving any you changed
+  yourself afterwards alone;
 - resets Bear in Mind's user settings, but not workspace settings;
 - deletes its meter history, session pin and its own storage folder, which holds
   the default feed file. The folder is kept while Copilot is still set to write
@@ -237,6 +261,9 @@ scale, status bar and bear name. Turning telemetry off does not erase counted us
 - **Quality is empty:** an active feed can have token data before any quality
   actions occur. Trace-store-only setups show tool success only; edit, survival
   and feedback signals need a file feed.
+- **No user breakdown:** turn on `github.copilot.chat.otel.captureIdentity`
+  (or reconnect and accept the identity prompt), reload, and send a request from
+  the Local harness. A policy can deny capture; diagnostics show what was observed.
 - **Collector stopped:** clear `github.copilot.chat.otel.outfile` to restore OTLP,
   or run **Iceberg: Restore Defaults and Disconnect…**; use the local trace store
   alongside it.

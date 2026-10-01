@@ -44,6 +44,7 @@ it('model spec: outcomes, gaps, tiers and sources are well formed', () => {
     'creditsToPrShare',
     'creditsToRepoShare',
     'creditCoverage',
+    'creditsToActorShare',
     'cacheReadRatio',
     'subAgentShare',
   ]);
@@ -155,6 +156,8 @@ it('session store: credit-weighted funnel stops where references stop', async (t
   assert.equal(store.metrics.creditsToPrShare, 7 / 9);
   assert.equal(store.metrics.subAgentShare, 1 / 9);
   assert.equal(store.metrics.cacheReadRatio, 900 / 2000);
+  assert.equal(store.metrics.creditsToActorShare, null, 'the session store records no user, so actor coverage is unmeasured');
+  assert.match(store.notes.join(' '), /No user identity is stored per session/);
   assert.deepEqual(
     store.breakdowns.repository.map((r) => r.key),
     ['o/a', 'o/b', '(none)'],
@@ -235,6 +238,10 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   );
   attr.run('agent', 'github.copilot.git.repository', 'https://github.com/o/r.git');
   attr.run('agent', 'github.copilot.git.branch', 'main');
+  attr.run('agent', 'user.name', 'octocat');
+  // Identity only, no git context: it attributes the title call's trace without changing how repository links.
+  span.run('agent-id', 't3', at, at + 100, 0, 'invoke_agent', 'GitHub Copilot Chat', null, null, null, null, null, null, null);
+  attr.run('agent-id', 'user.name', 'hubot');
   span.run('c1', 't1', at + 10, at + 900, 0, 'chat', 'panel/editAgent', 'conv-1', 'm1', 1000, 50, 600, null, 'chat-1');
   attr.run('c1', 'copilot_chat.copilot_usage_nano_aiu', String(3 * NANO));
   attr.run('c1', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
@@ -322,6 +329,14 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
     none: 2,
   });
   assert.equal(traces.breakdowns.repository[0].key, 'o/r');
+  assert.deepEqual(
+    Object.fromEntries(traces.breakdowns.user.map((r) => [r.key, [r.calls, r.credits]])),
+    { octocat: [2, 4], hubot: [1, 0], '(none)': [1, 0] },
+    'the sub-agent call inherits its parent session user; the title call its trace user',
+  );
+  assert.equal(traces.metrics.creditsToActorShare, 1);
+  assert.match(traces.notes.join(' '), /User comes from user\.name/);
+  assert.doesNotMatch(traces.notes.join(' '), /captureIdentity/);
   assert.equal(traces.breakdowns.reasoningEffort.find((r) => r.key === 'high').credits, 3);
   assert.deepEqual(
     traces.tools,
@@ -546,6 +561,9 @@ it('VS Code traces: the newest agent span wins, and canonical git keys beat lega
     traces.breakdowns.repository.map((r) => r.key),
     ['o/new'],
   );
+  assert.equal(traces.metrics.creditsToActorShare, 0, 'without identity capture no credits reach a user');
+  assert.deepEqual(traces.breakdowns.user, [{ key: '(none)', calls: 1, credits: 2 }]);
+  assert.match(traces.notes.join(' '), /github\.copilot\.chat\.otel\.captureIdentity/);
 
   assert.equal(nanoAiu('12'), 12);
   assert.equal(nanoAiu(0), 0);

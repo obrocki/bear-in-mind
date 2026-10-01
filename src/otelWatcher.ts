@@ -34,7 +34,9 @@ const NUMERIC_SPAN_KEYS = [
 const TEXT_SPAN_KEYS = [
   'copilot_chat.parent_chat_session_id', 'copilot_chat.debug_log_label',
   'github.copilot.git.repository', 'github.copilot.git.branch',
-  'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name'
+  'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name',
+  // Agent invocation spans, only when Copilot's identity capture is on.
+  'user.name'
 ];
 /** Request-option blobs larger than this are skipped, matching the file-span path. */
 const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;
@@ -798,6 +800,11 @@ export class OtelWatcher implements vscode.Disposable {
       process.env.COPILOT_OTEL_ENABLED === 'true' || !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     const endpoint = (this.copilotConfig.get<string>('otlpEndpoint', '') || '').trim();
     const exporterType = (this.copilotConfig.get<string>('exporterType', '') || '').trim();
+    // Copilot gives the environment variable precedence over the user setting.
+    const identityEnv = (process.env.COPILOT_OTEL_CAPTURE_IDENTITY ?? '').trim().toLowerCase();
+    const identityCapture = identityEnv
+      ? identityEnv === 'true' || identityEnv === '1'
+      : this.copilotConfig.get<boolean>('captureIdentity', false) === true;
 
     const notes = [...this.notes];
     if (!copilotEnabled) {
@@ -826,6 +833,7 @@ export class OtelWatcher implements vscode.Disposable {
       // webview and written to diagnostics, and an OTLP URL can carry a token
       // in its userinfo or query string.
       otlpEndpoint: endpoint ? redactUrl(endpoint) : undefined,
+      identityCapture,
       lastRecordAtMs: Math.max(this.rollup.stats.lastRecordAtMs, ...this.spans.sessions.map((s) => s.endedAt), 0),
       records: {
         metrics: this.rollup.stats.metrics,

@@ -213,6 +213,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
           description: [
             session.trace?.model ?? session.transcript?.model ?? 'unknown model',
             session.work,
+            session.trace?.user ? `by ${session.trace.user}` : undefined,
             new Date(session.updatedAt).toLocaleString()
           ].filter(Boolean).join(' · '),
           detail: session.sessionId,
@@ -223,7 +224,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         title: 'Session to compare with Copilot',
         matchOnDescription: true,
         matchOnDetail: true,
-        placeHolder: 'Pick a session by name or repository, or follow the most recently observed session'
+        placeHolder: 'Pick a session by name, repository or user, or follow the most recently observed session'
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
@@ -351,7 +352,38 @@ async function connectTelemetry(
     }
   }
 
+  // Identity is opt-in upstream and reaches every exporter, so it is asked for
+  // separately and only offered where this Copilot Chat build has the setting.
+  let captureIdentity = false;
+  if (config.inspect('captureIdentity')?.defaultValue !== undefined && config.get<boolean>('captureIdentity') !== true) {
+    const attribute = 'Attribute to My Account';
+    const skip = 'Not Now';
+    const answer = await vscode.window.showInformationMessage(
+      'Attribute Copilot usage to your GitHub account?',
+      {
+        modal: true,
+        detail:
+          'Turns on github.copilot.chat.otel.captureIdentity (VS Code 1.140+). Agent spans then carry user.name, ' +
+          'your GitHub account, and telemetry resources carry process.user.name and host.name. Bear in Mind ' +
+          'groups model-call credits by user and shows it per session; it stays on this machine. ' +
+          (collectorInUse && picked.id === 'sqlite'
+            ? `Your OTLP collector (${endpointLabel}) receives these attributes too. `
+            : '') +
+          'An organization policy can still deny identity capture. Restore Defaults puts your previous value back.'
+      },
+      attribute,
+      skip
+    );
+    if (answer === undefined) {
+      return;
+    }
+    captureIdentity = answer === attribute;
+  }
+
   const wanted: Array<[string, unknown]> = [['enabled', true]];
+  if (captureIdentity) {
+    wanted.push(['captureIdentity', true]);
+  }
   if (picked.id === 'sqlite' || picked.id === 'both') {
     wanted.push([traceSetting, true]);
   }
@@ -702,11 +734,18 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
     output.appendLine(`  trace call credits  ${session.trace?.credits ?? 'not reported'} across ${session.trace?.creditCalls ?? 0}/${session.trace?.llmCalls ?? 0} calls`);
     output.appendLine(`  trace session tokens ${session.trace?.inputTokens ?? 'unknown'} input / ${session.trace?.outputTokens ?? 'unknown'} output`);
     output.appendLine(`  session work        ${session.work ?? 'not reported'} (agent span git attributes)`);
+    output.appendLine(`  session user        ${session.trace?.user ?? 'not reported'} (user.name on agent spans)`);
   }
   const spans = otel.spanDigest;
   output.appendLine(
     `  retained trace calls ${spans.creditCalls}/${spans.chatCalls} reported ${spans.credits} credits; ` +
     `${spans.sessionlessCalls} calls without a session ID; ${spans.toolFailures}/${spans.toolStatusCalls} tool spans failed`
+  );
+  const userCalls = spans.byUser.reduce((sum, row) => sum + (row.key === null ? 0 : row.calls), 0);
+  output.appendLine(
+    `  identity capture    ${feed.identityCapture ? 'requested' : 'off'} · ${userCalls}/${spans.chatCalls} retained calls ` +
+    `attributed to a user.name across ${spans.byUser.filter((row) => row.key !== null).length} user(s)` +
+    (feed.identityCapture ? '' : ' — turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+) to attribute calls')
   );
   output.appendLine(`  ice gauge           ${usage.basis}: ${iceReadout(usage)}`);
   if (usage.context) {

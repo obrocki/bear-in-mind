@@ -207,6 +207,7 @@ function createTracesStore(file, now) {
     addAttr(id, 'github.copilot.git.repository', repo);
     if (branch) addAttr(id, 'github.copilot.git.branch', branch);
     if (fields.commit) addAttr(id, 'github.copilot.git.commit_sha', fields.commit);
+    if (fields.user) addAttr(id, 'user.name', fields.user);
   }
   function addChat(id, trace, at, fields) {
     addSpan(id, trace, 'chat', at, {
@@ -232,6 +233,7 @@ function createTracesStore(file, now) {
   addAgent('agent-web', 'trace-web', ms(now, 6, 9), 'https://github.com/contoso/web-app.git', 'feature/checkout', {
     conversation: 'conv-web',
     chatSession: 'chat-web',
+    user: 'octocat',
   });
   addChat('chat-web-1', 'trace-web', ms(now, 6, 9, 5), {
     agent: 'panel/editAgent',
@@ -259,6 +261,7 @@ function createTracesStore(file, now) {
 
   addAgent('agent-api', 'trace-api', ms(now, 4, 10), 'contoso/api', 'fix/token-refresh', {
     conversation: 'conv-api',
+    user: 'octocat',
   });
   addChat('chat-api-1', 'trace-api', ms(now, 4, 10, 6), {
     agent: 'workspaceAgent',

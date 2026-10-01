@@ -16,8 +16,11 @@ From span metadata the dashboard also shows repository and branch names
 removed and local filesystem remotes dropped), Copilot caller names, tool names
 and span status, and a short
 reasoning-effort word taken from `copilot_chat.request.options`; the rest of that
-options blob is discarded. These are held in memory for the retained seven-day
-window and are not persisted.
+options blob is discarded. When Copilot's identity capture
+(`github.copilot.chat.otel.captureIdentity`) is on, it also reads `user.name`,
+your GitHub account, from agent spans to group credits by user and label
+sessions. These are held in memory for the retained seven-day window and are
+not persisted.
 
 Raw records may contain prompts, responses or tool content, especially with
 `captureContent` enabled. Reading/parsing JSON is not content isolation: records
@@ -31,7 +34,9 @@ chat request through VS Code's language-model API, like other chat participants.
 Usage ledgers, bounded overlap evidence and file cursors are saved in VS Code's
 local global state. **Connect Copilot Telemetry** also changes the selected Copilot
 settings, records their previous user values, and creates the chosen feed
-directory. It warns before replacing an OTLP exporter.
+directory. It warns before replacing an OTLP exporter, and turns on identity
+capture only if you accept a separate prompt, which notes when a connected OTLP
+collector would receive the identity too.
 
 Disable readers with `iceberg.trackCopilotChat: false` and
 `iceberg.otel.enabled: false`. This does not delete Copilot's existing files.

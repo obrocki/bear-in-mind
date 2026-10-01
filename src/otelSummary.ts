@@ -55,6 +55,8 @@ export interface SpanSession {
   /** From the session's agent spans (`github.copilot.git.*`), when reported. */
   repository?: string;
   branch?: string;
+  /** `user.name` from the session's agent spans, when Copilot's identity capture is on. */
+  user?: string;
 }
 
 /** Model calls and their reported credits under one grouping key. */
@@ -99,6 +101,8 @@ export interface SpanDigest {
   byEffort: CallTally[];
   /** By the repository of the call's session, or its parent session. */
   byRepository: CallTally[];
+  /** By `user.name` on the call, its session's agent spans, or its parent session's. */
+  byUser: CallTally[];
   /** Tool spans that reported a status, and how many of them failed. */
   toolStatusCalls: number;
   toolFailures: number;
@@ -141,6 +145,7 @@ export function emptySpanDigest(): SpanDigest {
     byCaller: [],
     byEffort: [],
     byRepository: [],
+    byUser: [],
     toolStatusCalls: 0,
     toolFailures: 0
   };
@@ -165,6 +170,12 @@ export interface FeedHealth {
   sqliteActive: boolean;
   /** Set when an OTLP endpoint is configured that `outfile` would displace. */
   otlpEndpoint?: string;
+  /**
+   * Copilot's `captureIdentity` setting or `COPILOT_OTEL_CAPTURE_IDENTITY` asks
+   * for `user.name`. A managed policy can still deny it, so observed agent
+   * spans remain the evidence.
+   */
+  identityCapture?: boolean;
   lastRecordAtMs: number;
   records: { metrics: number; logs: number; spans: number; unknown: number; malformed: number };
   notes: string[];
@@ -231,6 +242,9 @@ export interface TraceCredits {
   sessionlessCredits: number;
   byModel: CreditRow[];
   byRepository: CreditRow[];
+  /** Model calls attributed to a `user.name`; zero when identity capture is off or denied. */
+  userCalls: number;
+  byUser: CreditRow[];
   byCaller: CreditRow[];
   byEffort: CreditRow[];
 }
@@ -547,6 +561,8 @@ export function buildTraceCredits(spans: SpanDigest): TraceCredits {
     sessionlessCredits: spans.sessionlessCredits ?? 0,
     byModel: creditRows(spans.byModel, 'unknown model'),
     byRepository: creditRows(spans.byRepository, 'no repository'),
+    userCalls: (spans.byUser ?? []).reduce((sum, t) => sum + (t.key === null ? 0 : t.calls), 0),
+    byUser: creditRows(spans.byUser, 'no user identity'),
     byCaller: creditRows(spans.byCaller, 'unnamed caller'),
     byEffort: creditRows(spans.byEffort, 'not reported')
   };

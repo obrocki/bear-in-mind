@@ -23,7 +23,7 @@ synthetic session and trace stores, so they never read live Copilot databases.
 | Surfaces | Concept × surface matrix with native / partial / missing / unverified fields |
 | Data model | Entities, relationships, attribution tiers and accounting invariants |
 | Gaps | Gaps by impact, verification status and prior art |
-| Live coverage | Per-source funnel, breakdowns by model, agent, reasoning effort, repository and tools |
+| Live coverage | Per-source funnel, breakdowns by model, agent, reasoning effort, repository, user and tools |
 | Research | The rendered research document and sources |
 
 ![AI attribution canvas surfaces tab showing the concept by surface matrix](../../../docs/media/canvas-surfaces.png)
@@ -39,9 +39,24 @@ synthetic session and trace stores, so they never read live Copilot databases.
 
 Stores are opened read-only. If the file is locked, a temporary copy is read and
 then deleted. Only aggregates are produced (counts, token and credit sums, and
-model, agent, tool and repository names); prompt, response and tool content is
+model, agent, tool, repository and user names); prompt, response and tool content is
 never read. Nothing leaves the machine, and the two sources are shown side by
 side rather than summed.
+
+### User attribution
+
+VS Code 1.140 can add the signed-in GitHub account to Copilot telemetry as
+`user.name` on agent invocation spans
+([identity capture](https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry),
+`github.copilot.chat.otel.captureIdentity`, off by default). The VS Code source
+resolves each model call's user from its own `user.name`, else from the newest
+agent span in the same chat session, conversation, parent session or trace. It
+reports the share of credits attributed to a user (**Actor coverage**) and a
+**By user** breakdown. `process.user.name` and `host.name` are resource
+attributes, which `agent-traces.db` does not store. The CLI / app session store
+records no user, so its actor coverage is not measured. This user name is the
+join key to organisation data keyed by `user_login`; pseudonymise it before it
+leaves the machine.
 
 ![AI attribution canvas live coverage tab showing synthetic store funnels and breakdowns](../../../docs/media/canvas-coverage.png)
 

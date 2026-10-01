@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { it } = require('node:test');
-const { digestSpans, fileUsageSpan, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
+const { digestSpans, fileUsageSpan, identityName, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
 const { buildCost, buildQuality, buildSpeed, buildTraceCredits, selectedSession, sessionComparisons } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 const { OtelRollup, classify } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelParse.js'));
 const start = Date.UTC(2026, 8, 24, 12);
@@ -153,6 +153,46 @@ it('groups model-call credits by model, caller, reasoning effort and inherited r
   assert.deepEqual(trace.byModel.map((r) => [r.label, r.calls, r.creditCalls]), [['resolved-model', 2, 2], ['mini', 2, 1]]);
   assert.deepEqual(trace.byEffort.map((r) => r.label), ['high', 'max', 'not reported']);
   assert.deepEqual(trace.byCaller.map((r) => r.label), ['panel/editAgent', 'executionSubagentTool', 'title', 'unnamed caller']);
+});
+
+it('attributes model-call credits to user.name inherited from agent spans, never to the device', () => {
+  const noSession = { 'copilot_chat.chat_session_id': undefined, 'gen_ai.conversation.id': undefined };
+  const digest = digestSpans([
+    span('agent', 'invoke_agent', { 'user.name': ' octocat ' }),
+    span('a', 'chat', {}, 10),
+    span('sub', 'chat', { ...noSession, 'copilot_chat.parent_chat_session_id': 'vscode-session' }, 20),
+    span('other', 'invoke_agent', { 'copilot_chat.chat_session_id': 'other-session', 'user.name': 'x'.repeat(200) }, 30),
+    span('other-call', 'chat', {
+      'copilot_chat.chat_session_id': 'other-session', 'process.user.name': 'alice', 'host.name': 'laptop'
+    }, 40),
+    span('title', 'chat', { ...noSession, 'copilot_chat.copilot_usage_nano_aiu': 0 }, 50)
+  ]);
+  const sessions = Object.fromEntries(digest.sessions.map((s) => [s.sessionId, s]));
+  assert.equal(sessions['vscode-session'].user, 'octocat');
+  assert.equal(sessions['other-session'].user, undefined, 'an oversized identity is dropped, and the device is not an account');
+
+  const trace = buildTraceCredits(digest);
+  assert.equal(trace.userCalls, 2);
+  assert.deepEqual(trace.byUser.map((r) => [r.label, r.calls, r.credits]), [['octocat', 2, 3], ['no user identity', 2, 1.5]]);
+  assert.doesNotMatch(JSON.stringify(trace), /alice|laptop/);
+  assert.equal(buildTraceCredits(digestSpans([span('a', 'chat')])).userCalls, 0);
+
+  assert.equal(identityName('bad\nname'), undefined);
+  assert.equal(identityName(42), undefined);
+  assert.equal(identityName('  '), undefined);
+  assert.equal(identityName('mona_corp'), 'mona_corp');
+});
+
+it('reads user.name from file spans, falling back to an explicit resource attribute', () => {
+  const record = {
+    spanId: 'f', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0], ended: true,
+    resource: { _rawAttributes: [['user.name', 'resource-user'], ['process.user.name', 'alice'], ['host.name', 'laptop']] },
+    attributes: { 'gen_ai.operation.name': 'invoke_agent', 'copilot_chat.chat_session_id': 's' }
+  };
+  assert.equal(fileUsageSpan(record).user, 'resource-user');
+  assert.equal(fileUsageSpan({ ...record, attributes: { ...record.attributes, 'user.name': 'span-user' } }).user, 'span-user');
+  assert.equal(fileUsageSpan({ ...record, resource: { attributes: { 'host.name': 'laptop' } } }).user, undefined);
+  assert.doesNotMatch(JSON.stringify(fileUsageSpan(record)), /alice|laptop/);
 });
 
 it('folds long credit breakdowns into one remainder row', () => {

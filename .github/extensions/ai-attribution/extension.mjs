@@ -55,9 +55,14 @@ function summarize(coverage) {
 
 function statusLine(coverage) {
   const window = coverage.window.days ? `${coverage.window.days}-day window` : 'All history';
+  const pct = (share) => Math.round(share * 100);
   const parts = coverage.sources
     .filter((s) => s.status === 'ok' && s.metrics.creditsToRepoShare !== null)
-    .map((s) => `${s.id === 'traces' ? 'VS Code' : 'CLI/app'} ${Math.round(s.metrics.creditsToRepoShare * 100)}% repo`);
+    .map(
+      (s) =>
+        `${s.id === 'traces' ? 'VS Code' : 'CLI/app'} ${pct(s.metrics.creditsToRepoShare)}% repo` +
+        (s.metrics.creditsToActorShare != null ? `, ${pct(s.metrics.creditsToActorShare)}% user` : ''),
+    );
   return [window, ...parts].join(' · ');
 }
 

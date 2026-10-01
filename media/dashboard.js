@@ -408,6 +408,7 @@
     const groups = [
       ['By model', trace.byModel],
       ['By repository', trace.byRepository],
+      ['By user', trace.userCalls > 0 ? trace.byUser : null],
       ['By caller', trace.byCaller],
       ['By reasoning effort', trace.byEffort]
     ];
@@ -427,6 +428,11 @@
       '. A diagnostic: never added to the meter or to transcript Session Cost. ×N is model calls.'));
     block.append(el('p', 'viz-caption',
       'Repository comes from agent spans (github.copilot.git.*) in the same session or its parent session.'));
+    block.append(el('p', 'viz-caption', trace.userCalls > 0
+      ? 'User is the GitHub account in user.name on those agent spans (Copilot OTel identity capture). ' +
+        count(trace.userCalls) + ' / ' + count(trace.calls) + ' calls are attributed to a user.'
+      : 'No user.name was observed. Turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) ' +
+        'to attribute model calls to a GitHub account.'));
     if (trace.sessionlessCalls > 0) {
       const reported = trace.sessionlessCreditCalls || 0;
       block.append(el('p', 'viz-caption',
@@ -513,6 +519,7 @@
       (session.pinned ? 'Pinned: ' : 'Latest observed: ') + sessionLabel(session) +
       (session.name ? ' (' + shortSessionId(session.sessionId) + ')' : '') +
       (session.work ? ' · ' + session.work : '') +
+      (trace && trace.user ? ' · by ' + trace.user : '') +
       '. Not automatically the active VS Code chat.'));
     block.append(stats([
       { label: 'Session Cost · transcript', value: transcript && transcript.credits !== undefined ? credits(transcript.credits) : '—', qualifier: 'credits' },
