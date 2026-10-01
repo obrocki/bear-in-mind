@@ -11,7 +11,9 @@
   diagnostics. Calls without a user stay visible as *no user identity*.
 - **Connect Copilot Telemetry** asks separately whether to turn on
   `github.copilot.chat.otel.captureIdentity`, noting when a connected OTLP
-  collector would receive the identity too. **Restore Defaults** puts the
+  collector would receive the identity too. It writes that setting last and
+  skips it if replacing a collector failed, and does not offer it when
+  `COPILOT_OTEL_CAPTURE_IDENTITY` overrides it. **Restore Defaults** puts the
   previous value back.
 - Telemetry diagnostics report whether identity capture is requested and how
   many retained calls are attributed to a user.

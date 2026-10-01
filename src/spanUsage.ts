@@ -209,7 +209,8 @@ function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | und
   if (!entries?.length) {
     return undefined;
   }
-  let match = entries[0];
+  // A call that started before every identity-bearing agent span stays unattributed rather than taking a later account.
+  let match: ActorIdentity | undefined;
   for (const entry of entries) {
     if (entry.at <= at) {
       match = entry;
@@ -217,7 +218,7 @@ function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | und
       break;
     }
   }
-  return match.user;
+  return match?.user;
 }
 
 function distinctActorUsers(entries: ActorIdentity[]): string[] {

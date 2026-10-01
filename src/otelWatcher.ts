@@ -801,10 +801,8 @@ export class OtelWatcher implements vscode.Disposable {
     const endpoint = (this.copilotConfig.get<string>('otlpEndpoint', '') || '').trim();
     const exporterType = (this.copilotConfig.get<string>('exporterType', '') || '').trim();
     // Copilot gives the environment variable precedence over the user setting.
-    const identityEnv = (process.env.COPILOT_OTEL_CAPTURE_IDENTITY ?? '').trim().toLowerCase();
-    const identityCapture = identityEnv
-      ? identityEnv === 'true' || identityEnv === '1'
-      : this.copilotConfig.get<boolean>('captureIdentity', false) === true;
+    const identityCapture = identityCaptureOverride() ??
+      this.copilotConfig.get<boolean>('captureIdentity', false) === true;
 
     const notes = [...this.notes];
     if (!copilotEnabled) {
@@ -888,6 +886,15 @@ export class OtelWatcher implements vscode.Disposable {
 function numeric(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * `COPILOT_OTEL_CAPTURE_IDENTITY`, parsed as Copilot Chat does: unset defers to
+ * the setting, and any other value captures identity only when it is `true` or `1`.
+ */
+export function identityCaptureOverride(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const value = env.COPILOT_OTEL_CAPTURE_IDENTITY;
+  return value === undefined ? undefined : value === 'true' || value === '1';
 }
 
 /**

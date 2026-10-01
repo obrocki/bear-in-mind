@@ -6,7 +6,7 @@ import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
-import { OtelWatcher } from './otelWatcher';
+import { identityCaptureOverride, OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import {
   BACKUP_KEY,
@@ -354,8 +354,16 @@ async function connectTelemetry(
 
   // Identity is opt-in upstream and reaches every exporter, so it is asked for
   // separately and only offered where this Copilot Chat build has the setting.
+  // COPILOT_OTEL_CAPTURE_IDENTITY outranks the setting, so asking would offer a
+  // choice that has no effect.
   let captureIdentity = false;
-  if (config.inspect('captureIdentity')?.defaultValue !== undefined && config.get<boolean>('captureIdentity') !== true) {
+  const identityOverride = identityCaptureOverride();
+  if (identityOverride !== undefined) {
+    output.appendLine(
+      `[iceberg] COPILOT_OTEL_CAPTURE_IDENTITY=${process.env.COPILOT_OTEL_CAPTURE_IDENTITY} turns identity capture ` +
+        `${identityOverride ? 'on' : 'off'} regardless of ${OTEL_SECTION}.captureIdentity, so that setting was not offered or changed.`
+    );
+  } else if (config.inspect('captureIdentity')?.defaultValue !== undefined && config.get<boolean>('captureIdentity') !== true) {
     const attribute = 'Attribute to My Account';
     const skip = 'Not Now';
     const answer = await vscode.window.showInformationMessage(
@@ -381,9 +389,6 @@ async function connectTelemetry(
   }
 
   const wanted: Array<[string, unknown]> = [['enabled', true]];
-  if (captureIdentity) {
-    wanted.push(['captureIdentity', true]);
-  }
   if (picked.id === 'sqlite' || picked.id === 'both') {
     wanted.push([traceSetting, true]);
   }
@@ -416,6 +421,10 @@ async function connectTelemetry(
       return;
     }
     wanted.push(['outfile', feed], ['exporterType', 'file']);
+  }
+  // Last, so it is written only after the exporter writes it depends on.
+  if (captureIdentity) {
+    wanted.push(['captureIdentity', true]);
   }
 
   const applied: string[] = [];
@@ -454,6 +463,17 @@ async function connectTelemetry(
     }).filter((action) => action.kind === 'remove').map((action) => action.key)
   );
   for (const [key, value] of wanted) {
+    // The identity prompt only disclosed a kept collector. If replacing it
+    // failed, that collector would receive the identity without the user being told.
+    if (key === 'captureIdentity' && collectorInUse && picked.id !== 'sqlite' &&
+        (failed.includes('outfile') || failed.includes('exporterType'))) {
+      failed.push(key);
+      output.appendLine(
+        `[iceberg] ${OTEL_SECTION}.${key} was not turned on: the OTLP exporter could not be replaced, ` +
+          `so ${endpointLabel} would have received your identity.`
+      );
+      continue;
+    }
     // A setting this build of Copilot Chat does not register cannot be written —
     // `update` rejects. Writing them one at a time, and checking first, means one
     // unknown key cannot abort the rest of the setup.

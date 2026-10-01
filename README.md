@@ -149,13 +149,15 @@ default, so after you pick a source, Connect asks separately whether to turn it
 on. When on, agent invocation spans carry `user.name` (your GitHub account) and
 telemetry resources carry `process.user.name` and `host.name`. Bear in Mind keys
 user attribution on `user.name`: model calls inherit it from the latest agent
-span at or before the call in their session or parent session. The trace store
-keeps span attributes only, so the OS user and host name are not available from
-it.
+span at or before the call in their session or parent session; calls before any
+such span stay unattributed. The trace store keeps span attributes only, so the
+OS user and host name are not available from it.
 
 Identity capture also reaches an OTLP collector that stays connected, and the
-prompt says so. An organisation policy (`CopilotOtelCaptureIdentity`) overrides
-the setting and `COPILOT_OTEL_CAPTURE_IDENTITY`, and identity currently covers
+prompt says so. If replacing a collector fails, Connect leaves identity capture
+off. `COPILOT_OTEL_CAPTURE_IDENTITY` outranks the setting, so when it is set
+Connect does not offer the choice. An organisation policy
+(`CopilotOtelCaptureIdentity`) overrides both, and identity currently covers
 only the Local chat harness, not the Copilot harness. **Iceberg: Telemetry
 Diagnostics** shows whether capture is requested and how many retained calls
 are attributed to a user.

@@ -481,7 +481,8 @@ function agentLink(maps, chat, parent) {
 
 function identityAt(entries, at) {
   if (!entries?.length) return null;
-  let match = entries[0];
+  // A chat that started before every identity-bearing agent span stays unattributed rather than taking a later account.
+  let match = null;
   for (const entry of entries) {
     if (entry.at <= at) match = entry;
     else break;

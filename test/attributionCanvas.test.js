@@ -367,6 +367,9 @@ it('VS Code traces: user attribution follows account switches within a session',
   `);
   const span = db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?)');
   const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  // Shares every key with the agent spans but starts before all of them.
+  span.run('early', 'trace-1', now - 6000, 'chat', 'chat-1', 'conv-1');
+  attr.run('early', 'copilot_chat.copilot_usage_nano_aiu', String(0.5 * NANO));
   span.run('agent-1', 'trace-1', now - 5000, 'invoke_agent', 'chat-1', 'conv-1');
   attr.run('agent-1', 'user.name', 'mona');
   span.run('before-switch', 'trace-1', now - 4900, 'chat', 'chat-1', 'conv-1');
@@ -384,11 +387,12 @@ it('VS Code traces: user attribution follows account switches within a session',
     tracesDbPath: file,
   });
   const traces = coverage.sources.find((s) => s.id === 'traces');
-  assert.equal(traces.metrics.creditsToActorShare, 1);
+  assert.equal(traces.metrics.creditsToActorShare, 3 / 3.5);
   assert.deepEqual(Object.fromEntries(traces.breakdowns.user.map((r) => [r.key, [r.calls, r.credits]])), {
     hubot: [1, 2],
     mona: [1, 1],
-  });
+    '(none)': [1, 0.5],
+  }, 'a chat before every identity-bearing agent span is not given a later account');
 });
 
 it('discovers the most recently written agent-traces.db', async (t) => {

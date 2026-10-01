@@ -186,6 +186,7 @@ it('attributes model-call credits to user.name inherited from agent spans, never
 
 it('keeps model-call user attribution time-ordered across account switches', () => {
   const digest = digestSpans([
+    span('early', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 500_000_000 }, -500),
     span('agent-1', 'invoke_agent', { 'user.name': 'mona' }),
     span('before-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 1_000_000_000 }, 10),
     span('agent-2', 'invoke_agent', { 'user.name': 'hubot' }, 2000),
@@ -198,8 +199,9 @@ it('keeps model-call user attribution time-ordered across account switches', () 
   assert.equal(trace.userCalls, 2);
   assert.deepEqual(Object.fromEntries(trace.byUser.map((r) => [r.label, [r.calls, r.credits]])), {
     hubot: [1, 2],
-    mona: [1, 1]
-  });
+    mona: [1, 1],
+    'no user identity': [1, 0.5]
+  }, 'a call before every identity-bearing agent span is not given a later account');
 });
 
 it('reads user.name from file spans, falling back to an explicit resource attribute', () => {

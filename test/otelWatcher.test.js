@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { it } = require('node:test');
-const { OtelWatcher } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelWatcher.js'));
+const { OtelWatcher, identityCaptureOverride } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelWatcher.js'));
 const { buildPeriod, periodStart } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 
 const record = fs.readFileSync(path.join(__dirname, 'fixtures', 'otel-feed.jsonl'), 'utf8')
@@ -69,6 +69,16 @@ it('reports whether identity capture is requested, with the environment variable
   globalThis.__BEAR_SETTINGS__['github.copilot.chat.otel.captureIdentity'] = false;
   process.env.COPILOT_OTEL_CAPTURE_IDENTITY = 'true';
   assert.equal(watcher.health().identityCapture, true);
+  process.env.COPILOT_OTEL_CAPTURE_IDENTITY = 'TRUE';
+  assert.equal(watcher.health().identityCapture, false, 'parsed exactly as Copilot Chat does');
+});
+
+it('parses the identity-capture environment override exactly as Copilot Chat does', () => {
+  assert.equal(identityCaptureOverride({}), undefined, 'unset defers to the setting');
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: 'true' }), true);
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: '1' }), true);
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: '' }), false, 'set but empty is off, not unset');
+  assert.equal(identityCaptureOverride({ COPILOT_OTEL_CAPTURE_IDENTITY: 'yes' }), false);
 });
 
 it('does not carry a missing-feed flag onto a different existing feed', (t) => {
