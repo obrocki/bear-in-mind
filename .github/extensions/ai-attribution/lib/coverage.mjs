@@ -479,6 +479,36 @@ function agentLink(maps, chat, parent) {
   return { ctx: null, link: 'none' };
 }
 
+function identityAt(entries, at) {
+  if (!entries?.length) return null;
+  let match = entries[0];
+  for (const entry of entries) {
+    if (entry.at <= at) match = entry;
+    else break;
+  }
+  return match;
+}
+
+function agentIdentityLink(maps, chat, parent, at) {
+  if (present(chat.chat_session_id)) {
+    const ctx = identityAt(maps.session.get(String(chat.chat_session_id)), at);
+    if (ctx) return ctx;
+  }
+  if (present(chat.conversation_id)) {
+    const ctx = identityAt(maps.conversation.get(String(chat.conversation_id)), at);
+    if (ctx) return ctx;
+  }
+  if (present(parent)) {
+    const ctx = identityAt(maps.session.get(String(parent)), at);
+    if (ctx) return ctx;
+  }
+  if (present(chat.trace_id)) {
+    const ctx = identityAt(maps.trace.get(String(chat.trace_id)), at);
+    if (ctx) return ctx;
+  }
+  return null;
+}
+
 export function reasoningEffortFromOptions(raw) {
   if (!present(raw) || String(raw).length > MAX_OPTIONS_CHARS) return null;
   try {
@@ -556,22 +586,34 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       if (present(row.key) && present(row.value)) agent.values[row.key] = String(row.value);
       agents.set(String(row.span_id), agent);
     }
-    // The newest agent span per session, conversation or trace supplies its context.
+    // The newest agent span per session, conversation or trace supplies git context.
     const remember = (map, key, ctx, at) => {
       if (!present(key)) return;
       const known = map.get(String(key));
       if (!known || known.at <= at) map.set(String(key), { ...ctx, at });
+    };
+    const rememberTimed = (map, key, ctx, at) => {
+      if (!present(key)) return;
+      const k = String(key);
+      const entries = map.get(k) ?? [];
+      entries.push({ ...ctx, at });
+      map.set(k, entries);
     };
     const rememberAll = (maps, row, ctx, at) => {
       remember(maps.session, row.chat_session_id, ctx, at);
       remember(maps.conversation, row.conversation_id, ctx, at);
       remember(maps.trace, row.trace_id, ctx, at);
     };
+    const rememberAllTimed = (maps, row, ctx, at) => {
+      rememberTimed(maps.session, row.chat_session_id, ctx, at);
+      rememberTimed(maps.conversation, row.conversation_id, ctx, at);
+      rememberTimed(maps.trace, row.trace_id, ctx, at);
+    };
     for (const agent of agents.values()) {
       const pick = (keys) => keys.map((key) => agent.values[key]).find(present) ?? null;
       const at = num(agent.row.start_time_ms);
       const user = identityName(agent.values[IDENTITY_KEY]);
-      if (user) rememberAll(agentIdentity, agent.row, { user }, at);
+      if (user) rememberAllTimed(agentIdentity, agent.row, { user }, at);
       const ctx = {
         repository: normalizeRepository(pick(GIT_KEYS.repository)),
         branch: pick(GIT_KEYS.branch),
@@ -579,6 +621,9 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       };
       if (!ctx.repository && !ctx.branch && !ctx.commit) continue;
       rememberAll(agentContext, agent.row, ctx, at);
+    }
+    for (const map of Object.values(agentIdentity)) {
+      for (const entries of map.values()) entries.sort((a, b) => a.at - b.at);
     }
   }
 
@@ -630,7 +675,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
         : null;
     const parent = attrs['copilot_chat.parent_chat_session_id'];
     const { ctx, link } = agentLink(agentContext, chat, parent);
-    const user = identityName(attrs[IDENTITY_KEY]) ?? agentLink(agentIdentity, chat, parent).ctx?.user ?? null;
+    const user = identityName(attrs[IDENTITY_KEY]) ?? agentIdentityLink(agentIdentity, chat, parent, num(chat.start_time_ms))?.user ?? null;
 
     const stageKey = sessionKey ?? (present(parent) ? String(parent) : null);
     // Every stage, including "observed", counts sessions by the same key so

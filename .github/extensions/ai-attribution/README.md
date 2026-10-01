@@ -49,14 +49,14 @@ VS Code 1.140 can add the signed-in GitHub account to Copilot telemetry as
 `user.name` on agent invocation spans
 ([identity capture](https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry),
 `github.copilot.chat.otel.captureIdentity`, off by default). The VS Code source
-resolves each model call's user from its own `user.name`, else from the newest
-agent span in the same chat session, conversation, parent session or trace. It
-reports the share of credits attributed to a user (**Actor coverage**) and a
-**By user** breakdown. `process.user.name` and `host.name` are resource
-attributes, which `agent-traces.db` does not store. The CLI / app session store
-records no user, so its actor coverage is not measured. This user name is the
-join key to organisation data keyed by `user_login`; pseudonymise it before it
-leaves the machine.
+resolves each model call's user from its own `user.name`, else from the latest
+agent span at or before the call in the same chat session, conversation, parent
+session or trace. It reports the share of credits attributed to a user
+(**Actor coverage**) and a **By user** breakdown. `process.user.name` and
+`host.name` are resource attributes, which `agent-traces.db` does not store.
+The CLI / app session store records no user, so its actor coverage is not
+measured. This user name is the join key to organisation data keyed by
+`user_login`; pseudonymise it before it leaves the machine.
 
 ![AI attribution canvas live coverage tab showing synthetic store funnels and breakdowns](../../../docs/media/canvas-coverage.png)
 

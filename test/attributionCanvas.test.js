@@ -353,6 +353,44 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   assert.equal(reasoningEffortFromOptions(JSON.stringify({ pad: 'x'.repeat(70000), reasoning_effort: 'low' })), null);
 });
 
+it('VS Code traces: user attribution follows account switches within a session', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { computeCoverage } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const file = path.join(dir, 'agent-traces.db');
+  const now = Date.UTC(2026, 8, 30, 12);
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT, start_time_ms INTEGER, operation_name TEXT,
+      chat_session_id TEXT, conversation_id TEXT);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+  `);
+  const span = db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?)');
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  span.run('agent-1', 'trace-1', now - 5000, 'invoke_agent', 'chat-1', 'conv-1');
+  attr.run('agent-1', 'user.name', 'mona');
+  span.run('before-switch', 'trace-1', now - 4900, 'chat', 'chat-1', 'conv-1');
+  attr.run('before-switch', 'copilot_chat.copilot_usage_nano_aiu', String(1 * NANO));
+  span.run('agent-2', 'trace-1', now - 1000, 'invoke_agent', 'chat-1', 'conv-1');
+  attr.run('agent-2', 'user.name', 'hubot');
+  span.run('after-switch', 'trace-1', now - 900, 'chat', 'chat-1', 'conv-1');
+  attr.run('after-switch', 'copilot_chat.copilot_usage_nano_aiu', String(2 * NANO));
+  db.close();
+
+  const coverage = await computeCoverage({
+    windowDays: 7,
+    now,
+    sessionStorePath: path.join(dir, 'none.db'),
+    tracesDbPath: file,
+  });
+  const traces = coverage.sources.find((s) => s.id === 'traces');
+  assert.equal(traces.metrics.creditsToActorShare, 1);
+  assert.deepEqual(Object.fromEntries(traces.breakdowns.user.map((r) => [r.key, [r.calls, r.credits]])), {
+    hubot: [1, 2],
+    mona: [1, 1],
+  });
+});
+
 it('discovers the most recently written agent-traces.db', async (t) => {
   const { findTracesDb, vscodeGlobalStorageDirs, defaultSessionStorePath } = await load('coverage.mjs');
   const home = tempDir(t);

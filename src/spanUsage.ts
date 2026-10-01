@@ -193,6 +193,33 @@ function tally(rows: Map<string | null, CallTally>, key: string | null, credits:
   rows.set(key, row);
 }
 
+type ActorIdentity = { user: string; at: number };
+
+function rememberActor(timeline: Map<string, ActorIdentity[]>, sessionId: string, actor: ActorIdentity): void {
+  const entries = timeline.get(sessionId) ?? [];
+  entries.push(actor);
+  timeline.set(sessionId, entries);
+}
+
+function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | undefined, at: number): string | undefined {
+  if (!sessionId) {
+    return undefined;
+  }
+  const entries = timeline.get(sessionId);
+  if (!entries?.length) {
+    return undefined;
+  }
+  let match = entries[0];
+  for (const entry of entries) {
+    if (entry.at <= at) {
+      match = entry;
+    } else {
+      break;
+    }
+  }
+  return match.user;
+}
+
 export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   const digest = emptySpanDigest();
   const sessions = new Map<string, SpanSession>();
@@ -208,8 +235,9 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
 
   // Agent spans carry the git context; the model calls under them do not.
   const work = new Map<string, { repository?: string; branch?: string; at: number }>();
-  // Identity capture puts `user.name` on agent invocation spans only, so it is inherited the same way.
+  // Keep per-call user attribution time-ordered so account switches do not rewrite earlier calls.
   const actors = new Map<string, { user: string; at: number }>();
+  const actorTimeline = new Map<string, ActorIdentity[]>();
   for (const span of unique) {
     if (span.operation === 'invoke_agent' && span.sessionId && (span.repository || span.branch)) {
       const known = work.get(span.sessionId);
@@ -218,11 +246,15 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       }
     }
     if (span.operation === 'invoke_agent' && span.sessionId && span.user) {
+      rememberActor(actorTimeline, span.sessionId, { user: span.user, at: span.start });
       const known = actors.get(span.sessionId);
       if (!known || known.at <= span.start) {
         actors.set(span.sessionId, { user: span.user, at: span.start });
       }
     }
+  }
+  for (const entries of actorTimeline.values()) {
+    entries.sort((a, b) => a.at - b.at);
   }
   const byModel = new Map<string | null, CallTally>();
   const byCaller = new Map<string | null, CallTally>();
@@ -271,7 +303,7 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
         }
       }
       const repository = work.get(span.sessionId ?? '')?.repository ?? work.get(span.parentSessionId ?? '')?.repository;
-      const user = span.user ?? actors.get(span.sessionId ?? '')?.user ?? actors.get(span.parentSessionId ?? '')?.user;
+      const user = span.user ?? actorAt(actorTimeline, span.sessionId, span.start) ?? actorAt(actorTimeline, span.parentSessionId, span.start);
       tally(byModel, span.model, span.credits);
       tally(byCaller, span.agent ?? null, span.credits);
       tally(byEffort, span.effort ?? null, span.credits);

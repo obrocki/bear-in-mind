@@ -147,9 +147,10 @@ Copilot Chat can add your identity to its telemetry
 default, so after you pick a source, Connect asks separately whether to turn it
 on. When on, agent invocation spans carry `user.name` (your GitHub account) and
 telemetry resources carry `process.user.name` and `host.name`. Bear in Mind keys
-user attribution on `user.name`: model calls inherit it from the agent spans in
-their session or parent session, like the repository. The trace store keeps span
-attributes only, so the OS user and host name are not available from it.
+user attribution on `user.name`: model calls inherit it from the latest agent
+span at or before the call in their session or parent session. The trace store
+keeps span attributes only, so the OS user and host name are not available from
+it.
 
 Identity capture also reaches an OTLP collector that stays connected, and the
 prompt says so. An organisation policy (`CopilotOtelCaptureIdentity`) overrides
