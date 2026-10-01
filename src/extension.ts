@@ -365,7 +365,7 @@ async function connectTelemetry(
         detail:
           'Turns on github.copilot.chat.otel.captureIdentity (VS Code 1.140+). Agent spans then carry user.name, ' +
           'your GitHub account, and telemetry resources carry process.user.name and host.name. Bear in Mind ' +
-          'groups model-call credits by user and shows it per session; it stays on this machine. ' +
+          'reads it locally to group model-call credits by user and label sessions, and sends it nowhere. ' +
           (collectorInUse && picked.id === 'sqlite'
             ? `Your OTLP collector (${endpointLabel}) receives these attributes too. `
             : '') +
