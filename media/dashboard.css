@@ -2,41 +2,55 @@
    Deliberately its own stylesheet: the habitat HUD is a thin strip under a
    canvas, this is a document.
 
-   Every colour here is lifted from the scene in media/main.js, so the dashboard
-   reads as the same world as the iceberg above it rather than as a separate
-   product. The accents are the three light sources in the polar night: the ice
-   itself, the aurora, and the low sun that shows up as the berg warms. */
+   Uses VS Code theme tokens. Polar-night colors are fallbacks for standalone
+   previews; the habitat artwork and HUD keep their own palette. */
 
-:root {
+:root,
+body {
   color-scheme: dark;
 
   /* SEA_COLD / SKY_COLD, the water and the night sky behind the berg. */
-  --ground: #05101f;
-  --ground-top: #071a35;
-  --raised: rgba(143, 208, 232, 0.045);
-  --rule: rgba(143, 208, 232, 0.15);
+  --ground: var(--vscode-editor-background, #05101f);
+  --ground-top: var(--vscode-editor-background, #071a35);
+  --raised: var(--vscode-sideBar-background, rgba(143, 208, 232, 0.045));
+  --rule: var(--vscode-contrastBorder, var(--vscode-panel-border, rgba(143, 208, 232, 0.15)));
 
   /* snow, and the ice ramp read down into shadow. */
-  --ink: #e4f3ff;
-  --muted: #8fb3cf;
-  --faint: #6389a8;
+  --ink: var(--vscode-editor-foreground, #e4f3ff);
+  --muted: var(--vscode-descriptionForeground, #8fb3cf);
+  --faint: var(--vscode-descriptionForeground, #8fb3cf);
 
   /* 01 — the ice: ICE_COLD, and the same gradient as the HUD's melt bar. */
-  --cost: #9fd8ff;
-  --cost-from: #6fc3ff;
-  --cost-to: #d7f2ff;
+  --cost: var(--vscode-charts-blue, #9fd8ff);
+  --cost-from: var(--vscode-charts-blue, #6fc3ff);
+  --cost-to: var(--vscode-charts-blue, #d7f2ff);
 
   /* 02 — the aurora's leading band, rgb(140,255,200) in drawAurora. */
-  --speed: #7fe3b4;
+  --speed: var(--vscode-charts-green, #7fe3b4);
 
   /* 03 — the low sun, and the warm accent the HUD switches to as ice is lost. */
-  --quality: #ffcf7a;
+  --quality: var(--vscode-charts-yellow, #ffcf7a);
 
   /* The melt-critical accent, for anything rejected or failing. */
-  --warn: #ff8a6b;
+  --warn: var(--vscode-errorForeground, #ff8a6b);
 
   --mono: var(--vscode-editor-font-family, ui-monospace, 'Cascadia Mono', monospace);
   --sans: var(--vscode-font-family, system-ui, sans-serif);
+}
+
+body.vscode-light,
+body.vscode-high-contrast-light {
+  color-scheme: light;
+}
+
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+  --cost: var(--ink);
+  --cost-from: var(--ink);
+  --cost-to: var(--ink);
+  --speed: var(--ink);
+  --quality: var(--ink);
+  --warn: var(--ink);
 }
 
 * {
@@ -276,7 +290,7 @@ body {
 .breakdown .track {
   grid-column: 1 / -1;
   height: 3px;
-  background: rgba(143, 208, 232, 0.12);
+  background: var(--rule);
   overflow: hidden;
 }
 
@@ -386,7 +400,7 @@ body {
 .banner code {
   font: 400 11px/1.4 var(--mono);
   color: var(--ink);
-  background: rgba(143, 208, 232, 0.1);
+  background: var(--raised);
   padding: 1px 4px;
 }
 
@@ -406,7 +420,7 @@ button {
   font: 400 11px/1.5 var(--mono);
   color: var(--vscode-button-foreground, #fff);
   background: var(--vscode-button-background, #1f6feb);
-  border: 1px solid transparent;
+  border: 1px solid var(--vscode-contrastBorder, transparent);
   border-radius: 2px;
   cursor: pointer;
 }

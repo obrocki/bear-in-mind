@@ -6,11 +6,47 @@ attribute the difference?* Compiled
 30 September 2026; updated 5 October 2026 for measurement feasibility,
 current primary documentation and the shared-surface intersection.
 
-Scope: VS Code (Copilot Chat agents), Copilot CLI, the GitHub Copilot app,
-Copilot cloud agent (plus Copilot code review) and the organisation plane
-(usage metrics, billing and audit APIs). Earlier work reviewed: Bear in Mind
-(this repository), `mohanajuhi166/agentic-sdlc-prototypes-patterns` and two
-hackathon prototypes (`copilot-insights`, `vscode-insights`).
+## Executive summary
+
+**Decision: proceed with source-aware usage and attribution measurement, not
+an ROI score.** Copilot telemetry can show reported consumption, activity and
+some work context. It does not, on its own, prove delivered business value,
+developer time saved or incremental financial return.
+
+We landed on a shared data model with explicit source, grain, provenance,
+reporting coverage and attribution confidence. Local sources remain separate:
+VS Code per-model-call credits and SDK root-invocation credits are not summed,
+and neither is substituted for an invoice or account balance. Missing values
+stay unknown. Cache-read share uses matched reported input/cache counts, while
+repository and actor context must be time-appropriate rather than assigning a
+later session state to earlier calls.
+
+The **Intersection** view is the verified common denominator across all five
+surfaces: nine concepts are available at least conditionally, but only
+repository and code change are marked native everywhere. Different grains,
+opt-in identity, panel-only values and daily aggregates remain visible. Shared
+availability is not permission to join or compare unlike values.
+
+**Actor identity is partly readable, not wholly automatic.** VS Code can emit
+opt-in `user.name`; SDK/CLI telemetry can emit an opaque `enduser.pseudo.id`.
+Device resource attributes are not person identities. Canonical actor/device
+keys are derived, and organisation, team and cost-centre assignments must be
+configured or externally enriched with provenance; they must not be guessed
+from a machine or repository owner.
+
+The agreed implementation aligns the packaged VS Code dashboard with the
+canvas's accounting rules and VS Code light/dark/high-contrast themes, while
+preserving the habitat artwork and numeric usage ledger. Changes are shipped
+as a validated patch release through the existing PR and post-merge CI release
+process, not by publishing an unreviewed tag.
+
+**What remains before ROI:** verify session-to-work-item ownership and
+merged/deployed outcomes; reconcile scope-matched gross consumption with
+billing while retaining discounts and net charges; measure review, prompting
+and rework effort; and establish a comparable non-AI baseline with a declared
+valuation and quality guardrails. Until then, report usage, coverage and
+directional outcome proxies—not a percentage return or a causal productivity
+claim.
 
 The structured model behind this document is
 [`attribution-model.json`](attribution-model.json). The
@@ -200,7 +236,7 @@ erDiagram
 
 | Entity | Grain | Key fields |
 | --- | --- | --- |
-| `actor` | person | `actor_key` (salted pseudonym of `user.name` / `user_login`), optional device key (`process.user.name`, `host.name`), org, team / cost centre |
+| `actor` | person | Conditional native `user.name` / SDK analytics identity; derived actor/device keys; configured or enriched org/team/cost centre, with provenance and effective dates |
 | `ai_session` | one agent session | `session_key` = surface + native ID, surface, client version, agent name/type, mode, repo, branch, base/head commit, parent session, start/end |
 | `model_call` | one model API call | `call_key`, `session_key`, agent instance, initiator / interaction class, model, auto/BYOK, reasoning effort, input/output/cache-read/cache-write/reasoning tokens, `credits_nano_aiu` (nullable) + credit source, multiplier, duration, TTFT, finish reason |
 | `tool_call` | one tool call | `tool_call_key`, class (built-in, MCP, skill, sub-agent, hook), tool, MCP server (hash), success, duration |
@@ -208,6 +244,21 @@ erDiagram
 | `attribution` | session ↔ work item | tier, method, confidence, evidence, weight (per session ≤ 1) |
 | `outcome` | measured result | kind (edit accepted, survival, feedback, lines changed, task complete, PR merged, review rounds, CI result, revert, lead time), value, unit, source |
 | `cost_ledger` | billing line with preserved request scope | billing entity/account type, requested UTC day/user/model, product/SKU, unit/rate, gross/discount/net quantities and amounts, retrieval time and coverage — reconciliation only |
+
+### Actor field provenance
+
+`user.name` is readable on opt-in VS Code Local-harness agent spans; SDK/CLI
+can emit `enduser.pseudo.id`, an opaque analytics ID rather than a GitHub login.
+The extension keeps analytics IDs and configured resource `user.name` values
+distinct from native account evidence. It does not verify an organisation join
+or generate a canonical salted `actor_key` automatically.
+
+`process.user.name` and `host.name` are opt-in resource attributes readable from
+an export, not `agent-traces.db`. A canonical `device_key` is a governed
+derivation, not a person. Organisation, team and cost-centre tags can be read
+if declared in `OTEL_RESOURCE_ATTRIBUTES` or added by a collector, otherwise
+they require external enrichment. `github.copilot.github.org` identifies the
+repository owner, not the developer's employer or billing organisation.
 
 ### Attribution tiers
 
@@ -229,6 +280,8 @@ erDiagram
 6. Local observations are not a bill; match consumption to gross billing AI-credit quantity at the same scope, retaining discounts and net billed amounts separately.
 7. No prompt or response content; pseudonymise actors; keep MCP names hashed unless governed.
 8. Token fields are nullable reported subtotals with per-field call coverage. Cache-read share uses only valid paired input/cache counts, with paired-call coverage.
+9. The packaged extension preserves numeric meter/API ledgers while reporting unknown token fields separately. It verifies SDK root ancestry before showing root-invocation credits; unclassified ancestry and per-call SDK credits remain unknown at that grain.
+10. Canonical first-stream-chunk seconds are normalized but not pooled with legacy first-token milliseconds. Typed operation histograms keep agent and model-call latency separate; SDK tool aliases are selected, never added to overlapping legacy instruments.
 
 ### Billing reconciliation contract
 

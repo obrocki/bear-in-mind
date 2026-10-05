@@ -34,7 +34,7 @@ const {
   USER_FEEDBACK
 } = require(path.join(build, 'otelParse.js'));
 
-const { computeDrift, percentile, buildQuality, buildSpeed, buildCost, redactUrl } = require(
+const { computeDrift, percentile, buildQuality, buildSpeed, buildCost, emptySpanDigest, redactUrl } = require(
   path.join(build, 'otelSummary.js')
 );
 
@@ -583,6 +583,23 @@ describe('cumulative metrics', () => {
 });
 
 describe('log events', () => {
+  it('redacts new content-gated SDK skill metadata and executable paths', () => {
+    const rollup = new OtelRollup();
+    const spans = [];
+    rollup.ingestLine(JSON.stringify({
+      spanId: 'sdk-tool', startTime: [1, 0], endTime: [2, 0],
+      attributes: {
+        'gen_ai.operation.name': 'execute_tool',
+        'gen_ai.skill.name': 'safe-skill',
+        'gen_ai.skill.description': 'private description',
+        'gen_ai.skill.source.uri': 'file:///private/skill.md',
+        'process.executable.path': 'C:\\private\\tool.exe'
+      }
+    }), (span) => spans.push(span));
+    assert.equal(spans.length, 1);
+    assert.equal(spans[0].attributes['gen_ai.skill.name'], 'safe-skill');
+    assert.doesNotMatch(JSON.stringify(spans), /private|description|source\.uri|executable\.path/);
+  });
   it('never retains prompt or response content', () => {
     // Captured content must not survive in retained events.
     const event = toLogEvent({
@@ -659,6 +676,7 @@ describe('summary sections', () => {
   const base = (rollup) => ({
     rollup,
     spans: {
+      ...emptySpanDigest(),
       available: false,
       sessions: [],
       agentDurationsMs: [],

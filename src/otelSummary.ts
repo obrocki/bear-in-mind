@@ -15,11 +15,15 @@ import {
   CLOUD_SESSIONS,
   EDIT_ACCEPTANCE,
   EDIT_RESPONSES,
+  FIRST_CHUNK_DURATION,
   LINES_OF_CODE,
   OPERATION_DURATION,
   type OtelRollup,
   PULL_REQUESTS,
   SESSION_COUNT,
+  SDK_AGENT_DURATION,
+  SDK_TOOL_CALL_COUNT,
+  SDK_TOOL_CALL_DURATION,
   SUMMARIZATIONS,
   SURVIVAL_FOUR_GRAM,
   SURVIVAL_NO_REVERT,
@@ -33,6 +37,7 @@ import {
 } from './otelParse';
 import type { ChatSessionUsage } from './chatWatcher';
 import type { MeltBasis, UsageSource } from './tokenMeter';
+import { TokenTally, type ReportingCoverage, type TokenField } from '../.github/extensions/ai-attribution/lib/tokenCoverage.cjs';
 
 /** One row of the `sessions` view in Copilot Chat's `agent-traces.db`. */
 export interface SpanSession {
@@ -80,12 +85,18 @@ export interface SpanDigest {
   agentDurationsMs: number[];
   llmDurationsMs: number[];
   ttftMs: number[];
+  firstChunkMs: number[];
   turnCounts: number[];
   toolDurationsMs: Map<string, number[]>;
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
+  cacheWriteTokens: number;
+  tokenCoverage: Record<TokenField, ReportingCoverage>;
+  cacheReadRatio?: number;
+  cacheReadRatioCoverage: ReportingCoverage;
+  sdkCredits: SdkInvocationCredits;
   /** Latest observed prompt occupancy against `max_prompt_tokens`, from any session. */
   context?: ContextWindow;
   /** Unique `chat` spans, and the reported credits among them. */
@@ -105,9 +116,22 @@ export interface SpanDigest {
   byRepository: CallTally[];
   /** By `user.name` on the call, its session's agent spans, or its parent session's. */
   byUser: CallTally[];
+  configuredUserCalls: number;
+  /** SDK analytics pseudonyms, never treated as GitHub logins. */
+  byActorId: CallTally[];
   /** Tool spans that reported a status, and how many of them failed. */
   toolStatusCalls: number;
   toolFailures: number;
+}
+
+export interface SdkInvocationCredits {
+  available: boolean;
+  modelCalls: number;
+  invocations: number;
+  reportedInvocations: number;
+  credits: number;
+  /** Agent spans whose ancestry cannot be established in the retained metadata. */
+  unclassifiedInvocations: number;
 }
 
 /**
@@ -131,12 +155,17 @@ export function emptySpanDigest(): SpanDigest {
     agentDurationsMs: [],
     llmDurationsMs: [],
     ttftMs: [],
+    firstChunkMs: [],
     turnCounts: [],
     toolDurationsMs: new Map(),
     inputTokens: 0,
     outputTokens: 0,
     cachedTokens: 0,
     reasoningTokens: 0,
+    cacheWriteTokens: 0,
+    tokenCoverage: new TokenTally().coverage(0),
+    cacheReadRatioCoverage: { reportedCalls: 0, share: null },
+    sdkCredits: { available: false, modelCalls: 0, invocations: 0, reportedInvocations: 0, credits: 0, unclassifiedInvocations: 0 },
     chatCalls: 0,
     creditCalls: 0,
     credits: 0,
@@ -148,6 +177,8 @@ export function emptySpanDigest(): SpanDigest {
     byEffort: [],
     byRepository: [],
     byUser: [],
+    configuredUserCalls: 0,
+    byActorId: [],
     toolStatusCalls: 0,
     toolFailures: 0
   };
@@ -201,6 +232,9 @@ export interface CostSection {
   outputTokens: number;
   cachedTokens: number;
   reasoningTokens: number;
+  cacheWriteTokens: number;
+  tokenCoverage: Record<TokenField, ReportingCoverage>;
+  cacheReadRatioCoverage: ReportingCoverage;
   credits: number;
   /** Token dimensions enabled for the local visual budget, not all raw tokens. */
   countedTokens: number;
@@ -217,7 +251,7 @@ export interface CostSection {
   drift: DriftReport;
   manualTokens: number;
   legacyTokens: number;
-  /** Trace cache-read input / trace input, both from the same retained window. */
+  /** Cache-read / input only on calls reporting both valid counts in the retained window. */
   cacheReadRatio?: number;
   traceCredits: TraceCredits;
 }
@@ -246,9 +280,12 @@ export interface TraceCredits {
   byRepository: CreditRow[];
   /** Model calls attributed to a `user.name`; zero when identity capture is off or denied. */
   userCalls: number;
+  configuredUserCalls: number;
   byUser: CreditRow[];
   byCaller: CreditRow[];
   byEffort: CreditRow[];
+  byActorId: CreditRow[];
+  sdkCredits: SdkInvocationCredits;
 }
 
 export interface SpeedSection {
@@ -261,6 +298,7 @@ export interface SpeedSection {
   llmMedianMs: Measure;
   llmP95Ms: Measure;
   ttftMedianMs: Measure;
+  firstChunkMedianMs: Measure;
   turnsPerInvocation: Measure;
   toolCalls: number;
   toolMedianMs: Measure;
@@ -509,6 +547,9 @@ export function buildCost(input: SummaryInput): CostSection {
     outputTokens,
     cachedTokens: spans.cachedTokens,
     reasoningTokens: spans.reasoningTokens,
+    cacheWriteTokens: spans.cacheWriteTokens,
+    tokenCoverage: spans.tokenCoverage,
+    cacheReadRatioCoverage: spans.cacheReadRatioCoverage,
     credits: totals.credits,
     countedTokens: input.countedTokens,
     meterSinceMs: input.meterSinceMs,
@@ -523,7 +564,7 @@ export function buildCost(input: SummaryInput): CostSection {
     drift: input.drift,
     manualTokens: input.manualTokens ?? 0,
     legacyTokens: input.legacyTokens ?? 0,
-    cacheReadRatio: spans.inputTokens > 0 ? spans.cachedTokens / spans.inputTokens : undefined,
+    cacheReadRatio: spans.cacheReadRatio,
     traceCredits: buildTraceCredits(spans)
   };
 }
@@ -553,7 +594,7 @@ function creditRows(tallies: CallTally[] | undefined, unknownLabel: string): Cre
 export function buildTraceCredits(spans: SpanDigest): TraceCredits {
   const calls = spans.chatCalls ?? 0;
   return {
-    available: calls > 0,
+    available: calls > 0 || spans.sdkCredits.available,
     sinceMs: spans.sinceMs,
     calls,
     creditCalls: spans.creditCalls ?? 0,
@@ -564,9 +605,12 @@ export function buildTraceCredits(spans: SpanDigest): TraceCredits {
     byModel: creditRows(spans.byModel, 'unknown model'),
     byRepository: creditRows(spans.byRepository, 'no repository'),
     userCalls: (spans.byUser ?? []).reduce((sum, t) => sum + (t.key === null ? 0 : t.calls), 0),
+    configuredUserCalls: spans.configuredUserCalls,
     byUser: creditRows(spans.byUser, 'no user identity'),
     byCaller: creditRows(spans.byCaller, 'unnamed caller'),
-    byEffort: creditRows(spans.byEffort, 'not reported')
+    byEffort: creditRows(spans.byEffort, 'not reported'),
+    byActorId: creditRows(spans.byActorId, 'no SDK actor id'),
+    sdkCredits: spans.sdkCredits
   };
 }
 
@@ -599,21 +643,27 @@ export function buildSpeed(input: SummaryInput): SpeedSection {
   const { rollup, spans } = input;
 
   const sessionDurations = spans.sessions.map((s) => s.durationMs).filter((d) => d > 0);
+  const llmWhere = rollup.hasAttribute(OPERATION_DURATION, 'gen_ai.operation.name')
+    ? { 'gen_ai.operation.name': 'chat' } : undefined;
 
   // The metric histograms record seconds; the dashboard works in milliseconds.
-  const agentEstMedian = scaleSeconds(rollup.quantile(AGENT_DURATION, 0.5));
-  const llmEstMedian = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.5));
-  const llmEstP95 = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.95));
+  const agentEstMedian = scaleSeconds(rollup.quantile(AGENT_DURATION, 0.5) ??
+    rollup.quantile(SDK_AGENT_DURATION, 0.5) ??
+    rollup.quantile(OPERATION_DURATION, 0.5, { 'gen_ai.operation.name': 'invoke_agent' }));
+  const llmEstMedian = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.5, llmWhere));
+  const llmEstP95 = scaleSeconds(rollup.quantile(OPERATION_DURATION, 0.95, llmWhere));
   const ttftEstMedian = scaleSeconds(rollup.quantile(TIME_TO_FIRST_TOKEN, 0.5));
+  const firstChunkEstMedian = scaleSeconds(rollup.quantile(FIRST_CHUNK_DURATION, 0.5));
 
   const sessionsFromMetrics = Math.round(rollup.total(SESSION_COUNT));
   const sessions = spans.sessions.length || sessionsFromMetrics;
 
   const llmCallsFromSpans = spans.sessions.reduce((a, s) => a + s.llmCalls, 0) || spans.llmDurationsMs.length;
-  const llmCalls = llmCallsFromSpans || Math.round(rollup.observations(OPERATION_DURATION));
+  const llmCalls = llmCallsFromSpans || Math.round(rollup.observations(OPERATION_DURATION, llmWhere));
 
   const toolCallsFromSpans = spans.sessions.reduce((a, s) => a + s.toolCalls, 0);
-  const toolCalls = toolCallsFromSpans || Math.round(rollup.total(TOOL_CALL_COUNT));
+  const toolMetric = rollup.observations(TOOL_CALL_COUNT) > 0 ? TOOL_CALL_COUNT : SDK_TOOL_CALL_COUNT;
+  const toolCalls = toolCallsFromSpans || Math.round(rollup.total(toolMetric));
 
   const toolDurations: number[] = [];
   const slowest: Array<{ name: string; calls: number; medianMs: number }> = [];
@@ -641,9 +691,11 @@ export function buildSpeed(input: SummaryInput): SpeedSection {
     llmMedianMs: prefer(percentile(spans.llmDurationsMs, 0.5), llmEstMedian),
     llmP95Ms: prefer(percentile(spans.llmDurationsMs, 0.95), llmEstP95),
     ttftMedianMs: prefer(percentile(spans.ttftMs, 0.5), ttftEstMedian),
+    firstChunkMedianMs: prefer(percentile(spans.firstChunkMs, 0.5), firstChunkEstMedian),
     turnsPerInvocation: prefer(turnsExact, turnsEstimate),
     toolCalls,
-    toolMedianMs: prefer(percentile(toolDurations, 0.5), rollup.quantile(TOOL_CALL_DURATION, 0.5)),
+    toolMedianMs: prefer(percentile(toolDurations, 0.5),
+      rollup.quantile(TOOL_CALL_DURATION, 0.5) ?? scaleSeconds(rollup.quantile(SDK_TOOL_CALL_DURATION, 0.5))),
     slowestTools: slowest.slice(0, 5),
     tokensPerMinute
   };
@@ -698,14 +750,15 @@ export function buildQuality(input: Pick<SummaryInput, 'rollup'> & Partial<Pick<
   const actionApply = Math.round(rollup.total(USER_ACTIONS, { action: 'apply' }));
   const actionFollowup = Math.round(rollup.total(USER_ACTIONS, { action: 'followup' }));
 
-  const metricToolCalls = Math.round(rollup.total(TOOL_CALL_COUNT));
-  const metricToolFailures = Math.round(rollup.total(TOOL_CALL_COUNT, { success: 'false' }));
+  const toolMetric = rollup.observations(TOOL_CALL_COUNT) > 0 ? TOOL_CALL_COUNT : SDK_TOOL_CALL_COUNT;
+  const metricToolCalls = Math.round(rollup.total(toolMetric));
+  const metricToolFailures = Math.round(rollup.total(toolMetric, { success: 'false' }));
   // Span status is a fallback for trace-store-only setups. A feed measurement,
   // even of zero calls, wins; tool spans without a reported status are left out
   // rather than counted as successes.
   const spanToolCalls = input.spans?.toolStatusCalls ?? 0;
   const toolSource: MetricSource =
-    rollup.observations(TOOL_CALL_COUNT) > 0 ? 'metrics' : spanToolCalls > 0 ? 'spans' : 'none';
+    rollup.observations(toolMetric) > 0 ? 'metrics' : spanToolCalls > 0 ? 'spans' : 'none';
   const toolCalls = toolSource === 'spans' ? spanToolCalls : metricToolCalls;
   const toolFailures = toolSource === 'spans' ? input.spans?.toolFailures ?? 0 : metricToolFailures;
 

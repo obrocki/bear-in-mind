@@ -3,7 +3,7 @@ import { createRequire } from 'module';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { OtelRollup } from './otelParse';
-import { digestSpans, fileUsageSpan, usageSpan, type UsageSpan } from './spanUsage';
+import { digestSpans, fileUsageSpan, mergeUsageSpan, usageSpan, type UsageSpan } from './spanUsage';
 import {
   emptySpanDigest,
   redactUrl,
@@ -26,7 +26,9 @@ const SPAN_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 /** `span_attributes` read as numbers. */
 const NUMERIC_SPAN_KEYS = [
   'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
-  'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens'
+  'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens',
+  'github.copilot.nano_aiu', 'github.copilot.cost', 'github.copilot.turn_count',
+  'gen_ai.response.time_to_first_chunk', 'gen_ai.usage.cache_creation.input_tokens'
 ];
 /** `span_attributes` read as short strings: identity and work context, never content. */
 const TEXT_SPAN_KEYS = [
@@ -34,7 +36,7 @@ const TEXT_SPAN_KEYS = [
   'github.copilot.git.repository', 'github.copilot.git.branch',
   'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name',
   // Agent invocation spans, only when Copilot's identity capture is on.
-  'user.name'
+  'user.name', 'enduser.pseudo.id', 'gen_ai.request.reasoning.level'
 ];
 /** Request-option blobs larger than this are skipped, matching the file-span path. */
 const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;
@@ -325,7 +327,7 @@ export class OtelWatcher implements vscode.Disposable {
       const spans = new Map(this.fileSpans);
       for (const span of this.dbSpans) {
         if (span.start >= cutoff) {
-          spans.set(span.id, span);
+          spans.set(span.id, mergeUsageSpan(spans.get(span.id), span));
         }
       }
       this.spans = digestSpans(spans.values());
@@ -574,10 +576,10 @@ export class OtelWatcher implements vscode.Disposable {
       const optional = (name: string) => (columns.has(name) ? name : `NULL AS ${name}`);
       const rows = db
         .prepare(
-          'SELECT span_id, operation_name, tool_name, start_time_ms, end_time_ms, ttft_ms, ' +
-            'conversation_id, chat_session_id, request_model, response_model, ' +
+          `SELECT span_id, operation_name, tool_name, start_time_ms, end_time_ms, ${optional('ttft_ms')}, ` +
+            `${optional('conversation_id')}, ${optional('chat_session_id')}, request_model, response_model, ` +
             'input_tokens, output_tokens, cached_tokens, reasoning_tokens, ' +
-            `${optional('agent_name')}, ${optional('status_code')} ` +
+            `${optional('agent_name')}, ${optional('status_code')}, ${optional('trace_id')}, ${optional('parent_span_id')} ` +
             'FROM spans WHERE start_time_ms >= ?'
         )
         .all(since);
@@ -617,7 +619,11 @@ export class OtelWatcher implements vscode.Disposable {
           'copilot_chat.time_to_first_token': r.ttft_ms,
           'gen_ai.agent.name': r.agent_name,
           ...attributes.get(String(r.span_id))
-        }, numeric(r.start_time_ms), numeric(r.end_time_ms), r.status_code ?? undefined);
+        }, numeric(r.start_time_ms), numeric(r.end_time_ms), r.status_code ?? undefined, {
+          traceId: typeof r.trace_id === 'string' ? r.trace_id : undefined,
+          parentSpanId: typeof r.parent_span_id === 'string' ? r.parent_span_id : undefined,
+          parentKnown: columns.has('parent_span_id') && (r.parent_span_id == null || typeof r.parent_span_id === 'string')
+        });
         if (span) {
           completed.push(span);
         }

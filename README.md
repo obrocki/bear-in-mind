@@ -20,7 +20,7 @@ Download a `.vsix` from [Releases](https://github.com/obrocki/bear-in-mind/relea
 then run:
 
 ```bash
-code --install-extension bear-in-mind-0.6.2.vsix
+code --install-extension bear-in-mind-0.6.3.vsix
 ```
 
 Use the downloaded filename if it differs. Open the Iceberg activity-bar icon.
@@ -39,13 +39,26 @@ Open **Iceberg: Open Token Dashboard** or the sidebar's *Cost, Speed, Quality* v
 | Section | Signals |
 | --- | --- |
 | Cost | Reported model-call tokens and credits, cache/reasoning subtotals, cache-read share and feed rate. Retained-trace credits by model, repository, user, caller and reasoning effort. Not a bill. |
-| Speed | Elapsed session duration, agent-invocation latency, model-call latency, first token, output throughput and slow tools. |
+| Speed | Elapsed session duration, agent-invocation latency, model-call latency, legacy first token and canonical first stream chunk (kept separate), output throughput and slow tools. |
 | Quality | Edit acceptance, code survival, pull requests, tool success and response feedback. Not a correctness score. |
 
 Token share is not credit share. Retained-trace credits expose small helper
 calls. Repository and branch come from agent spans; with identity capture on,
 credits are also grouped by the reported `user.name`. Calls without matching
 agent context remain unattributed.
+
+The dashboard follows VS Code light, dark and high-contrast themes; the habitat
+artwork keeps its polar-night palette. Retained token diagnostics show reporting
+coverage, preserve measured zeroes and leave unreported fields unknown.
+Cache-read share uses only valid paired input/cache reports, not an incomplete
+cache subtotal divided by every call's input.
+
+SDK-harness `github.copilot.nano_aiu` appears separately as **SDK root-invocation
+credits** only when retained parent metadata confirms the invocation root.
+Child/nested totals are excluded; missing or inconsistent ancestry stays
+unclassified. These different-grain credits are never added to VS Code
+model-call credits, the meter or transcript Session Cost. A model's `cost`
+multiplier is not credits or money.
 
 ![Retained-trace credits by model, repository, caller and reasoning effort](docs/media/dashboard-credits.png)
 
@@ -105,9 +118,17 @@ default, so after you pick a source, Connect asks separately whether to turn it
 on. When on, agent invocation spans carry `user.name` (your GitHub account) and
 telemetry resources carry `process.user.name` and `host.name`. Bear in Mind keys
 user attribution on `user.name`: model calls inherit it from the latest agent
-span at or before the call in their session or parent session; calls before any
+span at or before the call through session, conversation, parent-session or
+trace keys, without crossing conflicting native chat IDs; calls before any
 such span stay unattributed. The trace store keeps span attributes only, so the
 OS user and host name are not available from it.
+
+SDK `enduser.pseudo.id` is an opaque analytics identity, shown separately from
+GitHub-account labels. Explicit resource `user.name` values retain configured
+provenance; neither kind is a verified organisation join. Canonical actor/device
+keys are derived, and team/cost-centre assignments need configured attributes or
+governed enrichment. The extension does not infer a person from an OS user,
+machine or repository owner.
 
 Identity capture also reaches an OTLP collector that stays connected, and the
 prompt says so. If replacing a collector fails, Connect leaves identity capture

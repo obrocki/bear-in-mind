@@ -12,6 +12,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { TokenTally } from './tokenCoverage.cjs';
 
 export const NANO_AIU_PER_CREDIT = 1_000_000_000;
 const DAY_MS = 86_400_000;
@@ -161,51 +162,6 @@ function share(part, whole) {
 
 function credits(nano) {
   return nano / NANO_AIU_PER_CREDIT;
-}
-
-class TokenTally {
-  constructor() {
-    this.fields = Object.fromEntries(
-      ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']
-        .map((key) => [key, { total: 0, calls: 0 }]),
-    );
-    this.pairedInput = 0;
-    this.pairedCache = 0;
-    this.pairedCalls = 0;
-  }
-  add(values) {
-    const reported = {};
-    for (const [key, field] of Object.entries(this.fields)) {
-      const value = nanoAiu(values[key]);
-      reported[key] = value !== null && Number.isSafeInteger(value) ? value : null;
-      if (reported[key] !== null) {
-        field.total += reported[key];
-        field.calls += 1;
-      }
-    }
-    const { inputTokens: input, cacheReadTokens: cached } = reported;
-    if (input !== null && cached !== null && cached <= input) {
-      this.pairedInput += input;
-      this.pairedCache += cached;
-      this.pairedCalls += 1;
-    }
-  }
-  totals() {
-    return Object.fromEntries(Object.entries(this.fields).map(([key, field]) => [
-      key, field.calls ? field.total : null,
-    ]));
-  }
-  coverage(calls) {
-    return Object.fromEntries(Object.entries(this.fields).map(([key, field]) => [
-      key, { reportedCalls: field.calls, share: share(field.calls, calls) },
-    ]));
-  }
-  ratioCoverage(calls) {
-    return { reportedCalls: this.pairedCalls, share: share(this.pairedCalls, calls) };
-  }
-  cacheReadRatio() {
-    return share(this.pairedCache, this.pairedInput);
-  }
 }
 
 class Tally {
@@ -502,14 +458,17 @@ const CHAT_KEYS = [
   'copilot_chat.copilot_usage_nano_aiu',
   'copilot_chat.request.options',
   'copilot_chat.parent_chat_session_id',
+  'gen_ai.usage.cache_creation.input_tokens',
   IDENTITY_KEY,
 ];
 
-function contextAt(entries, at) {
+function contextAt(entries, at, accepts) {
   if (!entries?.length) return null;
   let match = null;
   for (const entry of entries) {
-    if (entry.at <= at) match = entry;
+    if (entry.at <= at) {
+      if (accepts(entry)) match = entry;
+    }
     else break;
   }
   return match;
@@ -524,7 +483,10 @@ function agentLink(maps, chat, parent, at) {
     [maps.trace, chat.trace_id, 'trace'],
   ]) {
     if (!present(key)) continue;
-    const ctx = contextAt(map.get(String(key)), at);
+    const ctx = contextAt(map.get(String(key)), at, (entry) =>
+      (link !== 'conversation' && link !== 'trace') || !present(chat.chat_session_id) || !entry.chatSessionId ||
+      entry.chatSessionId === String(chat.chat_session_id) || entry.chatSessionId === String(parent),
+    );
     if (ctx) return { ctx, link };
   }
   return { ctx: null, link: 'none' };
@@ -607,17 +569,17 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       if (present(row.key) && present(row.value)) agent.values[row.key] = String(row.value);
       agents.set(String(row.span_id), agent);
     }
-    const rememberTimed = (map, key, ctx, at) => {
+    const rememberTimed = (map, key, ctx, at, chatSessionId) => {
       if (!present(key)) return;
       const k = String(key);
       const entries = map.get(k) ?? [];
-      entries.push({ ...ctx, at });
+      entries.push({ ...ctx, at, chatSessionId: present(chatSessionId) ? String(chatSessionId) : null });
       map.set(k, entries);
     };
     const rememberAllTimed = (maps, row, ctx, at) => {
-      rememberTimed(maps.session, row.chat_session_id, ctx, at);
-      rememberTimed(maps.conversation, row.conversation_id, ctx, at);
-      rememberTimed(maps.trace, row.trace_id, ctx, at);
+      rememberTimed(maps.session, row.chat_session_id, ctx, at, row.chat_session_id);
+      rememberTimed(maps.conversation, row.conversation_id, ctx, at, row.chat_session_id);
+      rememberTimed(maps.trace, row.trace_id, ctx, at, row.chat_session_id);
     };
     for (const agent of agents.values()) {
       const pick = (keys) => keys.map((key) => agent.values[key]).find(present) ?? null;
@@ -676,6 +638,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       inputTokens: chat.input_tokens,
       outputTokens: chat.output_tokens,
       cacheReadTokens: chat.cached_tokens,
+      cacheWriteTokens: attrs['gen_ai.usage.cache_creation.input_tokens'],
       reasoningTokens: chat.reasoning_tokens,
     });
 

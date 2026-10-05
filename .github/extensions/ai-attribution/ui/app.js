@@ -310,6 +310,17 @@ function renderModel() {
         h('li', {}, h('code', {}, r.from), h('span', { class: 'arrow' }, `— ${r.label} →`), h('code', {}, r.to)),
       ),
     ),
+    h('h2', {}, 'Actor field provenance'),
+    h('p', { class: 'muted small' }, 'A person record mixes native, configured, derived and enriched fields. Source capability is not proof that this local store collected a value.'),
+    h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Field'), h('th', {}, 'Origin'), h('th', {}, 'Read path'), h('th', {}, 'Conditions'))),
+      h('tbody', {}, m.entities.find((e) => e.id === 'actor').fieldProvenance.map((p) =>
+        h('tr', {}, h('td', {}, h('code', {}, p.field)),
+          h('td', {}, badge(p.kind === 'native' || p.kind === 'derived' ? p.kind : 'partial', p.kind)),
+          h('td', {}, p.readPath), h('td', {}, p.conditions),
+        ),
+      )),
+    ),
     h('h2', {}, 'Attribution tiers'),
     h(
       'table',

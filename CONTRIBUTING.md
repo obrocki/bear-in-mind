@@ -19,6 +19,7 @@ then press `F5` for an Extension Development Host.
 | `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
+| `.github/extensions/ai-attribution/lib/tokenCoverage.cjs` / `.d.cts` | Shared token reporting/paired-count logic, bundled into the typed extension and used directly by the build-free canvas. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
 | `.github/extensions/ai-attribution/` | GitHub Copilot app canvas for the attribution research; not packaged. |
 
@@ -41,7 +42,10 @@ dependencies; reload extensions in the app after editing. Its tests run with
 - Reconcile metrics and spans with `max()` per dimension, not addition. No
   promotion/idle rebasing. This is conservative when coverage/baselines differ.
 - Deduplicate file/SQLite spans by span ID; count tokens/credits on `chat` only,
-  not their enclosing agent totals. Cache/reasoning are subsets. Nano-AIU credits
+  not their enclosing agent totals. SDK `github.copilot.nano_aiu` summaries are
+  separate, confirmed root-invocation diagnostics: never add them to model-call
+  credits, the meter or transcripts; unknown ancestry stays unclassified.
+  Cache/reasoning are subsets. Nano-AIU credits
   divide by 1e9; missing is unknown, including when other calls report zero.
 - Adopt existing metric history; meter spans starting after observation began.
   Preserve legacy estimates separately rather than relabeling them as measured.
@@ -71,6 +75,20 @@ dependencies; reload extensions in the app after editing. Its tests run with
   `process.user.name` or `host.name`, which are a device, not an account. Leave
   unlinked calls as *no user identity* rather than guessing.
   Select optional `agent-traces.db` columns defensively; older stores lack them.
+- Repository and actor correlation use time-appropriate session, conversation,
+  parent-session or trace context; conflicting native chat IDs cannot inherit
+  through a shared weak key. Trace-only links never create sessions.
+- Token subtotals retain per-field coverage; measured zero is not missing.
+  Cache-read ratios use valid paired input/cache reports. Numeric meter/API
+  ledgers stay unchanged. Prefer known database values on duplicate span IDs,
+  while preserving file metadata missing from an older database schema.
+- SDK analytics pseudonyms and configured resource identities must retain their
+  provenance, not masquerade as verified GitHub logins. Content-gated skill
+  descriptions/source URIs and executable paths must be redacted.
+- Keep canonical first-stream-chunk seconds separate from legacy first-token
+  milliseconds. Normalize SDK tool-duration seconds and prefer one overlapping
+  metric alias, including a measured zero; filter typed operation histograms so
+  agent durations do not become model-call latency.
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call
   time. Turn index is not an LLM round-trip count.
@@ -87,6 +105,11 @@ See [SECURITY.md](SECURITY.md) for the data-handling contract.
 
 Keep rendering at pixel-art resolution and respect disabled animation. Preserve
 the seeded iceberg shape and slope-based shading.
+
+The dashboard uses VS Code semantic tokens and high-contrast borders; its SVG
+paints reference CSS variables so live theme changes need no new snapshot.
+This does not change the habitat artwork. Dashboard screenshot fixtures emulate
+light, dark and both high-contrast modes and check text contrast/live SVG paints.
 
 Run `npm run media` after artwork changes. The HTML screenshot harness mirrors
 webview markup and must stay in sync. `tools/dashboard.html?waiting` previews a

@@ -1,5 +1,6 @@
 import { hrToMs, resourceAttributes } from './otelParse';
 import { emptySpanDigest, type CallTally, type SpanDigest, type SpanSession } from './otelSummary';
+import { TokenTally } from '../.github/extensions/ai-attribution/lib/tokenCoverage.cjs';
 
 /** OTel span status codes. UNSET (0) means no status was reported, so it is unknown. */
 const SPAN_STATUS_OK = 1;
@@ -12,6 +13,11 @@ export interface UsageSpan {
   id: string;
   operation: string;
   sessionId?: string;
+  nativeSessionId?: string;
+  conversationId?: string;
+  traceId?: string;
+  parentSpanId?: string;
+  parentKnown?: boolean;
   model: string | null;
   start: number;
   end: number;
@@ -19,8 +25,13 @@ export interface UsageSpan {
   output?: number;
   cached?: number;
   reasoning?: number;
+  cacheWrite?: number;
   credits?: number;
+  /** SDK nano_aiu is kept at its native grain, never aliased to VS Code per-call credits. */
+  sdkCredits?: number;
+  sdk?: boolean;
   ttft?: number;
+  firstChunk?: number;
   turns?: number;
   tool?: string;
   promptLimit?: number;
@@ -39,6 +50,9 @@ export interface UsageSpan {
    * spans only when Copilot's OTel identity capture is on (VS Code 1.140+).
    */
   user?: string;
+  userSource?: 'span' | 'resource';
+  /** Native SDK analytics pseudonym, not a GitHub login or a derived actor key. */
+  actorId?: string;
   /** Span status ERROR; undefined when the source reported no status. */
   failed?: boolean;
 }
@@ -48,6 +62,17 @@ export function nonnegative(value: unknown): number | undefined {
     return undefined;
   }
   return value;
+}
+
+function tokenCount(value: unknown): number | undefined {
+  const count = nonnegative(value);
+  return count !== undefined && Number.isSafeInteger(count) ? count : undefined;
+}
+
+export interface SpanLinks {
+  traceId?: string;
+  parentSpanId?: string;
+  parentKnown?: boolean;
 }
 
 function text(value: unknown): string | undefined {
@@ -129,7 +154,8 @@ export function usageSpan(
   attributes: Record<string, unknown>,
   start: number,
   end: number,
-  status?: unknown
+  status?: unknown,
+  links: SpanLinks = {}
 ): UsageSpan | undefined {
   const key = text(id);
   const operation = text(attributes['gen_ai.operation.name']);
@@ -137,18 +163,29 @@ export function usageSpan(
     return undefined;
   }
   const nano = nonnegative(attributes['copilot_chat.copilot_usage_nano_aiu']);
+  const sdkNano = nonnegative(attributes['github.copilot.nano_aiu']);
+  const firstChunkSeconds = nonnegative(attributes['gen_ai.response.time_to_first_chunk']);
   return {
     id: key, operation, start, end,
     sessionId: text(attributes['copilot_chat.chat_session_id']) ?? text(attributes['gen_ai.conversation.id']),
+    nativeSessionId: text(attributes['copilot_chat.chat_session_id']),
+    conversationId: text(attributes['gen_ai.conversation.id']),
+    traceId: text(links.traceId),
+    parentSpanId: text(links.parentSpanId),
+    parentKnown: links.parentKnown === true && (links.parentSpanId === undefined || text(links.parentSpanId) !== undefined),
     model: text(attributes['gen_ai.response.model']) ?? text(attributes['gen_ai.request.model']) ?? null,
-    input: nonnegative(attributes['gen_ai.usage.input_tokens']),
-    output: nonnegative(attributes['gen_ai.usage.output_tokens']),
-    cached: nonnegative(attributes['gen_ai.usage.cache_read.input_tokens']),
-    reasoning: nonnegative(attributes['gen_ai.usage.reasoning.output_tokens']) ??
-      nonnegative(attributes['gen_ai.usage.reasoning_tokens']),
+    input: tokenCount(attributes['gen_ai.usage.input_tokens']),
+    output: tokenCount(attributes['gen_ai.usage.output_tokens']),
+    cached: tokenCount(attributes['gen_ai.usage.cache_read.input_tokens']),
+    cacheWrite: tokenCount(attributes['gen_ai.usage.cache_creation.input_tokens']),
+    reasoning: tokenCount(attributes['gen_ai.usage.reasoning.output_tokens']) ??
+      tokenCount(attributes['gen_ai.usage.reasoning_tokens']),
     credits: nano === undefined ? undefined : nano / 1_000_000_000,
+    sdkCredits: sdkNano === undefined ? undefined : sdkNano / 1_000_000_000,
+    sdk: attributes['github.copilot.nano_aiu'] !== undefined || attributes['github.copilot.cost'] !== undefined,
     ttft: nonnegative(attributes['copilot_chat.time_to_first_token']),
-    turns: nonnegative(attributes['copilot_chat.turn_count']),
+    firstChunk: firstChunkSeconds === undefined ? undefined : nonnegative(firstChunkSeconds * 1000),
+    turns: tokenCount(attributes['copilot_chat.turn_count']) ?? tokenCount(attributes['github.copilot.turn_count']),
     tool: text(attributes['gen_ai.tool.name']),
     promptLimit: nonnegative(attributes['copilot_chat.request.max_prompt_tokens']),
     auxiliary: !!attributes['copilot_chat.parent_chat_session_id'] || !!attributes['copilot_chat.debug_log_label'],
@@ -159,6 +196,7 @@ export function usageSpan(
       repositoryName(attributes['copilot_chat.repo.remote_url']),
     branch: text(attributes['github.copilot.git.branch']) ?? text(attributes['copilot_chat.repo.head_branch_name']),
     user: identityName(attributes['user.name']),
+    actorId: identityName(attributes['enduser.pseudo.id']),
     failed: spanFailed(status)
   };
 }
@@ -176,11 +214,48 @@ export function fileUsageSpan(record: unknown): UsageSpan | undefined {
   // Identity can also be set explicitly as a resource attribute; the span's own value wins.
   const resourceUser = resourceAttributes(record)['user.name'];
   const attributes = r.attributes as Record<string, unknown>;
-  return usageSpan(
+  const parentContext = r.parentSpanContext && typeof r.parentSpanContext === 'object'
+    ? r.parentSpanContext as Record<string, unknown> : undefined;
+  const rawParent = r.parentSpanId ?? parentContext?.spanId;
+  const parentSpanId = text(rawParent);
+  const span = usageSpan(
     r.spanId,
     resourceUser !== undefined && attributes['user.name'] === undefined ? { ...attributes, 'user.name': resourceUser } : attributes,
-    hrToMs(r.startTime), hrToMs(r.endTime), status
+    hrToMs(r.startTime), hrToMs(r.endTime), status,
+    {
+      traceId: text(r.traceId), parentSpanId,
+      parentKnown: (r.parentSpanContext == null || text(parentContext?.spanId) !== undefined) &&
+        (r.parentSpanId == null || text(r.parentSpanId) !== undefined)
+    }
   );
+  if (span?.user) span.userSource = attributes['user.name'] === undefined && resourceUser !== undefined ? 'resource' : 'span';
+  return span;
+}
+
+/** A database copy wins known values; absent optional metadata can still come from the same file span. */
+export function mergeUsageSpan(file: UsageSpan | undefined, db: UsageSpan): UsageSpan {
+  if (!file) return db;
+  return {
+    ...file, ...db,
+    nativeSessionId: db.nativeSessionId ?? file.nativeSessionId,
+    sessionId: db.nativeSessionId ?? file.nativeSessionId ?? db.sessionId ?? file.sessionId,
+    input: db.input ?? file.input, output: db.output ?? file.output,
+    cached: db.cached ?? file.cached, cacheWrite: db.cacheWrite ?? file.cacheWrite,
+    reasoning: db.reasoning ?? file.reasoning, credits: db.credits ?? file.credits,
+    sdkCredits: db.sdkCredits ?? file.sdkCredits, sdk: db.sdk || file.sdk,
+    ttft: db.ttft ?? file.ttft, firstChunk: db.firstChunk ?? file.firstChunk,
+    traceId: db.traceId ?? file.traceId, conversationId: db.conversationId ?? file.conversationId,
+    parentKnown: db.parentKnown || file.parentKnown,
+    parentSpanId: db.parentKnown ? db.parentSpanId : file.parentSpanId,
+    actorId: db.actorId ?? file.actorId, user: db.user ?? file.user,
+    userSource: db.user !== undefined ? db.userSource : file.userSource,
+    repository: db.repository ?? file.repository, branch: db.branch ?? file.branch,
+    effort: db.effort ?? file.effort, parentSessionId: db.parentSessionId ?? file.parentSessionId,
+    auxiliary: db.auxiliary || file.auxiliary,
+    promptLimit: db.promptLimit ?? file.promptLimit, turns: db.turns ?? file.turns,
+    model: db.model ?? file.model, agent: db.agent ?? file.agent, tool: db.tool ?? file.tool,
+    failed: db.failed ?? file.failed
+  };
 }
 
 function tally(rows: Map<string | null, CallTally>, key: string | null, credits: number | undefined): void {
@@ -193,44 +268,79 @@ function tally(rows: Map<string | null, CallTally>, key: string | null, credits:
   rows.set(key, row);
 }
 
-type ActorIdentity = { user: string; at: number };
+type ActorIdentity = { user?: string; actorId?: string; userSource?: 'span' | 'resource' };
+type WorkContext = { repository?: string; branch?: string };
+type Timeline<T> = Map<string, Array<T & { at: number; nativeSessionId?: string }>>;
+type ContextIndexes<T> = { session: Timeline<T>; conversation: Timeline<T>; trace: Timeline<T> };
 
-function rememberActor(timeline: Map<string, ActorIdentity[]>, sessionId: string, actor: ActorIdentity): void {
-  const entries = timeline.get(sessionId) ?? [];
-  entries.push(actor);
-  timeline.set(sessionId, entries);
+function indexes<T>(): ContextIndexes<T> {
+  return { session: new Map(), conversation: new Map(), trace: new Map() };
 }
 
-function actorAt(timeline: Map<string, ActorIdentity[]>, sessionId: string | undefined, at: number): string | undefined {
-  if (!sessionId) {
-    return undefined;
+function remember<T>(maps: ContextIndexes<T>, span: UsageSpan, context: T): void {
+  const keys: Array<[Timeline<T>, string | undefined]> = [
+    [maps.session, span.sessionId], [maps.conversation, span.conversationId], [maps.trace, span.traceId]
+  ];
+  for (const [map, key] of keys) {
+    if (!key) continue;
+    const entries = map.get(key) ?? [];
+    entries.push({ ...context, at: span.start, nativeSessionId: span.nativeSessionId });
+    map.set(key, entries);
   }
-  const entries = timeline.get(sessionId);
-  if (!entries?.length) {
-    return undefined;
+}
+
+function sortContexts<T>(maps: ContextIndexes<T>): void {
+  for (const map of Object.values(maps)) {
+    for (const entries of map.values()) entries.sort((a, b) => a.at - b.at);
   }
-  // A call that started before every identity-bearing agent span stays unattributed rather than taking a later account.
-  let match: ActorIdentity | undefined;
-  for (const entry of entries) {
-    if (entry.at <= at) {
+}
+
+function contextAt<T>(maps: ContextIndexes<T>, span: UsageSpan): T | undefined {
+  const keys: Array<[Timeline<T>, string | undefined, boolean]> = [
+    [maps.session, span.sessionId, false], [maps.conversation, span.conversationId, true],
+    [maps.session, span.parentSessionId, false], [maps.trace, span.traceId, true]
+  ];
+  for (const [map, key, fallback] of keys) {
+    if (!key) continue;
+    let match: T | undefined;
+    for (const entry of map.get(key) ?? []) {
+      if (entry.at > span.start) break;
+      if (fallback && span.nativeSessionId && entry.nativeSessionId &&
+        entry.nativeSessionId !== span.nativeSessionId && entry.nativeSessionId !== span.parentSessionId) continue;
       match = entry;
-    } else {
-      break;
     }
+    if (match) return match;
   }
-  return match?.user;
+  return undefined;
 }
 
 function distinctActorUsers(entries: ActorIdentity[]): string[] {
   const seen = new Set<string>();
   const users: string[] = [];
   for (const entry of entries) {
-    if (!seen.has(entry.user)) {
+    if (entry.user && !seen.has(entry.user)) {
       seen.add(entry.user);
       users.push(entry.user);
     }
   }
   return users;
+}
+
+function sdkRoot(span: UsageSpan, spans: Map<string, UsageSpan>): 'root' | 'nested' | 'unknown' {
+  if (!span.parentKnown) return 'unknown';
+  const seen = new Set([span.id]);
+  let nested = false;
+  let parentId = span.parentSpanId;
+  while (parentId) {
+    if (seen.has(parentId)) return 'unknown';
+    seen.add(parentId);
+    const parent = spans.get(parentId);
+    if (!parent || (span.traceId && parent.traceId && span.traceId !== parent.traceId)) return 'unknown';
+    if (parent.operation === 'invoke_agent') nested = true;
+    if (!parent.parentKnown) return 'unknown';
+    parentId = parent.parentSpanId;
+  }
+  return nested ? 'nested' : 'root';
 }
 
 function sessionActorLabel(users: string[]): string | undefined {
@@ -257,31 +367,44 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   }
 
   // Agent spans carry the git context; the model calls under them do not.
-  const work = new Map<string, { repository?: string; branch?: string; at: number }>();
-  // Keep per-call user attribution time-ordered so account switches do not rewrite earlier calls.
-  const actorTimeline = new Map<string, ActorIdentity[]>();
+  const work = indexes<WorkContext>();
+  const actors = indexes<ActorIdentity>();
+  const byId = new Map(unique.map((span) => [span.id, span]));
+  const tokens = new TokenTally();
   for (const span of unique) {
-    if (span.operation === 'invoke_agent' && span.sessionId && (span.repository || span.branch)) {
-      const known = work.get(span.sessionId);
-      if (!known || known.at <= span.start) {
-        work.set(span.sessionId, { repository: span.repository, branch: span.branch, at: span.start });
-      }
+    if (span.operation === 'invoke_agent' && (span.repository || span.branch)) {
+      remember(work, span, { repository: span.repository, branch: span.branch });
     }
-    if (span.operation === 'invoke_agent' && span.sessionId && span.user) {
-      rememberActor(actorTimeline, span.sessionId, { user: span.user, at: span.start });
+    if (span.operation === 'invoke_agent' && (span.user || span.actorId)) {
+      remember(actors, span, { user: span.user, actorId: span.actorId, userSource: span.userSource });
     }
   }
-  for (const entries of actorTimeline.values()) {
-    entries.sort((a, b) => a.at - b.at);
-  }
+  sortContexts(work);
+  sortContexts(actors);
   const byModel = new Map<string | null, CallTally>();
   const byCaller = new Map<string | null, CallTally>();
   const byEffort = new Map<string | null, CallTally>();
   const byRepository = new Map<string | null, CallTally>();
   const byUser = new Map<string | null, CallTally>();
+  const byActorId = new Map<string | null, CallTally>();
 
   for (const span of unique) {
     digest.available = true;
+    if (span.sdk) {
+      digest.sdkCredits.available = true;
+      if (span.operation === 'chat') digest.sdkCredits.modelCalls++;
+      if (span.operation === 'invoke_agent') {
+        const root = sdkRoot(span, byId);
+        if (root === 'unknown') digest.sdkCredits.unclassifiedInvocations++;
+        if (root === 'root') {
+          digest.sdkCredits.invocations++;
+          if (span.sdkCredits !== undefined) {
+            digest.sdkCredits.reportedInvocations++;
+            digest.sdkCredits.credits += span.sdkCredits;
+          }
+        }
+      }
+    }
     let session: SpanSession | undefined;
     if (span.sessionId) {
       session = sessions.get(span.sessionId);
@@ -308,6 +431,11 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       digest.outputTokens += span.output ?? 0;
       digest.cachedTokens += span.cached ?? 0;
       digest.reasoningTokens += span.reasoning ?? 0;
+      digest.cacheWriteTokens += span.cacheWrite ?? 0;
+      tokens.add({
+        inputTokens: span.input, outputTokens: span.output, cacheReadTokens: span.cached,
+        cacheWriteTokens: span.cacheWrite, reasoningTokens: span.reasoning
+      });
       digest.chatCalls++;
       if (span.credits !== undefined) {
         digest.creditCalls++;
@@ -320,16 +448,22 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
           digest.sessionlessCredits += span.credits;
         }
       }
-      const repository = work.get(span.sessionId ?? '')?.repository ?? work.get(span.parentSessionId ?? '')?.repository;
-      const user = span.user ?? actorAt(actorTimeline, span.sessionId, span.start) ?? actorAt(actorTimeline, span.parentSessionId, span.start);
+      const repository = contextAt(work, span)?.repository;
+      const actor = contextAt(actors, span);
+      const user = span.user ?? actor?.user;
+      const userSource = span.user ? span.userSource : actor?.userSource;
+      if (user && userSource === 'resource') digest.configuredUserCalls++;
+      const actorId = span.actorId ?? actor?.actorId;
       tally(byModel, span.model, span.credits);
       tally(byCaller, span.agent ?? null, span.credits);
       tally(byEffort, span.effort ?? null, span.credits);
       tally(byRepository, repository ?? null, span.credits);
       tally(byUser, user ?? null, span.credits);
+      tally(byActorId, actorId ?? null, span.credits);
       if (span.ttft !== undefined) {
         digest.ttftMs.push(span.ttft);
       }
+      if (span.firstChunk !== undefined) digest.firstChunkMs.push(span.firstChunk);
       if (session) {
         session.llmCalls++;
         if (span.input !== undefined && span.output !== undefined) {
@@ -372,14 +506,15 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
       }
     }
   }
-  for (const [sessionId, context] of work) {
+  for (const [sessionId, timeline] of work.session) {
+    const context = timeline[timeline.length - 1];
     const session = sessions.get(sessionId);
     if (session) {
       session.repository = context.repository;
       session.branch = context.branch;
     }
   }
-  for (const [sessionId, timeline] of actorTimeline) {
+  for (const [sessionId, timeline] of actors.session) {
     const session = sessions.get(sessionId);
     if (session) {
       const users = distinctActorUsers(timeline);
@@ -392,6 +527,10 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   digest.byEffort = [...byEffort.values()];
   digest.byRepository = [...byRepository.values()];
   digest.byUser = [...byUser.values()];
+  digest.byActorId = [...byActorId.values()];
+  digest.tokenCoverage = tokens.coverage(digest.chatCalls);
+  digest.cacheReadRatio = tokens.cacheReadRatio() ?? undefined;
+  digest.cacheReadRatioCoverage = tokens.ratioCoverage(digest.chatCalls);
   for (const span of latestCalls.values()) {
     if (span.promptLimit && span.input !== undefined) {
       const context = {

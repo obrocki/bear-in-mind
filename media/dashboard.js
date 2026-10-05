@@ -18,18 +18,10 @@
   const SVG = 'http://www.w3.org/2000/svg';
 
   /** Single source of truth for colour: everything comes from dashboard.css. */
-  const palette = (function () {
-    const style = getComputedStyle(document.documentElement);
-    const read = (name, fallback) => (style.getPropertyValue(name) || '').trim() || fallback;
-    return {
-      cost: read('--cost', '#9fd8ff'),
-      costFrom: read('--cost-from', '#6fc3ff'),
-      costTo: read('--cost-to', '#d7f2ff'),
-      speed: read('--speed', '#7fe3b4'),
-      quality: read('--quality', '#ffcf7a'),
-      warn: read('--warn', '#ff8a6b')
-    };
-  })();
+  const palette = {
+    cost: 'var(--cost)', costFrom: 'var(--cost-from)', costTo: 'var(--cost-to)',
+    speed: 'var(--speed)', quality: 'var(--quality)', warn: 'var(--warn)'
+  };
 
   // ------------------------------------------------------------ formatting ---
 
@@ -218,10 +210,10 @@
     for (const row of rows) {
       const item = el('li');
       item.append(el('span', 'name', row.label));
-      item.append(el('span', 'amount', format(row.value)));
+      item.append(el('span', 'amount', row.unknown ? '—' : format(row.value)));
       const track = el('span', 'track');
       const fill = el('span');
-      fill.style.width = Math.max(1, ((row.value || 0) / peak) * 100) + '%';
+      fill.style.width = (row.unknown ? 0 : Math.max(1, ((row.value || 0) / peak) * 100)) + '%';
       track.append(fill);
       item.append(track);
       list.append(item);
@@ -340,8 +332,17 @@
     }
 
     const telemetryRows = [];
-    if (cost.cachedTokens > 0) telemetryRows.push({ label: 'Trace cache read', value: tokens(cost.cachedTokens) });
-    if (cost.reasoningTokens > 0) telemetryRows.push({ label: 'Trace reasoning', value: tokens(cost.reasoningTokens) });
+    if (cost.tokenCoverage) {
+      for (const [field, label, value] of [
+        ['cacheReadTokens', 'Trace cache read', cost.cachedTokens],
+        ['cacheWriteTokens', 'Trace cache write', cost.cacheWriteTokens],
+        ['reasoningTokens', 'Trace reasoning', cost.reasoningTokens]
+      ]) {
+        const reporting = cost.tokenCoverage[field];
+        telemetryRows.push({ label: label, value: reporting && reporting.reportedCalls ? tokens(value) : '—',
+          qualifier: reporting ? count(reporting.reportedCalls) + ' calls reporting' : 'not measured' });
+      }
+    }
     if (cost.burnPerHour > 0) telemetryRows.push({ label: 'Feed burn rate', value: tokens(cost.burnPerHour), qualifier: '/hr' });
     if (telemetryRows.length) {
       node.append(stats(telemetryRows));
@@ -395,6 +396,7 @@
   function renderTraceCredits(cost) {
     const trace = cost.traceCredits;
     if (!trace || !trace.available) return null;
+    if (!trace.calls) return renderSdkCredits(trace);
     const block = el('div', 'gauge');
     block.append(el('h3', null, 'Model-call credits · retained traces'));
     const rows = [
@@ -402,8 +404,11 @@
       { label: 'Calls reporting credits', value: count(trace.creditCalls) + ' / ' + count(trace.calls) }
     ];
     if (cost.cacheReadRatio !== undefined && cost.cacheReadRatio !== null) {
-      rows.push({ label: 'Cache-read share', value: percent(cost.cacheReadRatio), qualifier: 'of trace input' });
+      rows.push({ label: 'Cache-read share', value: percent(cost.cacheReadRatio), qualifier: 'paired reported counts' });
     }
+    if (cost.cacheReadRatioCoverage) rows.push({
+      label: 'Paired input / cache counts', value: count(cost.cacheReadRatioCoverage.reportedCalls) + ' / ' + count(trace.calls)
+    });
     block.append(stats(rows));
     const groups = [
       ['By model', trace.byModel],
@@ -416,7 +421,7 @@
       if (!rows || !rows.length) continue;
       block.append(el('h4', null, title));
       const list = barList(
-        rows.map((row) => ({ label: row.label + ' ×' + count(row.calls), value: row.credits })),
+        rows.map((row) => ({ label: row.label + ' ×' + count(row.calls), value: row.credits, unknown: !row.creditCalls })),
         credits
       );
       list.style.color = palette.cost;
@@ -427,10 +432,11 @@
       (trace.sinceMs !== undefined ? ' since ' + new Date(trace.sinceMs).toLocaleDateString() : ' in the last 7 days') +
       '. A diagnostic: never added to the meter or to transcript Session Cost. ×N is model calls.'));
     block.append(el('p', 'viz-caption',
-      'Repository comes from agent spans (github.copilot.git.*) in the same session or its parent session.'));
+      'Repository and user come from time-appropriate agent context via session, conversation, parent session or trace. Trace IDs do not create sessions.'));
     block.append(el('p', 'viz-caption', trace.userCalls > 0
-      ? 'User is the GitHub account in user.name on those agent spans (Copilot OTel identity capture). ' +
-        count(trace.userCalls) + ' / ' + count(trace.calls) + ' calls are attributed to a user.'
+      ? 'Identity is the reported user.name value, not a verified organisation join. ' +
+        count(trace.userCalls) + ' / ' + count(trace.calls) + ' calls are attributed to a user.' +
+        (trace.configuredUserCalls ? ' ' + count(trace.configuredUserCalls) + ' use configured resource identity rather than native span identity.' : '')
       : 'No user.name was observed. Turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) ' +
         'to attribute model calls to a GitHub account.'));
     if (trace.sessionlessCalls > 0) {
@@ -445,9 +451,35 @@
     }
     if (trace.creditCalls < trace.calls) {
       const unknown = trace.calls - trace.creditCalls;
-      block.append(el('p', 'missing', count(unknown) + (unknown === 1 ? ' call' : ' calls') +
-        ' reported no credits: unknown, not free.'));
+      block.append(el('p', 'missing', count(unknown) + (unknown === 1 ? ' call has' : ' calls have') +
+        ' no verified per-call credits: unknown, not free.'));
     }
+    if (trace.byActorId && trace.byActorId.some((row) => row.label !== 'no SDK actor id')) {
+      block.append(el('h4', null, 'SDK analytics actor IDs'));
+      block.append(el('p', 'viz-caption', 'enduser.pseudo.id is an opaque analytics identifier, not a GitHub login or verified organisation join.'));
+      for (const row of trace.byActorId) {
+        block.append(el('p', 'viz-caption', row.label + ' ×' + count(row.calls) + ' model calls'));
+      }
+    }
+    const sdk = renderSdkCredits(trace);
+    if (sdk) block.append(sdk);
+    return block;
+  }
+
+  function renderSdkCredits(trace) {
+    const sdk = trace.sdkCredits;
+    if (!sdk || !sdk.available) return null;
+    const block = el('div', 'gauge');
+    block.append(el('h3', null, 'SDK root-invocation credits · retained traces'));
+    block.append(stats([
+      { label: 'Reported root credits', value: sdk.reportedInvocations ? credits(sdk.credits) : '—' },
+      { label: 'Roots reporting credits', value: count(sdk.reportedInvocations) + ' / ' + count(sdk.invocations) },
+      { label: 'SDK model calls observed', value: count(sdk.modelCalls) },
+      { label: 'Unclassified agent ancestry', value: count(sdk.unclassifiedInvocations) }
+    ]));
+    block.append(el('p', 'viz-caption',
+      'github.copilot.nano_aiu is counted only on confirmed root invoke_agent spans. Nested/child totals are excluded; missing ancestry stays unknown. ' +
+      'This separate-grain diagnostic is never added to model-call credits, the meter or transcript Session Cost.'));
     return block;
   }
 
@@ -620,6 +652,9 @@
         { label: 'Slowest 5%', value: p95.value, estimate: p95.estimate },
         { label: 'Model call', value: llm.value, estimate: llm.estimate },
         { label: 'First token', value: ttft.value, estimate: ttft.estimate },
+        ...(speed.firstChunkMedianMs && speed.firstChunkMedianMs.value !== undefined
+          ? [{ label: 'First stream chunk', ...measure(speed.firstChunkMedianMs, duration) }]
+          : []),
         { label: 'Calls / agent invocation', value: turns.value, estimate: turns.estimate },
         { label: 'Agent invocation', ...measure(speed.agentMedianMs, duration) },
         {

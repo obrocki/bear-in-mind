@@ -391,7 +391,16 @@
       "id": "actor",
       "name": "actor",
       "grain": "person",
-      "fields": ["actor_key (salted pseudonym of user.name / user_login)", "device key (process.user.name, host.name), optional", "org", "team / cost centre"]
+      "fields": ["identity (native, conditional: user.name or SDK enduser.pseudo.id)", "actor_key (derived salted pseudonym of a verified account)", "device_key (derived, optional; resource inputs are not a person)", "org, team / cost centre (configured or externally enriched)"],
+      "fieldProvenance": [
+        { "field": "user.name", "kind": "native", "readPath": "VS Code invoke_agent span; export or span store", "conditions": "Opt-in, policy-controlled Local harness only; verify equivalence with organisation user_login before joining." },
+        { "field": "enduser.pseudo.id", "kind": "native", "readPath": "SDK/CLI invoke_agent OTel span", "conditions": "Opaque analytics identity when available, not a GitHub login. Session-store rows do not contain it." },
+        { "field": "actor_key", "kind": "derived", "readPath": "Collector normalization or a configured precomputed attribute", "conditions": "Use a governed salted pseudonym of a verified account; Copilot does not automatically generate this canonical field." },
+        { "field": "process.user.name, host.name", "kind": "native", "readPath": "Opt-in OTel resource attributes in export", "conditions": "Not stored in agent-traces.db. OS account/machine identity is not person identity and must not replace user.name." },
+        { "field": "device_key", "kind": "derived", "readPath": "Governed transformation of resource attributes, optional", "conditions": "Not a native Copilot field; store separately from a person key." },
+        { "field": "org, team / cost centre", "kind": "configured", "readPath": "Declared custom OTEL_RESOURCE_ATTRIBUTES or collector-added resource attributes", "conditions": "Readable from export if actually configured; not automatically emitted. github.copilot.github.org is the repository owner, not the person's employer or billing organisation." },
+        { "field": "org, team / cost centre", "kind": "enriched", "readPath": "Governed identity-directory or organisation/billing join", "conditions": "External assignment with provenance and effective dates; do not infer it from a username, machine or repository owner." }
+      ]
     },
     {
       "id": "ai_session",

@@ -79,6 +79,15 @@ it('ROI model separates locally measured work links from return and baseline', (
   assert.equal(outcomes.reconciliation.availability, 'needs-org-api');
 });
 
+it('research opens with the agreed executive summary and removes the requested scope paragraph', () => {
+  const research = fs.readFileSync(path.join(extensionDir, '..', '..', '..', 'docs', 'research', 'ai-telemetry-attribution.md'), 'utf8');
+  assert.match(research, /## Executive summary/);
+  assert.match(research, /Decision: proceed with source-aware usage and attribution measurement/);
+  assert.match(research, /What remains before ROI/);
+  assert.doesNotMatch(research, /^Scope: VS Code/m);
+  assert.doesNotMatch(research, /Earlier work reviewed: Bear in Mind/);
+});
+
 it('model distinguishes organisation aggregates, self-reported completion and billing scope', () => {
   const concepts = Object.fromEntries(model.concepts.map((c) => [c.id, c]));
   for (const id of ['tokens', 'mcp', 'skill']) assert.equal(concepts[id].surfaces.org.availability, 'partial', id);
@@ -94,6 +103,10 @@ it('model distinguishes organisation aggregates, self-reported completion and bi
   assert.match(model.reconciliation.allocationPolicy, /T3.*not measured/);
   assert.equal(model.verification.find((v) => v.claim === '--max-ai-credits and /limits exist').status, 'verified');
   assert.equal(model.verification.find((v) => v.claim.includes('limits reset grain')).status, 'unverified');
+  const actor = model.entities.find((e) => e.id === 'actor');
+  assert.deepEqual([...new Set(actor.fieldProvenance.map((p) => p.kind))].sort(), ['configured', 'derived', 'enriched', 'native']);
+  assert.equal(actor.fieldProvenance.find((p) => p.field === 'actor_key').kind, 'derived');
+  assert.match(actor.fieldProvenance.find((p) => p.kind === 'configured').conditions, /not automatically emitted/);
 });
 
 it('intersection includes only verified availability across every surface', async () => {
@@ -791,4 +804,27 @@ it('token subtotals preserve unknowns and cache ratios use the same reported-cal
   assert.equal(traces.totals.cacheWriteTokens, null);
   assert.deepEqual(traces.tokenCoverage.reasoningTokens, { reportedCalls: 1, share: 0.5 });
   assert.equal(traces.metricCoverage.cacheReadRatio.reportedCalls, 0);
+});
+
+it('canvas does not link a different native chat through a shared conversation or trace', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { tracesCoverage } = await load('coverage.mjs');
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, operation_name TEXT, start_time_ms INTEGER,
+      chat_session_id TEXT, conversation_id TEXT, trace_id TEXT);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+    INSERT INTO spans VALUES ('agent', 'invoke_agent', 100, 'one', 'shared', 'trace'),
+      ('chat', 'chat', 200, 'two', 'shared', 'trace');
+    INSERT INTO span_attributes VALUES ('agent', 'user.name', 'mona'),
+      ('agent', 'github.copilot.git.repository', 'o/one'),
+      ('chat', 'copilot_chat.copilot_usage_nano_aiu', '1000000000'),
+      ('chat', 'gen_ai.usage.cache_creation.input_tokens', '0');
+  `);
+  const result = tracesCoverage(db);
+  assert.equal(result.metrics.creditsToRepoShare, 0);
+  assert.equal(result.metrics.creditsToActorShare, 0);
+  assert.equal(result.totals.cacheWriteTokens, 0);
+  assert.equal(result.tokenCoverage.cacheWriteTokens.reportedCalls, 1);
 });

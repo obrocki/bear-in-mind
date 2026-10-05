@@ -482,13 +482,14 @@ it('breaks retained trace credits down by model, repository, caller and effort',
   assert.match(text, /Calls reporting credits 1 \/ 2/);
   assert.match(text, /By model opus ×1 149\.5/);
   assert.match(text, /By repository o\/r ×1 149\.5/);
-  assert.match(text, /no repository ×1 0/);
+  assert.match(text, /no repository ×1 —/);
   assert.match(text, /By caller panel\/editAgent ×1/);
   assert.match(text, /By reasoning effort high ×1/);
   assert.match(text, /1 \/ 2 calls carry no session ID.*none of them reported credits/);
-  assert.match(text, /1 call reported no credits: unknown, not free/);
+  assert.match(text, /1 call has no verified per-call credits: unknown, not free/);
   assert.match(text, /never added to the meter or to transcript Session Cost/);
-  assert.match(text, /Cache-read share 82%\s+of trace input/);
+  assert.match(text, /Cache-read share 90%\s+paired reported counts/);
+  assert.match(text, /Paired input \/ cache counts 1 \/ 2/);
   assert.match(text, /Latest observed: chat-1 · o\/r@main\./);
   assert.doesNotMatch(text, /By user/, 'no user group without captured identity');
   assert.match(text, /No user\.name was observed\. Turn on github\.copilot\.chat\.otel\.captureIdentity/);
@@ -499,7 +500,7 @@ it('groups retained trace credits by the user.name on agent spans and labels the
   d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans({ 'user.name': 'octocat' }) });
   const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
   assert.match(text, /By user octocat ×1 149\.5/);
-  assert.match(text, /no user identity ×1 0/);
+  assert.match(text, /no user identity ×1 —/);
   assert.match(text, /1 \/ 2 calls are attributed to a user/);
   assert.doesNotMatch(text, /No user\.name was observed/);
   assert.match(text, /Latest observed: chat-1 · o\/r@main · by octocat\./);
@@ -546,7 +547,7 @@ it('shows retained trace credits before the local meter has charged any usage', 
   const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
   assert.match(cost.textContent, /No new token counts/);
   assert.match(cost.textContent, /Model-call credits · retained traces/);
-  assert.match(cost.textContent, /Cache-read share 82%\s+of trace input/);
+  assert.match(cost.textContent, /Cache-read share 90%\s+paired reported counts/);
 });
 
 it('labels a session with a branch even when no repository is reported', () => {
@@ -559,4 +560,47 @@ it('labels a session with a branch even when no repository is reported', () => {
   const d = dashboard();
   d.render({}, new OtelRollup(), undefined, { spans });
   assert.match(d.nodes.sections.textContent, /Latest observed: solo · topic\./);
+});
+
+it('shows missing token fields as unknown, measured zero as zero, and paired reporting coverage', () => {
+  const spans = digestSpans([
+    usageSpan('pair', { 'gen_ai.operation.name': 'chat', 'gen_ai.usage.input_tokens': 100,
+      'gen_ai.usage.cache_read.input_tokens': 0, 'gen_ai.usage.reasoning.output_tokens': 0 }, 100, 200),
+    usageSpan('missing', { 'gen_ai.operation.name': 'chat', 'gen_ai.usage.input_tokens': 900 }, 200, 300)
+  ]);
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans });
+  const text = d.nodes.sections.children.find((s) => s.dataset.key === 'cost').textContent;
+  assert.match(text, /Trace cache read 0\s+1 calls reporting/);
+  assert.match(text, /Trace cache write —\s+0 calls reporting/);
+  assert.match(text, /Trace reasoning 0\s+1 calls reporting/);
+  assert.match(text, /Cache-read share 0%\s+paired reported counts/);
+  assert.match(text, /Paired input \/ cache counts 1 \/ 2/);
+});
+
+it('renders root-only SDK credits separately without claiming a model-call or session cost', () => {
+  const root = usageSpan('sdk', { 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.conversation.id': 'sdk',
+    'github.copilot.nano_aiu': 0, 'github.copilot.cost': 999 }, 100, 200, undefined, { parentKnown: true });
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, { spans: digestSpans([root]), totals: { input: 0, output: 0, credits: 0 } });
+  const text = d.nodes.sections.children.find((s) => s.dataset.key === 'cost').textContent;
+  assert.match(text, /SDK root-invocation credits · retained traces/);
+  assert.match(text, /Reported root credits 0/);
+  assert.match(text, /Roots reporting credits 1 \/ 1/);
+  assert.match(text, /never added to model-call credits, the meter or transcript Session Cost/);
+  assert.doesNotMatch(text, /Model-call credits · retained traces/);
+});
+
+it('uses CSS-variable chart paints so theme changes do not need a new snapshot', () => {
+  const d = dashboard();
+  const rollup = new OtelRollup();
+  rollup.ingest({ resource: {}, scopeMetrics: [{ metrics: [{
+    descriptor: { name: 'gen_ai.client.token.usage' }, dataPoints: [
+      { attributes: { 'gen_ai.token.type': 'input' }, endTime: [1, 0], count: 1, sum: 100 },
+      { attributes: { 'gen_ai.token.type': 'input' }, endTime: [2, 0], count: 2, sum: 200 }
+    ]
+  }] }] });
+  d.render({}, rollup);
+  assert.match(renderer, /cost: 'var\(--cost\)'/);
+  assert.doesNotMatch(renderer, /getComputedStyle\(document.documentElement\)/);
 });

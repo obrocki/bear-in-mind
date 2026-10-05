@@ -65,6 +65,10 @@ tool calls. Task-completion events are self-reports, not correctness signals.
 The **Data model** tab carries the billing reconciliation contract: preserve
 query scope, compare matching gross AI-credit consumption, and keep discounts,
 net billed amounts and T3 allocations separate. Billing is not connected here.
+Its **Actor field provenance** table distinguishes native identity/resource
+signals, derived actor/device keys, configured organisational attributes and
+external enrichment. Source capability does not mean that this local store
+collected those values.
 
 ### Intersection
 
@@ -128,6 +132,7 @@ Open input also accepts `sessionStorePath` and `tracesDbPath` overrides.
 | --- | --- |
 | `extension.mjs` | Canvas declaration, actions and per-panel state |
 | `lib/coverage.mjs` | Store discovery and coverage computation |
+| `lib/tokenCoverage.cjs`, `lib/tokenCoverage.d.cts` | Shared paired-count and reporting-coverage logic; the declaration supplies the VS Code extension's type contract |
 | `lib/server.mjs` | Loopback HTTP server, JSON API and server-sent events |
 | `lib/model.mjs` | Loads the committed research files |
 | `ui/` | Static front end (no build step, no dependencies) |
@@ -144,7 +149,7 @@ who opens this repository. To build another canvas from it:
 | --- | --- |
 | `lib/server.mjs` | Generic per-panel loopback server: static files, JSON API, server-sent events, and Host/Origin checks against DNS rebinding and cross-site posts. Pass your own `uiDir` and `api`. |
 | `ui/dom.js`, `ui/markdown.js` | Safe rendering: nodes built with text only, never HTML strings; links limited to `http(s)`. |
-| `lib/coverage.mjs` | Read-only access to the Copilot session store and VS Code `agent-traces.db`, with a temporary-copy fallback when a database is locked. |
+| `lib/coverage.mjs`, `lib/tokenCoverage.cjs` | Read-only local store access and shared token-reporting coverage; include both files when reusing the reader. |
 | `extension.mjs` | Pattern for a canvas with an input schema, validated actions and cleanup on close. |
 
 Copy the folder to `.github/extensions/<name>/` (shared with the repository) or
