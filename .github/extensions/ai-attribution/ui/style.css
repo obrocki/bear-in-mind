@@ -1,17 +1,79 @@
 :root {
-  --bg: var(--background-color-default, #ffffff);
-  --fg: var(--text-color-default, #1f2328);
-  --muted: var(--text-color-muted, #59636e);
-  --border: var(--border-color-default, #d1d9e0);
-  --focus: var(--color-focus-outline, #0969da);
-  --green: var(--true-color-green, #1a7f37);
-  --yellow: var(--true-color-yellow, #9a6700);
-  --orange: var(--true-color-orange, #bc4c00);
-  --red: var(--true-color-red, #d1242f);
-  --blue: var(--true-color-blue, #0969da);
-  --purple: var(--true-color-purple, #8250df);
+  color-scheme: light;
+  --fallback-bg: #ffffff;
+  --fallback-fg: #1f2328;
+  --fallback-muted: #59636e;
+  --fallback-border: #d1d9e0;
+  --fallback-green: #1a7f37;
+  --fallback-yellow: #9a6700;
+  --fallback-orange: #bc4c00;
+  --fallback-red: #d1242f;
+  --fallback-blue: #0969da;
+  --fallback-purple: #8250df;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-canvas-color-mode]) {
+    color-scheme: dark;
+    --fallback-bg: #0d1117;
+    --fallback-fg: #f0f6fc;
+    --fallback-muted: #9198a1;
+    --fallback-border: #3d444d;
+    --fallback-green: #3fb950;
+    --fallback-yellow: #d29922;
+    --fallback-orange: #ffa657;
+    --fallback-red: #f85149;
+    --fallback-blue: #58a6ff;
+    --fallback-purple: #bc8cff;
+  }
+}
+
+:root[data-canvas-color-mode='dark'] {
+  color-scheme: dark;
+  --fallback-bg: #0d1117;
+  --fallback-fg: #f0f6fc;
+  --fallback-muted: #9198a1;
+  --fallback-border: #3d444d;
+  --fallback-green: #3fb950;
+  --fallback-yellow: #d29922;
+  --fallback-orange: #ffa657;
+  --fallback-red: #f85149;
+  --fallback-blue: #58a6ff;
+  --fallback-purple: #bc8cff;
+}
+
+:root,
+body {
+  --bg: var(--background-color-default, var(--fallback-bg));
+  --fg: var(--text-color-default, var(--fallback-fg));
+  --muted: var(--text-color-muted, var(--fallback-muted));
+  --border: var(--border-color-default, var(--fallback-border));
+  --focus: var(--color-focus-outline, var(--fallback-blue));
+  --green: var(--true-color-green, var(--fallback-green));
+  --yellow: var(--true-color-yellow, var(--fallback-yellow));
+  --orange: var(--true-color-orange, var(--fallback-orange));
+  --red: var(--true-color-red, var(--fallback-red));
+  --blue: var(--true-color-blue, var(--fallback-blue));
+  --purple: var(--true-color-purple, var(--fallback-purple));
   --surface: color-mix(in srgb, var(--fg) 4%, var(--bg));
   --radius: 8px;
+}
+
+:root[data-canvas-theme='light'],
+:root[data-canvas-theme='dark'],
+:root[data-canvas-theme='light'] body,
+:root[data-canvas-theme='dark'] body {
+  --bg: var(--fallback-bg);
+  --fg: var(--fallback-fg);
+  --muted: var(--fallback-muted);
+  --border: var(--fallback-border);
+  --focus: var(--fallback-blue);
+  --green: var(--fallback-green);
+  --yellow: var(--fallback-yellow);
+  --orange: var(--fallback-orange);
+  --red: var(--fallback-red);
+  --blue: var(--fallback-blue);
+  --purple: var(--fallback-purple);
 }
 
 * {
@@ -383,7 +445,8 @@ th.num {
   margin-bottom: 12px;
 }
 .toolbar select,
-.toolbar button {
+.toolbar button,
+.theme-control select {
   font: inherit;
   color: var(--fg);
   background: var(--bg);
@@ -391,6 +454,15 @@ th.num {
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
+}
+
+.theme-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0;
 }
 
 .callout {

@@ -105,6 +105,9 @@ const CONTENT_ATTRIBUTES = new Set([
   'gen_ai.tool.definitions',
   'gen_ai.tool.call.arguments',
   'gen_ai.tool.call.result',
+  'gen_ai.skill.description',
+  'gen_ai.skill.source.uri',
+  'process.executable.path',
   'copilot_chat.user_request',
   'copilot_chat.prompt_context',
   'copilot_chat.prompt_instructions',
@@ -676,6 +679,13 @@ export class OtelRollup {
 
   // ------------------------------------------------------------- queries ----
 
+  hasAttribute(metric: string, key: string): boolean {
+    for (const s of this.allSeries()) {
+      if (s.metric === metric && s.attributes[key] !== undefined) return true;
+    }
+    return false;
+  }
+
   /** Instrument total, with documented event fallback when no metric measurements exist. */
   total(metric: string, where?: Record<string, string>): number {
     let sum = 0;
@@ -853,6 +863,10 @@ export const AGENT_DURATION = 'copilot_chat.agent.invocation.duration';
 export const AGENT_TURNS = 'copilot_chat.agent.turn.count';
 export const SESSION_COUNT = 'copilot_chat.session.count';
 export const TIME_TO_FIRST_TOKEN = 'copilot_chat.time_to_first_token';
+export const FIRST_CHUNK_DURATION = 'gen_ai.client.operation.time_to_first_chunk';
+export const SDK_AGENT_DURATION = 'gen_ai.invoke_agent.duration';
+export const SDK_TOOL_CALL_COUNT = 'github.copilot.tool.call.count';
+export const SDK_TOOL_CALL_DURATION = 'github.copilot.tool.call.duration';
 export const TOOL_CALL_COUNT = 'copilot_chat.tool.call.count';
 export const TOOL_CALL_DURATION = 'copilot_chat.tool.call.duration';
 export const EDIT_ACCEPTANCE = 'copilot_chat.edit.acceptance.count';

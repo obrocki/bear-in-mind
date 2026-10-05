@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+## 0.6.3
+
+- VS Code alignment: time-appropriate repository/actor context across native
+  session, conversation, parent-session and trace keys, with conflicting native
+  chat IDs kept separate and trace-only links never creating sessions.
+- Shared token subtotals/reporting coverage and paired input/cache ratios;
+  missing values remain unknown and numeric meter ledgers are unchanged.
+- SDK root-invocation credit diagnostics with verified retained ancestry,
+  separate from per-call VS Code credits, transcript Session Cost and the meter;
+  nested totals and request multipliers are never added as money.
+- Canonical first-stream-chunk timing, SDK agent/tool metrics with explicit
+  second-to-millisecond conversion and alias precedence, and typed operation
+  histograms separated from model-call timing.
+- Native SDK analytics IDs and configured resource identity retain provenance;
+  content-gated skill descriptions/source URIs and executable paths are redacted.
+- The packaged dashboard follows VS Code light/dark/high-contrast themes and
+  live SVG colors without changing the habitat artwork.
+- Research: executive summary of the measurement decision and remaining ROI
+  prerequisites; actor field provenance distinguishes native, configured,
+  derived and enriched values. Removed the requested introductory scope paragraph.
+- AI attribution canvas: time-appropriate repository context and consistent
+  trace-only coverage without fabricated sessions; nullable token subtotals,
+  per-field coverage and cache-read share over paired reported counts.
+- AI attribution canvas: **Intersection** across all five surfaces, excluding
+  missing/unverified fields and distinguishing native from conditional
+  availability. **App / system**, Light and Dark themes now work without host
+  token injection and follow live host/system changes.
+- Attribution research/model: current organisation token/customization
+  aggregates, self-reported task completion, primary-source CLI/OTel/billing
+  verification and explicit gross/discount/net billing reconciliation.
 - **User attribution** from VS Code 1.140's OpenTelemetry identity capture:
   `user.name` (the signed-in GitHub account) is read from agent spans in the
   trace store and file feed, inherited by model calls from the time-appropriate

@@ -368,3 +368,47 @@ it('reads work context, callers, reasoning effort and tool status from a current
   assert.equal(digest.toolStatusCalls, 2);
   assert.equal(digest.toolFailures, 1);
 });
+
+it('reads SDK ancestry, analytics identity, cache creation and first-chunk timing from SQLite', (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  let now = Date.UTC(2026, 9, 5, 12);
+  t.mock.method(Date, 'now', () => now);
+  const { dir, watcher, deltas } = fixture(t);
+  now += 2000;
+  const dbFile = path.join(dir, 'sdk-traces.db');
+  const db = new DatabaseSync(dbFile);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, operation_name TEXT, tool_name TEXT, start_time_ms INTEGER,
+      end_time_ms INTEGER, conversation_id TEXT, request_model TEXT, response_model TEXT, input_tokens INTEGER,
+      output_tokens INTEGER, cached_tokens INTEGER, reasoning_tokens INTEGER, trace_id TEXT, parent_span_id TEXT);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+  `);
+  const span = db.prepare('INSERT INTO spans VALUES (?, ?, NULL, ?, ?, ?, NULL, ?, ?, ?, ?, NULL, ?, ?)');
+  span.run('sdk-root', 'invoke_agent', now - 1000, now, 'sdk-session', 'sdk-model', null, null, null, 'sdk-trace', null);
+  span.run('sdk-call', 'chat', now - 900, now - 100, 'sdk-session', 'sdk-model', 100, 10, null, 'sdk-trace', 'sdk-root');
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  attr.run('sdk-root', 'github.copilot.nano_aiu', '2000000000');
+  attr.run('sdk-root', 'enduser.pseudo.id', 'opaque-id');
+  attr.run('sdk-root', 'github.copilot.git.repository', 'o/sdk');
+  attr.run('sdk-call', 'github.copilot.nano_aiu', '2000000000');
+  attr.run('sdk-call', 'gen_ai.response.time_to_first_chunk', '0.15');
+  attr.run('sdk-call', 'gen_ai.usage.cache_creation.input_tokens', '0');
+  attr.run('sdk-call', 'gen_ai.request.reasoning.level', 'high');
+  db.close();
+  globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = dbFile;
+  watcher.scan();
+  const digest = watcher.spanDigest;
+  assert.equal(digest.sdkCredits.credits, 2);
+  assert.equal(digest.sdkCredits.reportedInvocations, 1);
+  assert.equal(digest.credits, 0);
+  assert.equal(digest.creditCalls, 0, 'SDK root-grain values are not promoted to VS Code per-call credits');
+  assert.deepEqual(digest.firstChunkMs, [150]);
+  assert.equal(digest.tokenCoverage.cacheWriteTokens.reportedCalls, 1);
+  assert.equal(digest.tokenCoverage.cacheReadTokens.reportedCalls, 0);
+  assert.equal(digest.cacheReadRatio, undefined);
+  assert.equal(digest.byRepository[0].key, 'o/sdk');
+  assert.equal(digest.byActorId[0].key, 'opaque-id');
+  assert.equal(digest.byUser[0].key, null);
+  assert.equal(digest.byEffort[0].key, 'high');
+  assert.deepEqual(deltas, [{ input: 100, output: 10, requests: 1, source: 'traces' }], 'only the model call is metered');
+});

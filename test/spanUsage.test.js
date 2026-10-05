@@ -2,8 +2,8 @@
 
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { it } = require('node:test');
-const { digestSpans, fileUsageSpan, identityName, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
+const { describe, it } = require('node:test');
+const { digestSpans, fileUsageSpan, identityName, mergeUsageSpan, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
 const { buildCost, buildQuality, buildSpeed, buildTraceCredits, selectedSession, sessionComparisons } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 const { OtelRollup, classify } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelParse.js'));
 const start = Date.UTC(2026, 8, 24, 12);
@@ -211,9 +211,36 @@ it('reads user.name from file spans, falling back to an explicit resource attrib
     attributes: { 'gen_ai.operation.name': 'invoke_agent', 'copilot_chat.chat_session_id': 's' }
   };
   assert.equal(fileUsageSpan(record).user, 'resource-user');
+  assert.equal(fileUsageSpan(record).userSource, 'resource');
   assert.equal(fileUsageSpan({ ...record, attributes: { ...record.attributes, 'user.name': 'span-user' } }).user, 'span-user');
   assert.equal(fileUsageSpan({ ...record, resource: { attributes: { 'host.name': 'laptop' } } }).user, undefined);
   assert.doesNotMatch(JSON.stringify(fileUsageSpan(record)), /alice|laptop/);
+});
+
+it('keeps configured resource identity provenance when inherited by a model call', () => {
+  const agent = fileUsageSpan({
+    spanId: 'configured-agent', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0],
+    resource: { attributes: { 'user.name': 'configured-user' } },
+    attributes: { 'gen_ai.operation.name': 'invoke_agent', 'gen_ai.conversation.id': 'configured' }
+  });
+  const call = usageSpan('configured-call', { 'gen_ai.operation.name': 'chat', 'gen_ai.conversation.id': 'configured' }, start + 10, start + 100);
+  const digest = digestSpans([agent, call]);
+  assert.equal(digest.configuredUserCalls, 1);
+  assert.equal(buildTraceCredits(digest).configuredUserCalls, 1);
+});
+
+it('does not mix typed agent-operation histograms into model-call latency or counts', () => {
+  const rollup = new OtelRollup();
+  rollup.ingest({ resource: {}, scopeMetrics: [{ metrics: [{
+    descriptor: { name: 'gen_ai.client.operation.duration' }, dataPoints: [
+      { attributes: { 'gen_ai.operation.name': 'invoke_agent' }, endTime: [1, 0], value: { count: 1, sum: 10, min: 10, max: 10, buckets: { boundaries: [10], counts: [1, 0] } } },
+      { attributes: { 'gen_ai.operation.name': 'chat' }, endTime: [1, 0], value: { count: 1, sum: 1, min: 1, max: 1, buckets: { boundaries: [1], counts: [1, 0] } } }
+    ]
+  }] }] });
+  const speed = buildSpeed({ rollup, spans: digestSpans([]) });
+  assert.equal(speed.llmCalls, 1);
+  assert.ok(speed.llmMedianMs.value <= 1000);
+  assert.ok(speed.agentMedianMs.value > speed.llmMedianMs.value);
 });
 
 it('folds long credit breakdowns into one remainder row', () => {
@@ -308,4 +335,174 @@ it('reports cache-read share from the same retained window as its denominator', 
   assert.equal(cost.traceCredits.available, true);
   assert.equal(buildCost({ rollup: new OtelRollup(), spans: digestSpans([]), totals: { input: 1, output: 0, credits: 0 } })
     .cacheReadRatio, undefined);
+});
+
+describe('telemetry alignment', () => {
+  it('resolves time-appropriate repository and actor context through every correlation key', () => {
+    for (const key of ['session', 'conversation', 'parent', 'trace']) {
+      const native = key === 'session' || key === 'parent' ? 's' : undefined;
+      const conversation = key === 'conversation' ? 'c' : undefined;
+      const traceId = key === 'trace' ? 't' : undefined;
+      const make = (id, operation, at, attributes = {}) => usageSpan(id, {
+        'gen_ai.operation.name': operation,
+        'copilot_chat.chat_session_id': operation === 'invoke_agent' || key === 'session' ? native : undefined,
+        'gen_ai.conversation.id': conversation,
+        'copilot_chat.parent_chat_session_id': key === 'parent' && operation === 'chat' ? 's' : undefined,
+        ...attributes
+      }, start + at, start + at + 10, undefined, { traceId });
+      const digest = digestSpans([
+        make('new', 'invoke_agent', 300, { 'github.copilot.git.repository': 'o/new', 'user.name': 'new-user' }),
+        make('old', 'invoke_agent', 100, { 'github.copilot.git.repository': 'o/old', 'user.name': 'old-user' }),
+        make('early', 'chat', 50, { 'copilot_chat.copilot_usage_nano_aiu': 1e9 }),
+        make('before', 'chat', 200, { 'copilot_chat.copilot_usage_nano_aiu': 2e9 }),
+        make('after', 'chat', 400, { 'copilot_chat.copilot_usage_nano_aiu': 3e9 }),
+      ]);
+      assert.deepEqual(Object.fromEntries(digest.byRepository.map((r) => [r.key ?? 'unknown', r.credits])), {
+        unknown: 1, 'o/old': 2, 'o/new': 3,
+      }, key);
+      assert.deepEqual(Object.fromEntries(digest.byUser.map((r) => [r.key ?? 'unknown', r.credits])), {
+        unknown: 1, 'old-user': 2, 'new-user': 3,
+      }, key);
+      if (key === 'trace') assert.equal(digest.sessions.length, 0, 'a trace does not fabricate a session');
+    }
+  });
+
+  it('does not inherit a different native chat identity through a shared conversation or trace', () => {
+    const make = (id, operation, native, attributes, at) => usageSpan(id, {
+      'gen_ai.operation.name': operation, 'copilot_chat.chat_session_id': native,
+      'gen_ai.conversation.id': 'shared', ...attributes
+    }, start + at, start + at + 10, undefined, { traceId: 'shared-trace' });
+    const digest = digestSpans([
+      make('agent', 'invoke_agent', 'one', { 'user.name': 'mona', 'github.copilot.git.repository': 'o/one' }, 0),
+      make('call', 'chat', 'two', {}, 10)
+    ]);
+    assert.equal(digest.byUser[0].key, null);
+    assert.equal(digest.byRepository[0].key, null);
+  });
+
+  it('reports unknown token fields and paired cache coverage without changing numeric meter subtotals', () => {
+    const make = (id, attributes) => usageSpan(id, { 'gen_ai.operation.name': 'chat', ...attributes }, start, start + 10);
+    const digest = digestSpans([
+      make('pair', { 'gen_ai.usage.input_tokens': 100, 'gen_ai.usage.cache_read.input_tokens': 50, 'gen_ai.usage.output_tokens': 0,
+        'gen_ai.usage.cache_creation.input_tokens': 0, 'gen_ai.usage.reasoning.output_tokens': 3 }),
+      make('missing-cache', { 'gen_ai.usage.input_tokens': 900 }),
+      make('invalid', { 'gen_ai.usage.input_tokens': -1, 'gen_ai.usage.reasoning.output_tokens': 1.5 }),
+      make('invalid-pair', { 'gen_ai.usage.input_tokens': 100, 'gen_ai.usage.cache_read.input_tokens': 101 })
+    ]);
+    assert.equal(digest.inputTokens, 1100);
+    assert.equal(digest.outputTokens, 0);
+    assert.equal(digest.cacheWriteTokens, 0);
+    assert.equal(digest.cacheReadRatio, 0.5);
+    assert.deepEqual(digest.cacheReadRatioCoverage, { reportedCalls: 1, share: 0.25 });
+    assert.deepEqual(digest.tokenCoverage.reasoningTokens, { reportedCalls: 1, share: 0.25 });
+    assert.equal(digest.tokenCoverage.cacheWriteTokens.reportedCalls, 1, 'a reported zero is known');
+    const unknown = digestSpans([make('unknown', { 'gen_ai.usage.input_tokens': 100 })]);
+    assert.equal(unknown.cachedTokens, 0, 'the ledger remains numeric');
+    assert.equal(unknown.tokenCoverage.cacheReadTokens.reportedCalls, 0);
+    assert.equal(unknown.cacheReadRatio, undefined, 'no paired reports is unknown, not 0%');
+  });
+
+  it('keeps canonical first-chunk seconds separate from legacy first-token milliseconds', () => {
+    const call = span('timing', 'chat', {
+      'gen_ai.response.time_to_first_chunk': 1.5, 'copilot_chat.time_to_first_token': 250
+    });
+    assert.equal(call.firstChunk, 1500);
+    assert.equal(call.ttft, 250);
+    const speed = buildSpeed({ spans: digestSpans([call]), rollup: new OtelRollup() });
+    assert.equal(speed.firstChunkMedianMs.value, 1500);
+    assert.equal(speed.ttftMedianMs.value, 250);
+    assert.equal(span('invalid', 'chat', { 'gen_ai.response.time_to_first_chunk': Infinity }).firstChunk, undefined);
+  });
+
+  it('counts SDK credits at confirmed root invocation grain, never summing children or adding multipliers', () => {
+    const make = (id, operation, parentSpanId, nano, traceId = 'sdk') => usageSpan(id, {
+      'gen_ai.operation.name': operation, 'gen_ai.conversation.id': 'sdk-session',
+      'github.copilot.nano_aiu': nano, 'github.copilot.cost': 999,
+      'enduser.pseudo.id': operation === 'invoke_agent' ? 'opaque-sdk-id' : undefined
+    }, start, start + 100, undefined, { traceId, parentSpanId, parentKnown: true });
+    const workflow = make('workflow', 'invoke_workflow', undefined, undefined);
+    const root = make('root', 'invoke_agent', 'workflow', 5e9);
+    const tool = make('tool', 'execute_tool', 'root', undefined);
+    const nested = make('nested', 'invoke_agent', 'tool', 3e9);
+    const child = make('child', 'chat', 'nested', 3e9);
+    const first = make('first', 'chat', 'root', 2e9);
+    const zero = make('zero-root', 'invoke_agent', undefined, 0, 'zero');
+    const orphan = make('orphan', 'invoke_agent', 'missing', 7e9);
+    const digest = digestSpans([workflow, root, root, tool, nested, child, first, zero, orphan, span('legacy', 'chat')]);
+    assert.equal(root.credits, undefined);
+    assert.equal(root.sdkCredits, 5);
+    assert.equal(digest.sdkCredits.invocations, 2);
+    assert.equal(digest.sdkCredits.reportedInvocations, 2);
+    assert.equal(digest.sdkCredits.credits, 5);
+    assert.equal(digest.sdkCredits.unclassifiedInvocations, 1);
+    assert.equal(digest.sdkCredits.modelCalls, 2);
+    assert.equal(digest.credits, 1.5, 'SDK roots are not added to per-call VS Code credits');
+    assert.equal(digest.byUser.find((r) => r.key !== null), undefined, 'pseudonyms are not GitHub logins');
+    assert.equal(digest.byActorId.find((r) => r.key === 'opaque-sdk-id').calls, 2);
+    assert.equal(digest.sessions.find((s) => s.sessionId === 'sdk-session').credits, undefined);
+  });
+
+  it('leaves SDK credits unknown with missing, cyclic or inconsistent ancestry', () => {
+    const make = (id, parentSpanId, parentKnown, traceId = 'sdk') => usageSpan(id, {
+      'gen_ai.operation.name': 'invoke_agent', 'github.copilot.nano_aiu': 2e9
+    }, start, start + 100, undefined, { parentSpanId, parentKnown, traceId });
+    const digest = digestSpans([
+      make('unknown', undefined, false),
+      make('cycle-a', 'cycle-b', true), make('cycle-b', 'cycle-a', true),
+      make('foreign', 'other-root', true), make('other-root', undefined, true, 'other')
+    ]);
+    assert.equal(digest.sdkCredits.credits, 2, 'only the independent confirmed root is counted');
+    assert.equal(digest.sdkCredits.unclassifiedInvocations, 4);
+    const record = {
+      spanId: 'bad-parent', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0],
+      parentSpanContext: 42, attributes: { 'gen_ai.operation.name': 'invoke_agent', 'github.copilot.nano_aiu': 2e9 }
+    };
+    assert.equal(fileUsageSpan(record).parentKnown, false);
+  });
+
+  it('merges optional file metadata with an older SQLite copy without duplicating usage', () => {
+    const record = {
+      spanId: 'shared', traceId: 'trace', parentSpanContext: { spanId: 'parent' },
+      startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0],
+      attributes: { 'gen_ai.operation.name': 'chat', 'github.copilot.nano_aiu': 2e9,
+        'gen_ai.response.time_to_first_chunk': 1.5, 'gen_ai.usage.input_tokens': 100 }
+    };
+    const file = fileUsageSpan(record);
+    const db = usageSpan('shared', { 'gen_ai.operation.name': 'chat', 'gen_ai.usage.input_tokens': 0 }, start, start + 1000);
+    const merged = mergeUsageSpan(file, db);
+    assert.equal(merged.input, 0, 'known database zero wins');
+    assert.equal(merged.traceId, 'trace');
+    assert.equal(merged.parentSpanId, 'parent');
+    assert.equal(merged.parentKnown, true);
+    assert.equal(merged.firstChunk, 1500);
+    assert.equal(merged.sdkCredits, 2);
+    assert.equal(merged.credits, undefined);
+  });
+
+  it('maps SDK tool counters and second-based timings without adding legacy aliases', () => {
+    const rollup = new OtelRollup();
+    rollup.ingest({ resource: {}, scopeMetrics: [{ metrics: [
+      { descriptor: { name: 'github.copilot.tool.call.count' }, dataPoints: [
+        { attributes: { success: true }, endTime: [1, 0], value: 3 },
+        { attributes: { success: false }, endTime: [1, 0], value: 1 }
+      ] },
+      { descriptor: { name: 'gen_ai.client.operation.time_to_first_chunk' }, dataPoints: [
+        { attributes: {}, endTime: [1, 0], value: { count: 2, sum: 3, min: 1, max: 2, buckets: { boundaries: [1, 2], counts: [1, 1, 0] } } }
+      ] },
+      { descriptor: { name: 'github.copilot.tool.call.duration' }, dataPoints: [
+        { attributes: {}, endTime: [1, 0], value: { count: 1, sum: 2, min: 2, max: 2, buckets: { boundaries: [2], counts: [1, 0] } } }
+      ] }
+    ] }] });
+    const spans = digestSpans([]);
+    const quality = buildQuality({ rollup, spans });
+    assert.equal(quality.toolCalls, 4);
+    assert.equal(quality.toolFailures, 1);
+    const speed = buildSpeed({ rollup, spans });
+    assert.ok(speed.firstChunkMedianMs.value > 0 && speed.firstChunkMedianMs.value <= 2000);
+    assert.ok(speed.toolMedianMs.value > 0 && speed.toolMedianMs.value <= 2000);
+    rollup.ingest({ resource: {}, scopeMetrics: [{ metrics: [{
+      descriptor: { name: 'copilot_chat.tool.call.count' }, dataPoints: [{ attributes: {}, endTime: [2, 0], value: 0 }]
+    }] }] });
+    assert.equal(buildQuality({ rollup, spans }).toolCalls, 0, 'measured legacy zero wins; overlapping aliases are not added');
+  });
 });

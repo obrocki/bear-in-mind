@@ -8,6 +8,7 @@
 // Set BROWSER_PATH if your Chrome/Edge install is somewhere unusual.
 
 const fs = require('fs');
+const assert = require('node:assert/strict');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -15,7 +16,7 @@ const { pathToFileURL } = require('url');
 
 const ROOT = path.resolve(__dirname, '..');
 const OUT = path.join(ROOT, 'docs', 'media');
-const PORT = Number(process.env.CDP_PORT || 9333);
+const PORT = Number(process.env.CDP_PORT || 0);
 
 const SHOTS = [
   { file: 'hero.png', page: 'shot.html', q: 'health=1&chrome=0&hud=0&pixelScale=4', w: 1200, h: 330, dsf: 1, settle: 9000 },
@@ -28,6 +29,10 @@ const SHOTS = [
   { file: 'melt-progression.png', page: 'grid.html', q: '', w: 1160, h: 330, dsf: 2, settle: 11000 },
   // The dashboard is static DOM, so it needs only long enough to paint.
   { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-light.png', page: 'dashboard.html', q: 'theme=light', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-high-contrast.png', page: 'dashboard.html', q: 'theme=high-contrast', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-high-contrast-light.png', page: 'dashboard.html', q: 'theme=high-contrast-light', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-sdk.png', page: 'dashboard.html', q: 'credits&sdk', w: 560, h: 1250, dsf: 2, settle: 1200 },
   { file: 'dashboard-context.png', page: 'dashboard.html', q: 'context', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 470, dsf: 2, settle: 1200 },
   { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 1000, dsf: 2, settle: 1200 },
@@ -81,16 +86,45 @@ function send(ws, method, params, sessionId) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForDevTools() {
+async function waitForDevTools(profile, browser) {
   for (let i = 0; i < 100; i++) {
+    if (browser.exitCode !== null) break;
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json/version`);
-      return await res.json();
+      const [port, endpoint] = fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split(/\r?\n/);
+      if (port && endpoint) return `ws://127.0.0.1:${port.trim()}${endpoint.trim()}`;
     } catch {
       await sleep(200);
     }
   }
   throw new Error('the browser never opened its DevTools endpoint');
+}
+
+async function evaluate(ws, sessionId, expression) {
+  const result = await send(ws, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  return result.result?.value;
+}
+
+async function verifyDashboardTheme(ws, sessionId) {
+  const result = await evaluate(ws, sessionId, `(() => {
+    const style = getComputedStyle(document.body);
+    const rgb = (color) => color.match(/[\\d.]+/g).slice(0, 3).map(Number);
+    const luminance = (color) => {
+      const c = rgb(color).map((v) => { const n = v / 255; return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4; });
+      return c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+    };
+    const bg = luminance(style.backgroundColor), fg = luminance(style.color);
+    const contrast = (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05);
+    const path = document.querySelector('.viz svg path[stroke]');
+    const originalClass = document.body.className;
+    const originalStroke = path && getComputedStyle(path).stroke;
+    window.setDashboardTheme(originalClass === 'vscode-light' ? 'dark' : 'light');
+    const changedStroke = path && getComputedStyle(path).stroke;
+    window.setDashboardTheme(originalClass.slice('vscode-'.length));
+    return { contrast, originalStroke, changedStroke, colorScheme: getComputedStyle(document.body).colorScheme };
+  })()`);
+  assert.ok(result.contrast >= 4.5, `dashboard body text contrast ${result.contrast}`);
+  if (result.originalStroke) assert.notEqual(result.originalStroke, result.changedStroke, 'SVG colors follow live theme changes without re-rendering');
 }
 
 (async () => {
@@ -113,8 +147,8 @@ async function waitForDevTools() {
     { stdio: 'ignore' }
   );
 
-  const version = await waitForDevTools();
-  const ws = new WebSocket(version.webSocketDebuggerUrl);
+  const endpoint = await waitForDevTools(profile, browser);
+  const ws = new WebSocket(endpoint);
   ws.addEventListener('message', (ev) => {
     const msg = JSON.parse(ev.data);
     if (!msg.id || !pending.has(msg.id)) return;
@@ -141,6 +175,7 @@ async function waitForDevTools() {
     // The scene eases toward its target health and the bear wanders, so give it
     // real time to settle into a frame worth photographing.
     await sleep(shot.settle);
+    if (shot.page === 'dashboard.html') await verifyDashboardTheme(ws, sessionId);
     const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png' }, sessionId);
     const buf = Buffer.from(data, 'base64');
     fs.writeFileSync(path.join(OUT, shot.file), buf);

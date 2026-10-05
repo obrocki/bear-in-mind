@@ -39,6 +39,31 @@
     return { postMessage: function () {} };
   };
 </script>
+<script>
+  const theme = new URLSearchParams(location.search).get('theme') || 'dark';
+  const themes = {
+    dark: { background: '#1f1f1f', foreground: '#cccccc', muted: '#a0a0a0', surface: '#252526', border: '#454545', blue: '#3794ff', green: '#89d185', yellow: '#d7ba7d' },
+    light: { background: '#ffffff', foreground: '#333333', muted: '#616161', surface: '#f3f3f3', border: '#c8c8c8', blue: '#006ab1', green: '#1a7f37', yellow: '#795e00' },
+    'high-contrast': { background: '#000000', foreground: '#ffffff', muted: '#ffffff', surface: '#000000', border: '#ffffff', blue: '#ffffff', green: '#ffffff', yellow: '#ffffff' },
+    'high-contrast-light': { background: '#ffffff', foreground: '#000000', muted: '#000000', surface: '#ffffff', border: '#000000', blue: '#000000', green: '#000000', yellow: '#000000' }
+  };
+  if (!themes[theme]) throw new Error('Unknown dashboard theme: ' + theme);
+  window.setDashboardTheme = function (name) {
+    const selected = themes[name];
+    if (!selected) throw new Error('Unknown dashboard theme: ' + name);
+    document.body.className = 'vscode-' + name;
+    const values = {
+      'editor-background': selected.background, 'editor-foreground': selected.foreground,
+      'descriptionForeground': selected.muted, 'sideBar-background': selected.surface,
+      'panel-border': selected.border, 'charts-blue': selected.blue, 'charts-green': selected.green,
+      'charts-yellow': selected.yellow, 'errorForeground': selected.foreground
+    };
+    if (name.includes('high-contrast')) values.contrastBorder = selected.border;
+    else document.body.style.removeProperty('--vscode-contrastBorder');
+    for (const [key, value] of Object.entries(values)) document.body.style.setProperty('--vscode-' + key, value);
+  };
+  window.setDashboardTheme(theme);
+</script>
 <script src="../media/dashboard.js"></script>
 <script>
   // Deterministic wobble, so re-running the tool does not churn the PNG.
@@ -67,6 +92,13 @@
       outputTokens: 281802,
       cachedTokens: 1204553,
       reasoningTokens: 18240,
+      cacheWriteTokens: 42000,
+      tokenCoverage: {
+        inputTokens: { reportedCalls: 125, share: 1 }, outputTokens: { reportedCalls: 125, share: 1 },
+        cacheReadTokens: { reportedCalls: 110, share: 110 / 125 }, cacheWriteTokens: { reportedCalls: 24, share: 24 / 125 },
+        reasoningTokens: { reportedCalls: 32, share: 32 / 125 }
+      },
+      cacheReadRatioCoverage: { reportedCalls: 110, share: 110 / 125 },
       credits: 37.5,
       budget: 0,
       countedTokens: 3184920,
@@ -223,6 +255,13 @@
     snapshot.speed.available = false;
     snapshot.quality.available = false;
     snapshot.session = undefined;
+  }
+
+  if (location.search.includes('sdk')) {
+    snapshot.cost.traceCredits.sdkCredits = {
+      available: true, modelCalls: 2, invocations: 1, reportedInvocations: 1, credits: 8.4, unclassifiedInvocations: 1
+    };
+    snapshot.cost.traceCredits.byActorId = [{ label: 'demo-sdk-actor-id', calls: 2, creditCalls: 0, credits: 0 }];
   }
 
   window.postMessage({ type: 'snapshot', snapshot: snapshot }, '*');
