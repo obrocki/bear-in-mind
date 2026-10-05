@@ -17,19 +17,57 @@ change your bill**, including on unlimited plans.
 
 ## Install
 
+### VS Code Marketplace
+
+Once the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=obrocki.bear-in-mind)
+is available, search for **Bear in Mind — Copilot Token Meter** by **obrocki** in
+VS Code's Extensions view, or run:
+
+```bash
+code --install-extension obrocki.bear-in-mind
+```
+
+If the listing is not available yet, install the VSIX below.
+
+### VSIX
+
 Download a `.vsix` from [Releases](https://github.com/obrocki/bear-in-mind/releases),
 then run:
 
 ```bash
-code --install-extension bear-in-mind-0.6.4.vsix
+code --install-extension bear-in-mind-0.6.5.vsix
 ```
 
 Use the downloaded filename if it differs. Open the Iceberg activity-bar icon.
 Every merge also updates the rolling
 [`dev` build](https://github.com/obrocki/bear-in-mind/releases/tag/dev).
 A new package version is released automatically after all `main` CI platforms
-pass. The release attaches a verified VSIX; Marketplace publishing additionally
-requires the repository's `VSCE_PAT` secret.
+pass. The release attaches an archive-checked VSIX; this is project-side
+packaging verification, not Marketplace certification. Automated Marketplace
+publishing additionally requires the repository's `VSCE_PAT` secret.
+
+### Requirements and compatibility
+
+- VS Code **desktop 1.95 or newer** on Windows, macOS or Linux. This is not a web
+  extension for `vscode.dev` or `github.dev`.
+- Copilot usage readings require GitHub Copilot Chat and the corresponding
+  local telemetry or chat-history data. Account allowance additionally requires
+  an explicit connection and authorized GitHub sign-in; local metering works
+  without that account connection.
+- Use current stable VS Code and Copilot Chat for the fullest telemetry support.
+  SQLite-backed trace readings and indexed chat titles require an extension
+  host that provides `node:sqlite`. Older hosts can still read JSON-lines
+  telemetry and transcript credits, but SQLite-only readings are unavailable.
+- Copilot identity capture requires the supported
+  `github.copilot.chat.otel.captureIdentity` setting in **VS Code 1.140 or newer**
+  and separate consent. Missing identity is not inferred.
+- Data files must be accessible to the extension host. Remote extension-host
+  placement can change which machine's telemetry and history are available.
+
+Bear in Mind is an independent extension, not an official GitHub or Microsoft
+product. The optional account connection uses an **unofficial GitHub API** that
+can change or fail. See [SECURITY.md](SECURITY.md) for the local data read,
+network requests, consent and disconnect behavior.
 
 ## The dashboard
 
