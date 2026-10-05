@@ -1,7 +1,7 @@
 import * as fs from 'fs';
-import { createRequire } from 'module';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { loadSqlite, type SqliteDatabase } from './sqlite';
 import { OtelRollup } from './otelParse';
 import { digestSpans, fileUsageSpan, mergeUsageSpan, usageSpan, type UsageSpan } from './spanUsage';
 import {
@@ -79,35 +79,6 @@ interface PersistedState {
   input: number;
   output: number;
   seeded: boolean;
-}
-
-/** The subset of `node:sqlite` this file uses. */
-interface SqliteDatabase {
-  prepare(sql: string): { all(...params: unknown[]): unknown[] };
-  close(): void;
-}
-interface SqliteModule {
-  DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase;
-}
-
-let sqliteModule: SqliteModule | null | undefined;
-
-/**
- * `node:sqlite` only exists on Node 22.5+. VS Code 1.139 has it, older builds do
- * not, and the extension must keep working either way — so this is resolved at
- * runtime and a failure just means the span source stays dark.
- */
-function loadSqlite(): SqliteModule | undefined {
-  if (sqliteModule !== undefined) {
-    return sqliteModule ?? undefined;
-  }
-  try {
-    const nodeRequire = createRequire(__filename);
-    sqliteModule = nodeRequire('node:sqlite') as SqliteModule;
-  } catch {
-    sqliteModule = null;
-  }
-  return sqliteModule ?? undefined;
 }
 
 /**

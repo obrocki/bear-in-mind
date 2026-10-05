@@ -1,8 +1,8 @@
 {
   "name": "bear-in-mind",
   "displayName": "Bear in Mind — Copilot Token Meter",
-  "description": "A polar bear's iceberg melts with Copilot token usage. Track tokens, speed and quality — not a spending cap.",
-  "version": "0.6.3",
+  "description": "A polar bear's iceberg tracks Copilot plan allowance and selected-chat context. See credits, tokens, speed and quality — not a spending cap.",
+  "version": "0.6.4",
   "publisher": "obrocki",
   "author": {
     "name": "Dawid Obrocki"
@@ -85,6 +85,10 @@
         "title": "Iceberg: Select Comparison Session"
       },
       {
+        "command": "iceberg.refreshAccountUsage",
+        "title": "Iceberg: Refresh Copilot Account Usage…"
+      },
+      {
         "command": "iceberg.open",
         "title": "Iceberg: Open Habitat in Editor",
         "icon": "$(open-preview)"
@@ -101,6 +105,11 @@
       {
         "command": "iceberg.restoreDefaults",
         "title": "Iceberg: Restore Defaults and Disconnect…"
+      },
+      {
+        "command": "iceberg.refreshAccountUsage",
+        "when": "view == iceberg.dashboard",
+        "group": "1_config"
       },
       {
         "command": "iceberg.telemetryDiagnostics",
@@ -166,16 +175,21 @@
     "configuration": {
       "title": "Iceberg",
       "properties": {
+        "iceberg.accountUsage.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow account usage after you explicitly connect with **Iceberg: Refresh Copilot Account Usage…**. Reads your plan allowance using VS Code's GitHub sign-in and GitHub's **unofficial** `copilot_internal/user` quota API. Restore clears the saved connection; an existing GitHub grant alone does not reconnect. No local transcripts or telemetry are sent. Legacy request quotas retain their units; pooled/unlimited plans stay unscaled."
+        },
         "iceberg.tokenBudget": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional personal visual token target. 0 (default) disables this fallback: without a reported prompt limit the ice stays unscaled. Not a Copilot allowance, context limit, environmental measurement or spending cap."
+          "description": "Optional personal visual token target used only when no usable account allowance or selected-session prompt limit is available. 0 (default) disables this fallback. Not a Copilot allowance, context limit, environmental measurement or spending cap."
         },
         "iceberg.trackCopilotChat": {
           "type": "boolean",
           "default": true,
-          "description": "Read session metadata and reported credits from local Copilot transcripts for comparison with Session Cost. Token snapshots are ignored; account quotas are not read."
+          "description": "Read displayed titles from VS Code's local chat-history index and reported credits from JSON/JSONL transcripts for comparison with Session Cost. Prompt/response content and token snapshots are ignored. Account quotas use the separate account-usage connection."
         },
         "iceberg.otel.enabled": {
           "type": "boolean",
@@ -209,7 +223,7 @@
           "default": 4000,
           "minimum": 1000,
           "maximum": 60000,
-          "description": "How often (ms) to check the chat transcripts for new token counts."
+          "description": "How often (ms) to check VS Code chat-history titles and transcript credits."
         },
         "iceberg.countInputTokens": {
           "type": "boolean",

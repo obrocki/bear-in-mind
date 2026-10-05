@@ -9,6 +9,7 @@
        ?empty   the not-yet-connected state
        ?waiting connected feed with no quality signals
        ?context latest-prompt gauge instead of local budget
+       ?account synthetic combined account usage and plan allowance
        ?credits scroll to the retained-trace credit breakdown
        ?narrow  sidebar width (the CSS breakpoint does the rest)
 -->
@@ -226,6 +227,23 @@
       missing: []
     }
   };
+
+  if (location.search.includes('account')) {
+    snapshot.session = undefined;
+    snapshot.cost.account = { status: 'ready', quota: {
+      login: 'octocat', plan: 'pro', unit: 'credits', unlimited: false,
+      allowance: 1000, used: 250, percentRemaining: 75, approximate: false,
+      fetchedAtMs: Date.now(), resetAtMs: Date.now() + 86400000
+    } };
+    snapshot.cost.basis = 'account';
+    snapshot.cost.health = 0.75;
+    snapshot.period = {
+      sinceMs: new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime(),
+      sessions: 3, credits: 37.5, creditSessions: 3, traceCreditSessions: 0,
+      inputTokens: 2903118, outputTokens: 281802, tracedSessions: 3,
+      traceSinceMs: Date.now() - 7 * 86400000
+    };
+  }
 
   if (location.search.includes('context')) {
     snapshot.cost.basis = 'context';

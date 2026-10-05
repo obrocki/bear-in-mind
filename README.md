@@ -2,8 +2,9 @@
 
 # 🐻‍❄️ Bear in Mind — Copilot Token Meter
 
-Track reported Copilot usage in your sidebar, with a dashboard for tokens,
-credits, speed and quality signals. The polar bear's ice is a **usage metaphor**,
+Track your reported Copilot plan allowance and combined account usage in your
+sidebar, with a dashboard for tokens, credits, speed and quality signals.
+Select a chat to compare its cost and reported prompt context. The polar bear's ice is a **usage metaphor**,
 not a measurement of energy consumption, CO2 or real ice loss.
 
 [![CI](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml/badge.svg)](https://github.com/obrocki/bear-in-mind/actions/workflows/ci.yml)
@@ -20,7 +21,7 @@ Download a `.vsix` from [Releases](https://github.com/obrocki/bear-in-mind/relea
 then run:
 
 ```bash
-code --install-extension bear-in-mind-0.6.3.vsix
+code --install-extension bear-in-mind-0.6.4.vsix
 ```
 
 Use the downloaded filename if it differs. Open the Iceberg activity-bar icon.
@@ -34,11 +35,11 @@ requires the repository's `VSCE_PAT` secret.
 
 Open **Iceberg: Open Token Dashboard** or the sidebar's *Cost, Speed, Quality* view.
 
-![Cost, speed and quality dashboard](docs/media/dashboard.png)
+![Combined Copilot plan allowance, local usage, speed and quality](docs/media/dashboard-account.png)
 
 | Section | Signals |
 | --- | --- |
-| Cost | Reported model-call tokens and credits, cache/reasoning subtotals, cache-read share and feed rate. Retained-trace credits by model, repository, user, caller and reasoning effort. Not a bill. |
+| Cost | Combined account usage and reported plan allowance; selected-session cost and prompt context. Local model-call tokens and credits, cache/reasoning subtotals, cache-read share and feed rate. Retained-trace credits by model, repository, user, caller and reasoning effort. Not a bill. |
 | Speed | Elapsed session duration, agent-invocation latency, model-call latency, legacy first token and canonical first stream chunk (kept separate), output throughput and slow tools. |
 | Quality | Edit acceptance, code survival, pull requests, tool success and response feedback. Not a correctness score. |
 
@@ -62,10 +63,32 @@ multiplier is not credits or money.
 
 ![Retained-trace credits by model, repository, caller and reasoning effort](docs/media/dashboard-credits.png)
 
-The gauge uses the comparison session's **reported prompt allowance** when
-available. Otherwise it stays **unscaled** unless you set a personal
-`iceberg.tokenBudget`; there is no default target. Neither setting is a Copilot
-limit or spending cap. The synthetic demo never changes usage.
+With **All sessions** (the default), the gauge uses GitHub's reported remaining
+**Copilot plan allowance across sessions and surfaces**, not one chat's context
+or the sum of local observations. Run **Iceberg: Refresh Copilot Account Usage…**
+or **Refresh account usage…** in the dashboard to explicitly connect account
+usage and authorize VS Code's GitHub sign-in. Once connected, the extension
+refreshes once a minute; it never prompts automatically. An existing GitHub
+sign-in grant alone does not connect account usage.
+
+The account connection uses the **unofficial `copilot_internal/user` API used
+by VS Code**. GitHub's documented billing usage APIs do not expose the same
+plan allowance. The quota response supplies the plan, remaining percentage,
+included allowance when reported, and reset date; no plan limits are hard-coded.
+Counts derived from percentages are labeled approximate. Legacy premium-request
+quotas and free-chat quotas retain their own units rather than becoming AI credits.
+Pooled/unlimited plans have no per-user denominator, so their account gauge stays
+unscaled; reported pooled credits can still be displayed.
+
+Selecting a comparison session switches the gauge to that session's **reported
+prompt allowance**, when available. Missing, failed, stale (over 15 minutes old)
+or reset account quotas and missing/stale prompt limits leave the ice
+**unscaled**, unless you explicitly set a personal `iceberg.tokenBudget`.
+Account errors are visible, and a missing pinned session never switches to
+another chat or account scope. Neither gauge is a spending cap. The synthetic
+demo never changes usage.
+
+![Habitat showing the reported Copilot plan allowance across all sessions](docs/media/panel-account.png)
 
 ### Understanding the readings
 
@@ -73,25 +96,33 @@ The dashboard and Copilot report different units and scopes:
 
 | Reading | Meaning |
 | --- | --- |
-| Copilot account credits and allowance | Billing-period values and reset date; Bear in Mind does not read them. |
+| Copilot account usage and allowance | GitHub quota API values across sessions and surfaces, with reported plan and reset date. Requires authorized GitHub sign-in; unofficial API, not an invoice. |
 | Copilot **Session Cost** | Compare with transcript credits for the same session. Uses VS Code's `max(sum(turn credits), reported session credits)` formula and includes existing history. |
 | Local tokens | Persisted metric/span usage since the meter start, reconciled by per-dimension maximum, plus labeled manual reports. Not a session or billing-period total. |
 | Trace credits | Reported on unique model-call spans. Coverage is shown; missing credits are unknown. Diagnostics only, never added to transcript credits or the meter. |
-| Context Window and gauge | The native window includes prompt and completion tokens against the selected model's full window. The gauge uses a trace's reported prompt allowance, not that full window. |
+| Gauge with All sessions | Remaining account allowance from GitHub, kept separate from local tokens and credits. Pooled/unlimited plans have no percentage denominator. |
+| Context Window and selected-session gauge | The native window includes prompt and completion tokens against the selected model's full window. The selected-session gauge uses a trace's reported prompt allowance, not that full window. |
 
 Use **Iceberg: Select Comparison Session** (or **Select session…** in the
-dashboard) to pin a session. The latest observed session is the default, not
-necessarily the active chat; a missing pinned session stays missing. If no
-session is selected or observed, the dashboard shows sessions observed since
-the 1st. Transcript credits take precedence; trace-credit fallbacks are labeled
+dashboard) to pin a session, or choose **All sessions** to return to combined
+account usage. Session names come from the same local chat-history index used
+by VS Code, including generated titles and renames; IDs remain searchable.
+Both JSON and JSONL transcript formats are supported. No session is selected
+automatically, and this does not detect the active editor chat.
+The dashboard also shows **local sessions observed since the 1st**, separately
+from account usage. These session totals can include earlier history; they are
+not a billing-period usage report. Transcript credits take precedence; trace-credit fallbacks are labeled
 and never added to them. Trace data covers at most seven retained days and may
 be incomplete. These are local observations, not an account balance or invoice.
 Use **Iceberg: Telemetry Diagnostics** for totals, coverage, meter start and
 gauge basis.
 
-VS Code has no supported third-party API for account usage, quota or active-chat
-detection. See the [ROI research](docs/research/ai-telemetry-attribution.md) for
-telemetry details.
+VS Code has no supported third-party API for quota or active-chat detection.
+The unofficial GitHub quota API can change or fail; its failures do not become
+zero-usage claims. Disable account requests with `iceberg.accountUsage.enabled:
+false`. No local transcripts or telemetry are sent, credentials and account
+quota data are not persisted, and local metering works without the connection.
+See the [ROI research](docs/research/ai-telemetry-attribution.md) for telemetry details.
 
 ## Connecting the telemetry
 
@@ -149,6 +180,9 @@ changes first. Restore then:
   capture, to your previous user value (or the default), leaving any you changed
   yourself afterwards alone;
 - resets Bear in Mind's user settings, but not workspace settings;
+- disconnects account usage, immediately clears the displayed account quota,
+  and resets the saved connection opt-in. Requests do not resume after reload
+  until you explicitly reconnect, even if the GitHub sign-in grant still exists;
 - deletes its meter history, session pin and its own storage folder, which holds
   the default feed file. The folder is kept while Copilot is still set to write
   there, and a feed at a custom `iceberg.otel.feedPath` is never deleted. Other
@@ -158,6 +192,9 @@ Copilot's trace store and transcripts are untouched. Reload so Copilot Chat
 applies the restored settings, or choose **Uninstall Bear in Mind**. Connections
 made before 0.6.3 have no saved previous values; only settings still matching
 Bear in Mind's values can be reset.
+Account disconnection takes effect even if you dismiss the reload prompt.
+Your GitHub sign-in is preserved for other extensions; use **Refresh Copilot
+Account Usage…** to connect again.
 
 Quality uses cumulative metrics where available and documented events otherwise;
 the two are never added together. When tool-call data is absent, retained

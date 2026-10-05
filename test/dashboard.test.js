@@ -65,7 +65,7 @@ function dashboard() {
   };
 }
 
-it('distinguishes local tokens, reported credits and unavailable account limits', () => {
+it('distinguishes local tokens, transcript credits and a disconnected account quota', () => {
   const d = dashboard();
   d.render({}, new OtelRollup(), computeDrift(2100000, 694000), {
     totals: { input: 2000000, output: 100000, credits: 293.2 },
@@ -77,8 +77,8 @@ it('distinguishes local tokens, reported credits and unavailable account limits'
   assert.match(cost.textContent, /not the selected chat/);
   assert.match(cost.textContent, /since 2026-09-24 12:00 UTC/);
   assert.match(cost.textContent, /Reported credits 293\.2/);
-  assert.match(cost.textContent, /Account credit limit Not read/);
-  assert.match(cost.textContent, /Account usage and monthly credit allowance are not read/);
+  assert.match(cost.textContent, /Account usage is not connected/);
+  assert.match(cost.textContent, /Account quota is shown separately when connected/);
   assert.match(cost.textContent, /not a Copilot spending cap/);
   assert.doesNotMatch(cost.textContent, /Premium credits/);
 });
@@ -135,7 +135,7 @@ it('explains billing limitations even before local observations arrive', () => {
   d.render({}, new OtelRollup(), undefined, {
     totals: { input: 0, output: 0, credits: 0 }, countedTokens: 0
   });
-  assert.match(d.nodes.sections.textContent, /Account usage and monthly credit allowance are not read/);
+  assert.match(d.nodes.sections.textContent, /Account quota is shown separately when connected/);
   assert.match(d.nodes.sections.textContent, /No new token counts/);
   assert.match(d.nodes.sections.textContent, /Visual target 5,000,000/);
 });
@@ -204,12 +204,60 @@ it('names the session when the user named it and keeps the ID visible', () => {
   assert.equal(sessionLabel({ sessionId: 'short', name: 'Named' }), 'Named');
 });
 
-it('falls back to the billing-period roll-up when no session is selected or observed', () => {
+it('shows combined usage when no session is selected, even if a recent session was observed', () => {
   const d = dashboard();
-  d.render({}, new OtelRollup(), undefined, { spans: emptySpanDigest(), transcripts: [] });
+  d.render({}, new OtelRollup(), undefined, {
+    spans: emptySpanDigest(), transcripts: [{ sessionId: 'latest', title: 'DAWID TESTING', credits: 10, updatedAt: Date.now() }]
+  });
   const text = d.nodes.sections.textContent;
-  assert.match(text, /showing the period roll-up instead/);
-  assert.match(text, /No session metadata yet/);
+  assert.match(text, /All sessions: combined account usage against your Copilot plan allowance/);
+  assert.match(text, /Session Cost · transcripts 10/);
+  assert.doesNotMatch(text, /Latest observed:|Pinned:/);
+});
+
+function reportedAccount(overrides = {}) {
+  return { status: 'ready', quota: {
+    login: 'octocat', plan: 'pro', unit: 'credits', unlimited: false,
+    allowance: 1000, used: 250, percentRemaining: 75, approximate: false,
+    resetAtMs: Date.now() + 86400000, fetchedAtMs: Date.now(), ...overrides
+  } };
+}
+
+it('renders the reported plan allowance and combined usage separately from local credits', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'account', health: 0.75, account: reportedAccount(),
+    totals: { input: 9000000, output: 1000000, credits: 999 },
+    countedTokens: 10000000
+  });
+  const text = d.nodes.sections.textContent;
+  assert.match(text, /octocat · pro/);
+  assert.match(text, /Included allowance 1,000\s+credits/);
+  assert.match(text, /Included used 250\s+credits/);
+  assert.match(text, /75% plan allowance remaining/);
+  assert.match(text, /Reported credits 999/);
+  assert.match(text, /never added to local transcript or trace totals/);
+  assert.match(text, /unofficial quota API/i);
+  const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
+  cost.find('button').listeners.click();
+  assert.equal(d.messages.at(-1), 'account');
+});
+
+it('keeps account failures and pooled plans explicit without displaying an invented percentage', () => {
+  const d = dashboard();
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'unavailable', budget: 0,
+    account: { status: 'error', message: 'GitHub quota API returned HTTP 403.' }
+  });
+  assert.match(d.nodes.sections.textContent, /GitHub quota API returned HTTP 403/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /plan allowance remaining/);
+  d.render({}, new OtelRollup(), undefined, {
+    basis: 'unavailable', budget: 0,
+    account: reportedAccount({ unlimited: true, allowance: undefined, used: undefined, creditsUsed: 123.5 })
+  });
+  assert.match(d.nodes.sections.textContent, /Pooled credits used 123\.5\s+credits/);
+  assert.match(d.nodes.sections.textContent, /no per-user denominator/);
+  assert.doesNotMatch(d.nodes.sections.textContent, /plan allowance remaining/);
 });
 
 function periodInput(now) {
@@ -253,7 +301,7 @@ it('renders populated period totals, source labels and partial credit and trace 
   const d = dashboard();
   d.render({}, new OtelRollup(), undefined, {}, { period });
   const text = d.nodes.sections.textContent;
-  assert.match(text, /This billing period/);
+  assert.match(text, /Local sessions observed this month/);
   assert.match(text, /Session Cost · transcripts 16\s+credits/);
   assert.match(text, /Sessions observed 3/);
   assert.match(text, /Input · retained traces 90,000/);
@@ -475,7 +523,7 @@ function tracedSpans(agentAttributes = {}) {
 
 it('breaks retained trace credits down by model, repository, caller and effort', () => {
   const d = dashboard();
-  d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans() });
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans(), selectedSessionId: 'chat-1' });
   const cost = d.nodes.sections.children.find((section) => section.dataset.key === 'cost');
   const text = cost.textContent;
   assert.match(text, /Model-call credits · retained traces/);
@@ -490,20 +538,22 @@ it('breaks retained trace credits down by model, repository, caller and effort',
   assert.match(text, /never added to the meter or to transcript Session Cost/);
   assert.match(text, /Cache-read share 90%\s+paired reported counts/);
   assert.match(text, /Paired input \/ cache counts 1 \/ 2/);
-  assert.match(text, /Latest observed: chat-1 · o\/r@main\./);
+  assert.match(text, /Pinned: chat-1 · o\/r@main\./);
   assert.doesNotMatch(text, /By user/, 'no user group without captured identity');
   assert.match(text, /No user\.name was observed\. Turn on github\.copilot\.chat\.otel\.captureIdentity/);
 });
 
 it('groups retained trace credits by the user.name on agent spans and labels the session', () => {
   const d = dashboard();
-  d.render({ sqliteActive: true }, new OtelRollup(), undefined, { spans: tracedSpans({ 'user.name': 'octocat' }) });
+  d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    spans: tracedSpans({ 'user.name': 'octocat' }), selectedSessionId: 'chat-1'
+  });
   const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
   assert.match(text, /By user octocat ×1 149\.5/);
   assert.match(text, /no user identity ×1 —/);
   assert.match(text, /1 \/ 2 calls are attributed to a user/);
   assert.doesNotMatch(text, /No user\.name was observed/);
-  assert.match(text, /Latest observed: chat-1 · o\/r@main · by octocat\./);
+  assert.match(text, /Pinned: chat-1 · o\/r@main · by octocat\./);
 });
 
 it('labels retained sessions with multiple observed users explicitly', () => {
@@ -513,6 +563,7 @@ it('labels retained sessions with multiple observed users explicitly', () => {
   }, at + offset, at + offset + 500);
   const d = dashboard();
   d.render({ sqliteActive: true }, new OtelRollup(), undefined, {
+    selectedSessionId: 'chat-1',
     spans: digestSpans([
       base('agent-1', 'invoke_agent', { 'user.name': 'mona' }),
       base('before-switch', 'chat', { 'copilot_chat.copilot_usage_nano_aiu': 1e9 }, 10),
@@ -523,7 +574,7 @@ it('labels retained sessions with multiple observed users explicitly', () => {
   const text = d.nodes.sections.children.find((section) => section.dataset.key === 'cost').textContent;
   assert.match(text, /By user hubot ×1 2/);
   assert.match(text, /mona ×1 1/);
-  assert.match(text, /Latest observed: chat-1 · by mona, hubot\./);
+  assert.match(text, /Pinned: chat-1 · by mona, hubot\./);
 });
 
 it('shows trace-store tool success when the file feed is not connected', () => {
@@ -558,8 +609,8 @@ it('labels a session with a branch even when no repository is reported', () => {
     }, at, at + 100)
   ]);
   const d = dashboard();
-  d.render({}, new OtelRollup(), undefined, { spans });
-  assert.match(d.nodes.sections.textContent, /Latest observed: solo · topic\./);
+  d.render({}, new OtelRollup(), undefined, { spans, selectedSessionId: 'solo' });
+  assert.match(d.nodes.sections.textContent, /Pinned: solo · topic\./);
 });
 
 it('shows missing token fields as unknown, measured zero as zero, and paired reporting coverage', () => {

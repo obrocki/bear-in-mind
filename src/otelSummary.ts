@@ -36,6 +36,7 @@ import {
   USER_FEEDBACK
 } from './otelParse';
 import type { ChatSessionUsage } from './chatWatcher';
+import type { AccountUsageState } from './accountUsage';
 import type { MeltBasis, UsageSource } from './tokenMeter';
 import { TokenTally, type ReportingCoverage, type TokenField } from '../.github/extensions/ai-attribution/lib/tokenCoverage.cjs';
 
@@ -245,6 +246,7 @@ export interface CostSection {
   basis: MeltBasis;
   context?: ContextWindow;
   burnPerHour: number;
+  account?: AccountUsageState;
   byModel: Array<{ model: string; input: number; output: number; total: number; share: number }>;
   series: TokenBucket[];
   source: UsageSource;
@@ -349,13 +351,13 @@ export interface DashboardSnapshot {
   speed: SpeedSection;
   quality: QualitySection;
   session?: SessionComparison;
-  /** Fallback headline when no single session is pinned or observed. */
+  /** Combined local observations when no session is pinned. */
   period: PeriodRollup;
 }
 
 export interface SessionComparison {
   sessionId: string;
-  /** The name the user gave the session, when there is one. */
+  /** The title displayed in VS Code's chat history, when available. */
   name?: string;
   pinned: boolean;
   updatedAt: number;
@@ -366,7 +368,7 @@ export interface SessionComparison {
 }
 
 /**
- * Session totals for sessions observed since the billing period started.
+ * Session totals for sessions observed since the calendar month started.
  * Transcript credits take precedence over retained trace credits per session.
  * Trace details cover only retained history, not the full billing period.
  */
@@ -384,7 +386,7 @@ export interface PeriodRollup {
   traceSinceMs?: number;
 }
 
-/** Copilot's allowance resets monthly, so the period starts on the 1st. */
+/** Local observation window only; the account API supplies its own quota reset. */
 export function periodStart(nowMs: number): number {
   const now = new Date(nowMs);
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
@@ -461,7 +463,7 @@ export function selectedSession(input: Pick<SummaryInput, 'transcripts' | 'spans
   return input.selectedSessionId
     ? { ...(sessions.find((s) => s.sessionId === input.selectedSessionId) ??
       { sessionId: input.selectedSessionId, updatedAt: 0 }), pinned: true }
-    : sessions[0];
+    : undefined;
 }
 
 export interface SummaryInput {
@@ -479,6 +481,7 @@ export interface SummaryInput {
   /** What `health` measures. */
   basis: MeltBasis;
   context?: ContextWindow;
+  account?: AccountUsageState;
   drift: DriftReport;
   manualTokens?: number;
   legacyTokens?: number;
@@ -557,6 +560,7 @@ export function buildCost(input: SummaryInput): CostSection {
     health: input.health,
     basis: input.basis,
     context: input.context,
+    account: input.account,
     burnPerHour: burnRate(series),
     byModel,
     series,

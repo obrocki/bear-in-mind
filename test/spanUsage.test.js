@@ -109,6 +109,7 @@ it('matches transcript and trace sessions by ID, never adds their credit totals'
   assert.equal(sessions.length, 1);
   assert.equal(sessions[0].transcript.credits, 3);
   assert.equal(sessions[0].trace.credits, 1.5);
+  assert.equal(selectedSession({ transcripts, spans }), undefined, 'no pin means combined usage, not the latest session');
   const selected = selectedSession({ transcripts, spans, selectedSessionId: 'expired' });
   assert.equal(selected.sessionId, 'expired');
   assert.equal(selected.trace, undefined, 'a stale pin must not silently switch to another session');

@@ -35,3 +35,5 @@ Preview `shot.html?health=0.3&chrome=0` or `dashboard.html?waiting` in a browser
 Both harnesses support `?context` for latest-prompt headroom; the dashboard also
 supports `?empty` for a disconnected source and `?credits` to frame the
 retained-trace credit breakdown.
+Both harnesses support `?account` for synthetic combined account usage and a
+reported plan allowance; these fixtures never authenticate or make quota requests.

@@ -1,11 +1,12 @@
 import * as vscode from 'vscode';
 import { computeDrift, type ContextWindow, type DriftReport } from './otelSummary';
+import { ACCOUNT_QUOTA_MAX_AGE_MS, type AccountUsageState, type AccountQuota } from './accountUsage';
 
 const STORAGE_KEY = 'iceberg.usage.v4';
 const CONTEXT_STALE_MS = 30 * 60 * 1000;
 
 export type UsageSource = 'otel' | 'none';
-export type MeltBasis = 'context' | 'budget' | 'unavailable' | 'demo';
+export type MeltBasis = 'account' | 'context' | 'budget' | 'unavailable' | 'demo';
 
 export interface UsageSnapshot {
   input: number;
@@ -27,6 +28,7 @@ export interface UsageSnapshot {
   source: UsageSource;
   basis: MeltBasis;
   context?: ContextWindow;
+  account?: AccountUsageState;
   drift: DriftReport;
 }
 
@@ -55,6 +57,8 @@ export class TokenMeter implements vscode.Disposable {
   readonly onDidChange = this._onDidChange.event;
   private readonly state: StoredUsage;
   private context?: ContextWindow;
+  private account?: AccountUsageState;
+  private sessionSelected = false;
   private demoTimer?: NodeJS.Timeout;
   private demoProgress = 0;
   private saveTimer?: NodeJS.Timeout;
@@ -116,7 +120,16 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get basis(): MeltBasis {
-    return this.demoTimer ? 'demo' : this.liveContext ? 'context' : this.budget > 0 ? 'budget' : 'unavailable';
+    return this.demoTimer ? 'demo' : this.liveContext ? 'context' : this.liveAccount ? 'account'
+      : this.budget > 0 ? 'budget' : 'unavailable';
+  }
+
+  private get liveAccount(): (AccountQuota & { percentRemaining: number }) | undefined {
+    const quota = !this.sessionSelected && this.account?.status === 'ready' ? this.account.quota : undefined;
+    return quota && !quota.unlimited && quota.percentRemaining !== undefined &&
+      Date.now() >= quota.fetchedAtMs && Date.now() - quota.fetchedAtMs <= ACCOUNT_QUOTA_MAX_AGE_MS &&
+      (quota.resetAtMs === undefined || Date.now() < quota.resetAtMs)
+      ? { ...quota, percentRemaining: quota.percentRemaining } : undefined;
   }
 
   get countedTotal(): number {
@@ -128,10 +141,12 @@ export class TokenMeter implements vscode.Disposable {
   snapshot(): UsageSnapshot {
     const { metrics, traces, manual } = this.state;
     const context = this.liveContext;
+    const account = this.liveAccount;
     const total = this.countedTotal;
     const budget = this.budget;
-    const health = this.demoTimer ? 1 - this.demoProgress : context ? clamp(1 - context.used / context.limit, 0, 1) :
-      budget > 0 ? clamp(1 - total / budget, 0, 1) : 1;
+    const health = this.demoTimer ? 1 - this.demoProgress : context ? clamp(1 - context.used / context.limit, 0, 1)
+      : account ? clamp(account.percentRemaining / 100, 0, 1)
+        : budget > 0 ? clamp(1 - total / budget, 0, 1) : 1;
     return {
       input: Math.max(metrics.input, traces.input) + manual.input,
       output: Math.max(metrics.output, traces.output) + manual.output,
@@ -144,13 +159,34 @@ export class TokenMeter implements vscode.Disposable {
       bearName: this.config.get<string>('bearName', 'Nanuq') || 'Nanuq',
       animate: this.config.get<boolean>('animate', true),
       pixelScale: Math.round(this.config.get<number>('pixelScale', 0)),
-      source: this.source, basis: this.basis, context, drift: this.drift
+      source: this.source, basis: this.basis, context,
+      account: this.account?.status === 'ready' &&
+        (Date.now() - this.account.quota.fetchedAtMs > ACCOUNT_QUOTA_MAX_AGE_MS ||
+          (this.account.quota.resetAtMs !== undefined && Date.now() >= this.account.quota.resetAtMs))
+        ? { status: 'error', message: 'Account quota is stale or its period has reset. Refresh account usage.' }
+        : this.account,
+      drift: this.drift
     };
   }
 
   setContext(context: ContextWindow | undefined): void {
     if (JSON.stringify(context) !== JSON.stringify(this.context)) {
       this.context = context;
+      this.publish();
+    }
+  }
+
+  setAccountUsage(account: AccountUsageState): void {
+    this.account = account;
+    this.publish();
+  }
+
+  setSessionSelected(selected: boolean): void {
+    if (this.sessionSelected !== selected) {
+      this.sessionSelected = selected;
+      if (!selected) {
+        this.context = undefined;
+      }
       this.publish();
     }
   }

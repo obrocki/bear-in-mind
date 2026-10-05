@@ -39,5 +39,9 @@ const workspace = {
 module.exports = {
   EventEmitter,
   workspace,
+  authentication: {
+    getSession: (...args) => globalThis.__BEAR_AUTH_SESSION__?.(...args),
+    onDidChangeSessions: (listener) => globalThis.__BEAR_AUTH_EVENTS__?.event(listener) ?? { dispose() {} }
+  },
   lm: { selectChatModels: async () => [] }
 };

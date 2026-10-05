@@ -50,3 +50,35 @@ it('never shows a percentage or 5M target when the gauge has no measured denomin
     m.dispose();
   }
 });
+
+it('shows combined account consumption against its plan allowance, not local tokens or one chat', () => {
+  const m = new TokenMeter({ get: () => undefined, update: async () => {} });
+  const scene = createScene(path.resolve(__dirname, '..'), 330, 300);
+  try {
+    m.observe('otel', 80000, 20000);
+    m.setAccountUsage({ status: 'ready', quota: {
+      login: 'octocat', plan: 'pro', unit: 'credits', unlimited: false,
+      allowance: 1000, used: 250, percentRemaining: 75, approximate: false, fetchedAtMs: Date.now()
+    } });
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.pct.textContent, '75%');
+    assert.equal(scene.els.tokens.textContent, '250 used / 1,000 credits allowance');
+    assert.equal(scene.els.basis.textContent, 'plan allowance remaining');
+    assert.equal(scene.els.source.textContent, 'all sessions · GitHub account');
+    m.setAccountUsage({ status: 'error', message: 'GitHub quota lookup failed' });
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.pct.textContent, '—');
+    assert.equal(scene.els.source.textContent, 'account usage unavailable');
+    assert.equal(scene.els.source.title, 'GitHub quota lookup failed');
+    m.setSessionSelected(true);
+    m.setContext({ used: 300, limit: 1000, atMs: Date.now(), model: 'test', sessionId: 's' });
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.pct.textContent, '70%');
+    assert.equal(scene.els.source.textContent, 'comparison session · prompt', 'an account error must not mislabel selected-chat context');
+    m.setSessionSelected(false);
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.pct.textContent, '—', 'All sessions must not retain a pinned chat context');
+  } finally {
+    m.dispose();
+  }
+});

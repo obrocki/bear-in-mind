@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { it } = require('node:test');
 const { TokenMeter } = require(path.join(process.env.BEAR_TEST_BUILD, 'tokenMeter.js'));
+const { parseAccountQuota, ACCOUNT_QUOTA_MAX_AGE_MS } = require(path.join(process.env.BEAR_TEST_BUILD, 'accountUsage.js'));
 
 function fixture(t, settings = {}, entries = []) {
   globalThis.__BEAR_SETTINGS__ = settings;
@@ -24,6 +25,62 @@ it('keeps transcript-reported credits separate from metered tokens', (t) => {
   assert.equal(meter.snapshot().total, 0);
   assert.equal(meter.snapshot().requests, 0);
   assert.equal(meter.snapshot().credits, 4);
+});
+
+function account(percentRemaining = 75, overrides = {}) {
+  return { status: 'ready', quota: {
+    ...parseAccountQuota({
+      copilot_plan: 'pro', token_based_billing: true,
+      quota_snapshots: { premium_interactions: { entitlement: '1000', percent_remaining: percentRemaining, unlimited: false } }
+    }, 'octocat'),
+    ...overrides
+  } };
+}
+
+it('uses combined account allowance by default and never adds local credits or tokens to it', (t) => {
+  const { meter, store } = fixture(t, { 'iceberg.tokenBudget': 1000 });
+  meter.observe('otel', 80000, 20000);
+  meter.observeTranscriptCredits(999);
+  meter.setAccountUsage(account());
+  const snapshot = meter.snapshot();
+  assert.equal(snapshot.basis, 'account');
+  assert.equal(snapshot.health, 0.75);
+  assert.equal(snapshot.account.quota.used, 250);
+  assert.equal(snapshot.total, 100000);
+  assert.equal(snapshot.credits, 999);
+  meter.dispose();
+  assert.equal(store.get('iceberg.usage.v4').account, undefined, 'account details are memory-only');
+});
+
+it('switches explicitly between selected-session context and the combined account gauge', (t) => {
+  const { meter } = fixture(t);
+  meter.setAccountUsage(account());
+  meter.setSessionSelected(true);
+  meter.setContext({ used: 900, limit: 1000, atMs: Date.now(), model: 'test', sessionId: 's' });
+  assert.equal(meter.snapshot().basis, 'context');
+  assert.ok(Math.abs(meter.snapshot().health - 0.1) < 1e-10);
+  meter.setContext(undefined);
+  assert.equal(meter.snapshot().basis, 'unavailable', 'a missing pin must not become combined account usage');
+  meter.setSessionSelected(false);
+  assert.equal(meter.snapshot().basis, 'account');
+  assert.equal(meter.snapshot().health, 0.75);
+});
+
+it('leaves unlimited, expired and failed account quotas unscaled rather than inventing a denominator', (t) => {
+  const { meter } = fixture(t);
+  for (const state of [
+    account(50, { unlimited: true, allowance: undefined, used: undefined, creditsUsed: 50 }),
+    account(50, { fetchedAtMs: Date.now() - ACCOUNT_QUOTA_MAX_AGE_MS - 1 }),
+    account(50, { resetAtMs: Date.now() - 1 }),
+    { status: 'error', message: 'GitHub unavailable' },
+    { status: 'signedOut' }
+  ]) {
+    meter.setAccountUsage(state);
+    assert.equal(meter.snapshot().basis, 'unavailable');
+    assert.equal(meter.snapshot().health, 1);
+  }
+  meter.setAccountUsage(account(0));
+  assert.equal(meter.snapshot().health, 0, 'reported exhaustion is not treated as a missing value');
 });
 
 it('reconciles matching metrics and spans once, in either delivery order', (t) => {
