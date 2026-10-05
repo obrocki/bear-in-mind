@@ -66,8 +66,10 @@ multiplier is not credits or money.
 With **All sessions** (the default), the gauge uses GitHub's reported remaining
 **Copilot plan allowance across sessions and surfaces**, not one chat's context
 or the sum of local observations. Run **Iceberg: Refresh Copilot Account Usage…**
-or **Refresh account usage…** in the dashboard to authorize VS Code's GitHub
-sign-in. The extension refreshes once a minute; it never prompts automatically.
+or **Refresh account usage…** in the dashboard to explicitly connect account
+usage and authorize VS Code's GitHub sign-in. Once connected, the extension
+refreshes once a minute; it never prompts automatically. An existing GitHub
+sign-in grant alone does not connect account usage.
 
 The account connection uses the **unofficial `copilot_internal/user` API used
 by VS Code**. GitHub's documented billing usage APIs do not expose the same
@@ -178,6 +180,9 @@ changes first. Restore then:
   capture, to your previous user value (or the default), leaving any you changed
   yourself afterwards alone;
 - resets Bear in Mind's user settings, but not workspace settings;
+- disconnects account usage, immediately clears the displayed account quota,
+  and resets the saved connection opt-in. Requests do not resume after reload
+  until you explicitly reconnect, even if the GitHub sign-in grant still exists;
 - deletes its meter history, session pin and its own storage folder, which holds
   the default feed file. The folder is kept while Copilot is still set to write
   there, and a feed at a custom `iceberg.otel.feedPath` is never deleted. Other
@@ -187,6 +192,9 @@ Copilot's trace store and transcripts are untouched. Reload so Copilot Chat
 applies the restored settings, or choose **Uninstall Bear in Mind**. Connections
 made before 0.6.3 have no saved previous values; only settings still matching
 Bear in Mind's values can be reset.
+Account disconnection takes effect even if you dismiss the reload prompt.
+Your GitHub sign-in is preserved for other extensions; use **Refresh Copilot
+Account Usage…** to connect again.
 
 Quality uses cumulative metrics where available and documented events otherwise;
 the two are never added together. When tool-call data is absent, retained

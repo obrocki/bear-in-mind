@@ -41,6 +41,8 @@ dependencies; reload extensions in the app after editing. Its tests run with
   chat-history index key, including generated titles and renames. Support JSON
   and JSONL transcripts, preferring JSONL when both exist; never derive titles
   from prompt text. Keep index titles current even without transcript changes.
+  Reuse cached index projections only while both database and WAL modification
+  state are unchanged; invalidate them when the index or workspace disappears.
   Read only transcript session metadata and reported credits; ignore token
   snapshots and content. Replay snapshot, set, push/splice and delete records.
   Use VS Code's `max(sum(turn credits), reported session credits)` formula.
@@ -103,6 +105,10 @@ dependencies; reload extensions in the app after editing. Its tests run with
   local credits or divide pooled `credits_used` by an entitlement. Preserve
   legacy request units. The GitHub quota endpoint is unofficial: expose failures,
   never persist/log credentials or quota bodies, and invalidate expired data.
+  Validate reset timestamps against JavaScript's actual Date range, not just
+  finite numeric values. Require an explicit saved account-connection opt-in,
+  independent of the GitHub authentication grant; restore clears the opt-in
+  and published quota without signing out other extensions.
   A pinned chat uses its own reported prompt allowance, never another chat's
   context. Without a usable denominator or explicit personal target, render
   unscaled ice and no percentage. Never imply measured emissions or actual ice loss.

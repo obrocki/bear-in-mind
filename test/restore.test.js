@@ -242,3 +242,74 @@ it('a meter disposed after the reset does not write its ledger back', async () =
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.deepEqual(inner.keys(), []);
 });
+
+it('restore clears live account figures, cancels pending requests and requires explicit reconnect after reload', async (t) => {
+  const { AccountUsageWatcher, ACCOUNT_CONNECTION_KEY } = require(path.join(build, 'accountUsage.js'));
+  const { TokenMeter } = require(path.join(build, 'tokenMeter.js'));
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const inner = memory({ [ACCOUNT_CONNECTION_KEY]: { resetAt: 0 } });
+  const globalState = new SealableMemento(inner, RESET_KEY);
+  const meter = new TokenMeter(globalState);
+  let requests = 0;
+  let sessions = 0;
+  let finish;
+  let signal;
+  const response = {
+    quota_snapshots: { premium_interactions: { entitlement: 1000, percent_remaining: 75, unlimited: false } }
+  };
+  const api = {
+    session: async () => {
+      sessions++;
+      return { accessToken: 'existing-grant', account: { label: 'octocat' } };
+    },
+    request: async (_, pendingSignal) => {
+      requests++;
+      if (requests === 2) {
+        signal = pendingSignal;
+        return new Promise((resolve) => { finish = resolve; });
+      }
+      return response;
+    }
+  };
+  const account = new AccountUsageWatcher(() => {}, globalState, api);
+  const subscription = account.onDidChange((state) => meter.setAccountUsage(state));
+  t.after(() => { account.dispose(); subscription.dispose(); meter.dispose(); });
+  account.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(meter.snapshot().basis, 'account');
+  assert.equal(meter.snapshot().account.status, 'ready');
+  const pending = account.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  await account.disconnect();
+  account.dispose();
+  assert.equal(signal.aborted, true);
+  assert.equal(meter.snapshot().basis, 'unavailable');
+  assert.equal(meter.snapshot().account.status, 'signedOut');
+  assert.equal(meter.snapshot().account.quota, undefined, 'figures clear even if reload is dismissed');
+  assert.equal(inner.get(ACCOUNT_CONNECTION_KEY), undefined);
+  await globalState.seal(42);
+  await globalState.clear();
+  finish(response);
+  await pending;
+  t.mock.timers.tick(120000);
+  await account.refresh(true);
+  assert.equal(requests, 2);
+  assert.equal(meter.snapshot().account.status, 'signedOut', 'a late response cannot restore the old quota');
+
+  const afterReload = new SealableMemento(inner, RESET_KEY);
+  const reloaded = new AccountUsageWatcher(() => {}, afterReload, api);
+  t.after(() => reloaded.dispose());
+  reloaded.start();
+  t.mock.timers.tick(120000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reloaded.snapshot.status, 'signedOut');
+  assert.equal(requests, 2);
+  assert.equal(sessions, 2, 'an existing global GitHub grant does not implicitly reconnect');
+  await reloaded.refresh(true);
+  assert.equal(reloaded.snapshot.status, 'ready');
+  assert.deepEqual(inner.get(ACCOUNT_CONNECTION_KEY), { resetAt: 42 });
+  t.mock.timers.tick(60000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(requests, 4, 'explicit reconnect resumes background refresh');
+});

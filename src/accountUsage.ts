@@ -1,8 +1,10 @@
 import * as https from 'https';
 import * as vscode from 'vscode';
+import { RESET_KEY, type SealableMemento } from './restore';
 import { nonnegative } from './spanUsage';
 
 export const ACCOUNT_QUOTA_MAX_AGE_MS = 15 * 60 * 1000;
+export const ACCOUNT_CONNECTION_KEY = 'iceberg.accountConnection.v1';
 const QUOTA_URL = 'https://api.github.com/copilot_internal/user';
 
 export interface AccountQuota {
@@ -61,7 +63,7 @@ export function parseAccountQuota(raw: unknown, login: string, nowMs = Date.now(
   const reset = numeric(snapshot.quota_reset_at);
   const date = data.quota_reset_date_utc ?? data.quota_reset_date ?? data.limited_user_reset_date;
   const resetAtMs = reset ? reset * 1000 : typeof date === 'string' ? Date.parse(date) : undefined;
-  if (resetAtMs !== undefined && !Number.isFinite(resetAtMs)) {
+  if (resetAtMs !== undefined && !Number.isFinite(new Date(resetAtMs).getTime())) {
     throw new QuotaError('GitHub reported an invalid Copilot allowance reset date.');
   }
   return {
@@ -162,10 +164,11 @@ export class AccountUsageWatcher implements vscode.Disposable {
 
   constructor(
     private readonly log: (message: string) => void,
+    private readonly memento: SealableMemento,
     private readonly api: AccountServices = services
   ) {
     this.authentication = vscode.authentication.onDidChangeSessions((event) => {
-      if (event.provider.id === 'github' && this.running && !this.disposed) {
+      if (event.provider.id === 'github' && this.running && this.connected && !this.disposed) {
         // Creating a session emits this event before getSession resolves.
         if (this.signingIn === this.controller && this.controller) {
           return;
@@ -186,6 +189,32 @@ export class AccountUsageWatcher implements vscode.Disposable {
     return vscode.workspace.getConfiguration('iceberg').get<boolean>('accountUsage.enabled', true);
   }
 
+  private get connected(): boolean {
+    const connection = this.memento.get<{ resetAt: number }>(ACCOUNT_CONNECTION_KEY);
+    return !this.memento.isSealed && connection?.resetAt === this.memento.get<number>(RESET_KEY, 0);
+  }
+
+  private allowRefresh(interactive = false): boolean {
+    const state: AccountUsageState | undefined = !this.enabled
+      ? { status: 'disabled', message: 'Copilot account usage is disabled in settings.' }
+      : this.memento.isSealed || (!interactive && !this.connected)
+        ? { status: 'signedOut', message: 'Refresh account usage to connect and authorize GitHub sign-in.' }
+        : undefined;
+    if (!state) {
+      return true;
+    }
+    this.cancel();
+    this.publish(state);
+    return false;
+  }
+
+  private schedule(): void {
+    if (this.running && this.enabled && this.connected && !this.timer && !this.disposed) {
+      this.timer = setInterval(() => void this.refresh(), 60_000);
+      this.timer.unref?.();
+    }
+  }
+
   start(): void {
     this.stop();
     if (this.disposed) {
@@ -193,18 +222,11 @@ export class AccountUsageWatcher implements vscode.Disposable {
     }
     this.running = true;
     void this.refresh();
-    if (this.enabled) {
-      this.timer = setInterval(() => void this.refresh(), 60_000);
-      this.timer.unref?.();
-    }
+    this.schedule();
   }
 
   async refresh(interactive = false): Promise<void> {
-    if (this.disposed) {
-      return;
-    }
-    if (!this.enabled) {
-      this.publish({ status: 'disabled', message: 'Copilot account usage is disabled in settings.' });
+    if (this.disposed || !this.allowRefresh(interactive)) {
       return;
     }
     if (this.controller && !interactive) {
@@ -213,6 +235,7 @@ export class AccountUsageWatcher implements vscode.Disposable {
     this.controller?.abort();
     const controller = new AbortController();
     this.controller = controller;
+    const resetAt = this.memento.get<number>(RESET_KEY, 0);
     if (interactive || this.state.status !== 'ready') {
       this.publish({ status: 'loading' });
     }
@@ -224,19 +247,27 @@ export class AccountUsageWatcher implements vscode.Disposable {
       if (this.signingIn === controller) {
         this.signingIn = undefined;
       }
-      if (controller.signal.aborted) {
+      if (controller.signal.aborted || !this.allowRefresh(interactive)) {
         return;
       }
       if (!session) {
         this.publish({ status: 'signedOut', message: 'Refresh account usage to authorize GitHub sign-in.' });
         return;
       }
+      if (interactive) {
+        // A reset also invalidates a delayed opt-in write or one kept after a failed restore.
+        await this.memento.update(ACCOUNT_CONNECTION_KEY, { resetAt });
+      }
+      if (controller.signal.aborted || !this.allowRefresh()) {
+        return;
+      }
+      this.schedule();
       const raw = await this.api.request(session.accessToken, controller.signal);
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && this.allowRefresh()) {
         this.publish({ status: 'ready', quota: parseAccountQuota(raw, session.account.label) });
       }
     } catch (error) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && this.allowRefresh(interactive)) {
         const message = error instanceof QuotaError ? error.message
           : 'GitHub sign-in or quota lookup failed. Refresh account usage to retry.';
         this.log(`account usage: ${message}`);
@@ -259,12 +290,23 @@ export class AccountUsageWatcher implements vscode.Disposable {
 
   stop(): void {
     this.running = false;
+    this.cancel();
+  }
+
+  private cancel(): void {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = undefined;
     }
     this.controller?.abort();
     this.controller = undefined;
+    this.signingIn = undefined;
+  }
+
+  async disconnect(): Promise<void> {
+    this.stop();
+    this.publish({ status: 'signedOut', message: 'Refresh account usage to connect and authorize GitHub sign-in.' });
+    await this.memento.update(ACCOUNT_CONNECTION_KEY, undefined);
   }
 
   dispose(): void {

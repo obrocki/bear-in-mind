@@ -7,6 +7,8 @@
 - Session picker titles now come from VS Code's chat-history index, including
   generated names and renames, instead of exposing GUIDs when transcript custom
   titles are absent. Support legacy JSON transcripts and custom-profile storage.
+  Unchanged history indexes reuse cached projections, including WAL-aware
+  invalidation, rather than reopening every historical database on each scan.
 - **All sessions** is the default: no implicit latest-session selection.
   Explicitly selected chats retain their own cost and prompt-context comparison.
 - Added **Refresh Copilot Account Usage** and a separate, authorized account
@@ -16,6 +18,9 @@
 - Account sign-in, API errors, stale/reset quotas and pooled/unlimited plans are
   explicit. No hard-coded allowance or invented per-user denominator; account
   data and credentials are not persisted or logged, and no local chat data is sent.
+  Account usage requires a saved explicit connection opt-in; restore clears it
+  and the displayed quota immediately without revoking GitHub sign-in.
+  Out-of-range reset timestamps are rejected before they reach UI date formatting.
 - Updated dashboard, habitat, status/diagnostic text, settings descriptions,
   README and data-handling documentation; added synthetic account-usage screenshots.
 

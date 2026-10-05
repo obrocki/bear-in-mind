@@ -58,7 +58,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   context.subscriptions.push(watcher);
   watcher.start();
 
-  const account = new AccountUsageWatcher(log);
+  const account = new AccountUsageWatcher(log, globalState);
   context.subscriptions.push(account, account.onDidChange((state) => meter.setAccountUsage(state)));
   account.start();
 
@@ -610,13 +610,14 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
     ...(workspaceSettings.length > 0 ? [`Workspace settings left alone: ${workspaceSettings.join(', ')}.`] : []),
     'Stored data: the meter history, session pin and Bear in Mind\'s own storage folder (the default feed file) are deleted. ' +
       'A custom iceberg.otel.feedPath file is kept. Other open windows stop saving and start fresh when reloaded.',
+    'Account usage is disconnected until you explicitly refresh it again. VS Code\'s GitHub sign-in is kept.',
     '',
     "Copilot's own trace store and transcripts are not touched. Reload the window afterwards so Copilot Chat applies the restored settings."
   ].join('\n');
 
   const confirm = 'Restore and Disconnect';
   const answer = await vscode.window.showWarningMessage(
-    'Restore Bear in Mind to its defaults and disconnect it from Copilot telemetry?',
+    'Restore Bear in Mind to its defaults and disconnect it from Copilot telemetry and account usage?',
     { modal: true, detail },
     confirm
   );
@@ -639,6 +640,7 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
   suspend();
   otel.stop();
   watcher.stop();
+  await account.disconnect();
   account.dispose();
   // Announce the reset before touching settings, so a Connect running in
   // another window refuses rather than re-enabling telemetry mid-restore.

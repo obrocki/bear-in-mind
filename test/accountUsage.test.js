@@ -5,7 +5,20 @@ const path = require('node:path');
 const https = require('node:https');
 const { EventEmitter } = require('node:events');
 const { it } = require('node:test');
-const { AccountUsageWatcher, parseAccountQuota, requestAccountQuota } = require(path.join(process.env.BEAR_TEST_BUILD, 'accountUsage.js'));
+const { ACCOUNT_CONNECTION_KEY, AccountUsageWatcher, parseAccountQuota, requestAccountQuota } = require(path.join(process.env.BEAR_TEST_BUILD, 'accountUsage.js'));
+const { RESET_KEY, SealableMemento } = require(path.join(process.env.BEAR_TEST_BUILD, 'restore.js'));
+
+function memory(initial = {}) {
+  const values = new Map(Object.entries(initial));
+  return {
+    keys: () => [...values.keys()],
+    get: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+    update: async (key, value) => {
+      if (value === undefined) values.delete(key);
+      else values.set(key, structuredClone(value));
+    }
+  };
+}
 
 function response(snapshot = {}, data = {}) {
   return {
@@ -19,15 +32,17 @@ function response(snapshot = {}, data = {}) {
   };
 }
 
-function watcher(t, api = {}) {
+function watcher(t, api = {}, connected = true) {
   const logs = [];
-  const service = new AccountUsageWatcher((line) => logs.push(line), {
+  const inner = memory(connected ? { [ACCOUNT_CONNECTION_KEY]: { resetAt: 0 } } : {});
+  const memento = new SealableMemento(inner, RESET_KEY);
+  const service = new AccountUsageWatcher((line) => logs.push(line), memento, {
     session: async () => ({ accessToken: 'secret-token', account: { label: 'octocat' } }),
     request: async () => response(),
     ...api
   });
   t.after(() => { service.dispose(); delete globalThis.__BEAR_SETTINGS__; });
-  return { service, logs };
+  return { service, logs, inner, memento };
 }
 
 it('reads the reported plan and allowance, not a hard-coded plan table or transcript sum', () => {
@@ -93,6 +108,15 @@ it('rejects malformed API schemas and invalid numbers without inventing a free a
   }
   assert.equal(parseAccountQuota(response({ percent_remaining: 0 }), 'o').used, 1000);
   assert.equal(parseAccountQuota(response({ percent_remaining: -1 }), 'o').percentRemaining, 0);
+});
+
+it('rejects finite reset timestamps outside the Date range and seconds-to-milliseconds overflow', () => {
+  for (const quota_reset_at of [8640000000001, Number.MAX_VALUE, '8640000000001']) {
+    assert.throws(() => parseAccountQuota(response({ quota_reset_at }), 'o'), /invalid Copilot allowance reset date/);
+  }
+  const quota = parseAccountQuota(response({ quota_reset_at: 8640000000000 }), 'o');
+  assert.equal(quota.resetAtMs, 8640000000000000);
+  assert.doesNotThrow(() => new Date(quota.resetAtMs).toISOString());
 });
 
 it('only uses an authorized session and keeps account usage out of persisted local ledgers', async (t) => {
@@ -163,11 +187,167 @@ it('checks existing GitHub sign-in silently without prompting during background 
     calls.push({ scopes, options });
     return options.createIfNone ? { accessToken: 'secret-token', account: { label: 'o' } } : undefined;
   };
-  const service = new AccountUsageWatcher(() => {});
+  const memento = new SealableMemento(memory({ [ACCOUNT_CONNECTION_KEY]: { resetAt: 0 } }), RESET_KEY);
+  const service = new AccountUsageWatcher(() => {}, memento);
   t.after(() => { service.dispose(); delete globalThis.__BEAR_AUTH_SESSION__; });
   await service.refresh();
   assert.equal(service.snapshot.status, 'signedOut');
   assert.ok(calls.every((call) => call.options.silent));
+});
+
+it('requires an explicit connection on first use even with an existing GitHub grant, then polls that connection', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const sessions = [];
+  let requests = 0;
+  const { service, inner } = watcher(t, {
+    session: async (interactive) => {
+      sessions.push(interactive);
+      return { accessToken: 'secret-token', account: { label: 'existing-account' } };
+    },
+    request: async () => { requests++; return response(); }
+  }, false);
+  service.start();
+  t.mock.timers.tick(120000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(service.snapshot.status, 'signedOut');
+  assert.deepEqual(sessions, []);
+  assert.equal(requests, 0);
+  assert.equal(inner.get(ACCOUNT_CONNECTION_KEY), undefined);
+
+  await service.refresh(true);
+  assert.equal(service.snapshot.status, 'ready');
+  assert.deepEqual(inner.get(ACCOUNT_CONNECTION_KEY), { resetAt: 0 });
+  t.mock.timers.tick(60000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sessions, [true, false]);
+  assert.equal(requests, 2);
+});
+
+it('enabling does not opt in, while disabling cancels pending work and preserves an explicit connection for re-enabling', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let requests = 0;
+  let finish;
+  let pendingSignal;
+  const { service, inner } = watcher(t, {
+    request: async (_, signal) => {
+      requests++;
+      if (requests === 2) {
+        pendingSignal = signal;
+        return new Promise((resolve) => { finish = resolve; });
+      }
+      return response();
+    }
+  }, false);
+  globalThis.__BEAR_SETTINGS__ = { 'iceberg.accountUsage.enabled': false };
+  service.start();
+  await service.refresh(true);
+  assert.equal(service.snapshot.status, 'disabled');
+  assert.equal(inner.get(ACCOUNT_CONNECTION_KEY), undefined);
+  assert.equal(requests, 0);
+
+  globalThis.__BEAR_SETTINGS__ = { 'iceberg.accountUsage.enabled': true };
+  service.start();
+  assert.equal(service.snapshot.status, 'signedOut');
+  assert.equal(requests, 0);
+  await service.refresh(true);
+  assert.equal(service.snapshot.status, 'ready');
+  const pending = service.refresh();
+  await new Promise((resolve) => setImmediate(resolve));
+  globalThis.__BEAR_SETTINGS__ = { 'iceberg.accountUsage.enabled': false };
+  service.start();
+  assert.equal(pendingSignal.aborted, true);
+  assert.equal(service.snapshot.status, 'disabled');
+  assert.equal(service.snapshot.quota, undefined);
+  finish(response({ percent_remaining: 99 }));
+  await pending;
+  t.mock.timers.tick(120000);
+  assert.equal(requests, 2);
+  assert.deepEqual(inner.get(ACCOUNT_CONNECTION_KEY), { resetAt: 0 });
+
+  globalThis.__BEAR_SETTINGS__ = { 'iceberg.accountUsage.enabled': true };
+  service.start();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(service.snapshot.status, 'ready');
+  assert.equal(service.snapshot.quota.percentRemaining, 75);
+  assert.equal(requests, 3);
+});
+
+it('does not store an opt-in when an explicit sign-in is dismissed', async (t) => {
+  const { service, inner } = watcher(t, { session: async () => undefined }, false);
+  await service.refresh(true);
+  assert.equal(service.snapshot.status, 'signedOut');
+  assert.equal(inner.get(ACCOUNT_CONNECTION_KEY), undefined);
+});
+
+it('remembers explicit consent across reloads but invalidates it when a reset keeps other stored data', async (t) => {
+  let sessions = 0;
+  const api = {
+    session: async () => {
+      sessions++;
+      return { accessToken: 'secret-token', account: { label: 'existing-account' } };
+    },
+    request: async () => response()
+  };
+  const { service, inner, memento } = watcher(t, api, false);
+  await service.refresh(true);
+  service.dispose();
+  const reloaded = new AccountUsageWatcher(() => {}, new SealableMemento(inner, RESET_KEY), api);
+  t.after(() => reloaded.dispose());
+  await reloaded.refresh();
+  assert.equal(reloaded.snapshot.status, 'ready');
+  assert.equal(sessions, 2, 'the saved opt-in permits automatic refresh after an ordinary reload');
+
+  await memento.seal(42);
+  await reloaded.refresh();
+  assert.equal(reloaded.snapshot.status, 'signedOut');
+  assert.equal(reloaded.snapshot.quota, undefined, 'another window clears its ready quota when it observes the reset');
+  assert.deepEqual(inner.get(ACCOUNT_CONNECTION_KEY), { resetAt: 0 }, 'failed restores can keep stored data for retry');
+  const afterReset = new AccountUsageWatcher(() => {}, new SealableMemento(inner, RESET_KEY), api);
+  t.after(() => afterReset.dispose());
+  await afterReset.refresh();
+  assert.equal(afterReset.snapshot.status, 'signedOut');
+  assert.equal(sessions, 2, 'retained opt-in from the old reset generation must not reconnect');
+});
+
+it('drops a sign-in that completes after the shared store is sealed by a reset', async (t) => {
+  let finish;
+  let requests = 0;
+  const { service, inner, memento } = watcher(t, {
+    session: async () => new Promise((resolve) => { finish = resolve; }),
+    request: async () => { requests++; return response(); }
+  }, false);
+  const pending = service.refresh(true);
+  await memento.seal(42);
+  finish({ accessToken: 'secret-token', account: { label: 'existing-account' } });
+  await pending;
+  assert.equal(service.snapshot.status, 'signedOut');
+  assert.equal(inner.get(ACCOUNT_CONNECTION_KEY), undefined);
+  assert.equal(requests, 0);
+  await service.refresh(true);
+  assert.equal(requests, 0, 'a sealed window must reload before reconnecting');
+});
+
+it('a delayed opt-in write cannot authorize a reloaded window after a reset', async (t) => {
+  const { service, inner, memento } = watcher(t, {}, false);
+  let finish;
+  const update = inner.update;
+  inner.update = (key, value) => key === ACCOUNT_CONNECTION_KEY && value !== undefined
+    ? new Promise((resolve) => { finish = async () => { await update(key, value); resolve(); }; })
+    : update(key, value);
+  const pending = service.refresh(true);
+  await new Promise((resolve) => setImmediate(resolve));
+  await memento.clear(42);
+  await finish();
+  await pending;
+  assert.equal(service.snapshot.status, 'signedOut');
+  assert.deepEqual(inner.get(ACCOUNT_CONNECTION_KEY), { resetAt: 0 }, 'simulate a stale write finishing after the deletion');
+  const reloaded = new AccountUsageWatcher(() => {}, new SealableMemento(inner, RESET_KEY), {
+    session: async () => assert.fail('the old reset epoch is not a current connection'),
+    request: async () => assert.fail('a restored window must not request account usage')
+  });
+  t.after(() => reloaded.dispose());
+  await reloaded.refresh();
+  assert.equal(reloaded.snapshot.status, 'signedOut');
 });
 
 function authEvents(t) {

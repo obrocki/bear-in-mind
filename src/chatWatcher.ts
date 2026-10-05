@@ -182,9 +182,32 @@ interface LiveFile {
   usage?: ChatSessionUsage;
 }
 
+interface CachedIndex {
+  fingerprint: string;
+  sessions: ChatSessionUsage[];
+}
+
+function fileFingerprint(file: string): string | undefined {
+  try {
+    const stat = fs.statSync(file, { bigint: true });
+    return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeNs, stat.ctimeNs, stat.birthtimeNs].join(':');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function indexFingerprint(file: string): string | undefined {
+  const database = fileFingerprint(file);
+  return database === undefined ? undefined : `${database}|${fileFingerprint(`${file}-wal`) ?? 'missing'}`;
+}
+
 /** Reads transcript metadata and reported credits; token snapshots are ignored. */
 export class ChatUsageWatcher implements vscode.Disposable {
   private readonly files = new Map<string, LiveFile>();
+  private readonly indexCache = new Map<string, CachedIndex>();
   private readonly indexedSessions = new Map<string, ChatSessionUsage>();
   private readonly _onDidScan = new vscode.EventEmitter<void>();
   readonly onDidScan = this._onDidScan.event;
@@ -274,36 +297,48 @@ export class ChatUsageWatcher implements vscode.Disposable {
     return dirs;
   }
 
-  private readIndex(dir: string): void {
-    const file = path.join(path.dirname(dir), 'state.vscdb');
-    if (!fs.existsSync(file)) {
-      return;
-    }
-    const sqlite = loadSqlite();
-    if (!sqlite) {
-      this.warn(new Error('node:sqlite is unavailable in this VS Code build; chat-history titles cannot be read.'));
-      return;
-    }
-    let db: SqliteDatabase | undefined;
+  private readIndex(file: string): ChatSessionUsage[] {
     try {
-      db = new sqlite.DatabaseSync(file, { readOnly: true });
-      const rows = db.prepare('SELECT value FROM ItemTable WHERE key = ?').all(INDEX_KEY);
-      for (const row of rows) {
-        const value = (row as Record<string, unknown>).value;
-        if (typeof value !== 'string' || value.length > MAX_FILE_BYTES) {
-          throw new Error('Invalid chat-history index size or format.');
-        }
-        for (const session of chatSessionIndex(JSON.parse(value))) {
-          const previous = this.indexedSessions.get(session.sessionId);
-          if (!previous || session.updatedAt >= previous.updatedAt) {
-            this.indexedSessions.set(session.sessionId, session);
+      const fingerprint = indexFingerprint(file);
+      if (fingerprint === undefined) {
+        this.indexCache.delete(file);
+        return [];
+      }
+      const cached = this.indexCache.get(file);
+      if (cached?.fingerprint === fingerprint) {
+        return cached.sessions;
+      }
+      this.indexCache.delete(file);
+      const sqlite = loadSqlite();
+      if (!sqlite) {
+        throw new Error('node:sqlite is unavailable in this VS Code build; chat-history titles cannot be read.');
+      }
+      const sessions: ChatSessionUsage[] = [];
+      let db: SqliteDatabase | undefined;
+      try {
+        db = new sqlite.DatabaseSync(file, { readOnly: true });
+        const rows = db.prepare('SELECT value FROM ItemTable WHERE key = ?').all(INDEX_KEY);
+        for (const row of rows) {
+          const value = (row as Record<string, unknown>).value;
+          if (typeof value !== 'string' || value.length > MAX_FILE_BYTES) {
+            throw new Error('Invalid chat-history index size or format.');
+          }
+          for (const session of chatSessionIndex(JSON.parse(value))) {
+            sessions.push(session);
           }
         }
+      } finally {
+        db?.close();
       }
+      // A concurrent writer/checkpoint must be re-read on the next scan.
+      if (indexFingerprint(file) === fingerprint) {
+        this.indexCache.set(file, { fingerprint, sessions });
+      }
+      return sessions;
     } catch (error) {
+      this.indexCache.delete(file);
       this.warn(error instanceof SyntaxError ? new Error('Malformed chat-history index; session names may be unavailable.') : error);
-    } finally {
-      db?.close();
+      return [];
     }
   }
 
@@ -312,9 +347,17 @@ export class ChatUsageWatcher implements vscode.Disposable {
       return;
     }
     const present = new Set<string>();
+    const presentIndexes = new Set<string>();
     this.indexedSessions.clear();
     for (const dir of this.dirs()) {
-      this.readIndex(dir);
+      const index = path.join(path.dirname(dir), 'state.vscdb');
+      presentIndexes.add(index);
+      for (const session of this.readIndex(index)) {
+        const previous = this.indexedSessions.get(session.sessionId);
+        if (!previous || session.updatedAt >= previous.updatedAt) {
+          this.indexedSessions.set(session.sessionId, session);
+        }
+      }
       let names: string[];
       try {
         names = fs.readdirSync(dir);
@@ -376,6 +419,11 @@ export class ChatUsageWatcher implements vscode.Disposable {
           this.warn(error instanceof SyntaxError
             ? new Error('Malformed chat usage record; session figures may be incomplete.') : error);
         }
+      }
+    }
+    for (const file of this.indexCache.keys()) {
+      if (!presentIndexes.has(file)) {
+        this.indexCache.delete(file);
       }
     }
     for (const file of this.files.keys()) {

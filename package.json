@@ -178,7 +178,7 @@
         "iceberg.accountUsage.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Read your Copilot plan allowance and combined account usage using VS Code's GitHub sign-in and GitHub's **unofficial** `copilot_internal/user` quota API. Run **Iceberg: Refresh Copilot Account Usage…** to authorize access. No local transcripts or telemetry are sent. Legacy premium-request and free-chat quotas keep their own units; pooled/unlimited plans stay unscaled."
+          "markdownDescription": "Allow account usage after you explicitly connect with **Iceberg: Refresh Copilot Account Usage…**. Reads your plan allowance using VS Code's GitHub sign-in and GitHub's **unofficial** `copilot_internal/user` quota API. Restore clears the saved connection; an existing GitHub grant alone does not reconnect. No local transcripts or telemetry are sent. Legacy request quotas retain their units; pooled/unlimited plans stay unscaled."
         },
         "iceberg.tokenBudget": {
           "type": "number",
