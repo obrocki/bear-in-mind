@@ -2,9 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { nonnegative } from './spanUsage';
+import { loadSqlite, type SqliteDatabase } from './sqlite';
 
 const STATE_KEY = 'iceberg.chatCredits.v1';
 const MAX_FILE_BYTES = 96 * 1024 * 1024;
+const INDEX_KEY = 'chat.ChatSessionStore.index';
 
 interface RequestUsage {
   modelId?: string;
@@ -14,7 +16,7 @@ interface RequestUsage {
 
 export interface ChatSessionUsage {
   sessionId: string;
-  /** The name VS Code shows for the session, when the user gave it one. */
+  /** The displayed chat-history title, including generated and custom titles. */
   title?: string;
   updatedAt: number;
   credits?: number;
@@ -51,11 +53,7 @@ function requestUsage(raw: unknown): RequestUsage {
   return result;
 }
 
-/**
- * Only the name the user gave the session is projected. Titles VS Code derives
- * from the first prompt are transcript content, so they are left behind with
- * the rest of it.
- */
+/** Keep only the bounded display title, never reconstruct it from prompt text. */
 export function sessionTitle(raw: unknown): string | undefined {
   if (typeof raw !== 'string' || raw.length > 512) {
     return undefined;
@@ -64,7 +62,33 @@ export function sessionTitle(raw: unknown): string | undefined {
   if (!title) {
     return undefined;
   }
-  return title.length > 80 ? `${title.slice(0, 79)}…` : title;
+  return title;
+}
+
+export function chatSessionIndex(raw: unknown): ChatSessionUsage[] {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Invalid chat-history index; session names may be unavailable.');
+  }
+  const index = raw as Record<string, unknown>;
+  if (index.version !== 1 || !index.entries || typeof index.entries !== 'object' || Array.isArray(index.entries)) {
+    throw new Error('Unsupported chat-history index; session names may be unavailable.');
+  }
+  const sessions: ChatSessionUsage[] = [];
+  for (const [id, value] of Object.entries(index.entries)) {
+    if (!value || typeof value !== 'object') {
+      continue;
+    }
+    const entry = value as Record<string, unknown>;
+    const updatedAt = nonnegative(entry.lastMessageDate);
+    if (updatedAt !== undefined) {
+      sessions.push({
+        sessionId: typeof entry.sessionId === 'string' ? entry.sessionId : id,
+        title: sessionTitle(entry.title),
+        updatedAt
+      });
+    }
+  }
+  return sessions;
 }
 
 /** Replay VS Code's mutation log, projecting only usage metadata. */
@@ -161,6 +185,7 @@ interface LiveFile {
 /** Reads transcript metadata and reported credits; token snapshots are ignored. */
 export class ChatUsageWatcher implements vscode.Disposable {
   private readonly files = new Map<string, LiveFile>();
+  private readonly indexedSessions = new Map<string, ChatSessionUsage>();
   private readonly _onDidScan = new vscode.EventEmitter<void>();
   readonly onDidScan = this._onDidScan.event;
   private readonly credits: Record<string, number>;
@@ -187,12 +212,21 @@ export class ChatUsageWatcher implements vscode.Disposable {
     if (!this.enabled) {
       return [];
     }
-    const sessions = new Map<string, ChatSessionUsage>();
+    const sessions = new Map(this.indexedSessions);
+    const transcripts = new Map<string, ChatSessionUsage>();
     for (const file of this.files.values()) {
       const usage = file.usage;
-      if (usage && (!sessions.has(usage.sessionId) || sessions.get(usage.sessionId)!.updatedAt < usage.updatedAt)) {
-        sessions.set(usage.sessionId, usage);
+      if (usage && (!transcripts.has(usage.sessionId) || transcripts.get(usage.sessionId)!.updatedAt < usage.updatedAt)) {
+        transcripts.set(usage.sessionId, usage);
       }
+    }
+    for (const usage of transcripts.values()) {
+      const indexed = this.indexedSessions.get(usage.sessionId);
+      sessions.set(usage.sessionId, {
+        ...usage,
+        title: indexed?.title ?? usage.title,
+        updatedAt: indexed?.updatedAt ?? usage.updatedAt
+      });
     }
     return [...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt);
   }
@@ -223,8 +257,11 @@ export class ChatUsageWatcher implements vscode.Disposable {
 
   private dirs(): string[] {
     const global = path.dirname(this.context.globalStorageUri.fsPath);
-    const workspace = path.join(path.dirname(global), 'workspaceStorage');
-    const dirs = [path.join(global, 'emptyWindowChatSessions')];
+    const parent = path.dirname(global);
+    const user = path.basename(path.dirname(parent)) === 'profiles' ? path.dirname(path.dirname(parent)) : parent;
+    const workspace = path.join(user, 'workspaceStorage');
+    const dirs = [...new Set([global, path.join(user, 'globalStorage')])]
+      .map((root) => path.join(root, 'emptyWindowChatSessions'));
     try {
       for (const entry of fs.readdirSync(workspace, { withFileTypes: true })) {
         if (entry.isDirectory()) {
@@ -237,12 +274,47 @@ export class ChatUsageWatcher implements vscode.Disposable {
     return dirs;
   }
 
+  private readIndex(dir: string): void {
+    const file = path.join(path.dirname(dir), 'state.vscdb');
+    if (!fs.existsSync(file)) {
+      return;
+    }
+    const sqlite = loadSqlite();
+    if (!sqlite) {
+      this.warn(new Error('node:sqlite is unavailable in this VS Code build; chat-history titles cannot be read.'));
+      return;
+    }
+    let db: SqliteDatabase | undefined;
+    try {
+      db = new sqlite.DatabaseSync(file, { readOnly: true });
+      const rows = db.prepare('SELECT value FROM ItemTable WHERE key = ?').all(INDEX_KEY);
+      for (const row of rows) {
+        const value = (row as Record<string, unknown>).value;
+        if (typeof value !== 'string' || value.length > MAX_FILE_BYTES) {
+          throw new Error('Invalid chat-history index size or format.');
+        }
+        for (const session of chatSessionIndex(JSON.parse(value))) {
+          const previous = this.indexedSessions.get(session.sessionId);
+          if (!previous || session.updatedAt >= previous.updatedAt) {
+            this.indexedSessions.set(session.sessionId, session);
+          }
+        }
+      }
+    } catch (error) {
+      this.warn(error instanceof SyntaxError ? new Error('Malformed chat-history index; session names may be unavailable.') : error);
+    } finally {
+      db?.close();
+    }
+  }
+
   scan(): void {
     if (!this.enabled || this.disposed) {
       return;
     }
     const present = new Set<string>();
+    this.indexedSessions.clear();
     for (const dir of this.dirs()) {
+      this.readIndex(dir);
       let names: string[];
       try {
         names = fs.readdirSync(dir);
@@ -250,7 +322,8 @@ export class ChatUsageWatcher implements vscode.Disposable {
         this.warn(error);
         continue;
       }
-      for (const name of names.filter((name) => name.endsWith('.jsonl'))) {
+      for (const name of names.filter((name) => name.endsWith('.jsonl') ||
+        (name.endsWith('.json') && !names.includes(`${path.basename(name, '.json')}.jsonl`)))) {
         const file = path.join(dir, name);
         present.add(file);
         try {
@@ -261,6 +334,17 @@ export class ChatUsageWatcher implements vscode.Disposable {
           }
           let live = this.files.get(file);
           if (live && live.size === stat.size && live.mtime === stat.mtimeMs) {
+            continue;
+          }
+          if (name.endsWith('.json')) {
+            const parser = newParserState();
+            if (!applyLine(JSON.stringify({ kind: 0, v: JSON.parse(fs.readFileSync(file, 'utf8')) }), parser)) {
+              throw new Error('Malformed legacy chat usage record; session figures may be incomplete.');
+            }
+            this.files.set(file, {
+              offset: stat.size, size: stat.size, mtime: stat.mtimeMs, parser,
+              usage: sessionUsage(parser, path.basename(name, '.json'), stat.mtimeMs)
+            });
             continue;
           }
           if (!live || stat.size <= live.size) {
@@ -288,12 +372,9 @@ export class ChatUsageWatcher implements vscode.Disposable {
           live.size = stat.size;
           live.mtime = stat.mtimeMs;
           live.usage = sessionUsage(live.parser, path.basename(name, '.jsonl'), stat.mtimeMs);
-          // An observed new/empty session can later report its first credits.
-          if (live.usage.credits === undefined && this.credits[live.usage.sessionId] === undefined) {
-            this.credits[live.usage.sessionId] = 0;
-          }
         } catch (error) {
-          this.warn(error);
+          this.warn(error instanceof SyntaxError
+            ? new Error('Malformed chat usage record; session figures may be incomplete.') : error);
         }
       }
     }
@@ -303,8 +384,13 @@ export class ChatUsageWatcher implements vscode.Disposable {
       }
     }
     let delta = 0;
+    const transcriptIds = new Set([...this.files.values()].map((file) => file.usage?.sessionId));
     for (const session of this.sessions) {
       if (session.credits === undefined) {
+        // An observed new/empty session can later report its first credits.
+        if (transcriptIds.has(session.sessionId)) {
+          this.credits[session.sessionId] ??= 0;
+        }
         continue;
       }
       const previous = this.credits[session.sessionId];

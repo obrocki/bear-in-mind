@@ -255,11 +255,24 @@
   function renderGauge(cost) {
     const prompt = cost.basis === 'context' && cost.context;
     const gauge = el('div', 'gauge');
+    if (cost.basis === 'account' && cost.account && cost.account.status === 'ready') {
+      const quota = cost.account.quota;
+      gauge.append(el('h3', null, 'Ice gauge · Copilot plan allowance'));
+      gauge.append(stats([
+        { label: 'Included used', value: quota.used !== undefined ? (quota.approximate ? 'About ' : '') + credits(quota.used) : 'Not reported', qualifier: quota.unit },
+        { label: 'Plan allowance', value: quota.allowance !== undefined ? credits(quota.allowance) : 'Not reported', qualifier: quota.unit }
+      ]));
+      gauge.append(el('p', 'gauge-remaining', percent(cost.health) + ' plan allowance remaining'));
+      gauge.append(el('p', 'viz-caption',
+        'Combined account usage reported by GitHub, not a single session or local token total. ' +
+        'Unofficial quota API; the allowance is not a spending cap.'));
+      return gauge;
+    }
     if (cost.basis === 'unavailable' || cost.basis === 'demo') {
       gauge.append(el('h3', null, cost.basis === 'demo' ? 'Ice gauge · demo' : 'Ice gauge · unscaled'));
       gauge.append(el('p', 'gauge-remaining', cost.basis === 'demo'
         ? percent(cost.health) + ' synthetic demo ice; no tokens recorded'
-        : 'No reported prompt limit. No default token target.'));
+        : 'No usable account allowance or selected-session prompt limit. No default token target.'));
       gauge.append(el('p', 'viz-caption',
         'The ice is a usage metaphor, not a measurement of energy, CO2 or ice loss.'));
       return gauge;
@@ -279,8 +292,47 @@
     return gauge;
   }
 
+  function renderAccount(account) {
+    const block = el('div', 'gauge');
+    block.append(el('h3', null, 'Copilot account usage'));
+    const refresh = el('button', 'secondary', 'Refresh account usage…');
+    refresh.addEventListener('click', () => post('account'));
+    block.append(refresh);
+    if (!account || account.status !== 'ready') {
+      block.append(el('p', 'missing', account && account.message ? account.message
+        : account && account.status === 'loading' ? 'Reading GitHub plan allowance…'
+          : 'Account usage is not connected. Refresh account usage to authorize GitHub sign-in.'));
+      block.append(el('p', 'viz-caption', 'Uses GitHub\'s unofficial quota API. No local chat content or telemetry is sent.'));
+      return block;
+    }
+    const quota = account.quota;
+    block.append(el('p', 'headline-note', quota.login + ' · ' + (quota.plan || 'Plan not reported')));
+    if (quota.unlimited) {
+      block.append(el('p', 'headline-note', quota.hasQuota === false
+        ? 'Pooled allowance exhausted; no per-user denominator is reported.'
+        : 'Pooled or unlimited allowance; no per-user denominator. The account gauge stays unscaled.'));
+      if (quota.creditsUsed !== undefined && quota.hasQuota !== false) {
+        block.append(stats([{ label: 'Pooled credits used', value: credits(quota.creditsUsed), qualifier: 'credits' }]));
+      }
+    } else {
+      block.append(stats([
+        { label: 'Included allowance', value: quota.allowance !== undefined ? credits(quota.allowance) : 'Not reported', qualifier: quota.unit },
+        { label: 'Included used', value: quota.used !== undefined ? (quota.approximate ? 'About ' : '') + credits(quota.used) : 'Not reported', qualifier: quota.unit },
+        { label: 'Allowance remaining', value: quota.percentRemaining !== undefined ? quota.percentRemaining.toFixed(1) + '%' : 'Not reported' }
+      ]));
+    }
+    block.append(el('p', 'viz-caption',
+      (quota.resetAtMs !== undefined ? 'Resets ' + new Date(quota.resetAtMs).toLocaleString() + '. ' : 'Reset date not reported. ') +
+      'Updated ' + ago(quota.fetchedAtMs) + '. GitHub unofficial quota API; may change.'));
+    block.append(el('p', 'viz-caption',
+      'Combined across Copilot sessions and surfaces, never added to local transcript or trace totals. ' +
+      'Legacy premium requests and free-chat requests are not AI credits. Not an invoice or spending cap.'));
+    return block;
+  }
+
   function renderCost(cost, session, period) {
-    const node = section('cost', 'Cost', 'Local usage · not a bill');
+    const node = section('cost', 'Cost', 'Account and local usage · not a bill');
+    node.append(renderAccount(cost.account));
     node.append(renderSession(session, period));
     node.append(el('p', 'headline-note',
       'Local usage across sessions and workspaces, not the selected chat.'));
@@ -293,7 +345,7 @@
       node.append(
         emptyState([
           'No new token counts or credits in the local meter yet. Existing history is adopted without charging it.',
-          'Account usage and monthly credit allowance are not read.'
+          'Account quota is shown separately when connected; tokens are not credits.'
         ])
       );
       node.append(renderGauge(cost));
@@ -319,12 +371,11 @@
     ]));
     node.append(renderGauge(cost));
     node.append(stats([
-      { label: 'Reported credits', value: cost.credits > 0 ? credits(cost.credits) : '—' },
-      { label: 'Account credit limit', value: 'Not read' }
+      { label: 'Reported credits', value: cost.credits > 0 ? credits(cost.credits) : '—' }
     ]));
     node.append(el('p', 'headline-note',
       'Credits: local transcript growth, not the selected chat\'s Session Cost. ' +
-      'Account usage and monthly credit allowance are not read. Tokens are not credits.'));
+      'Account quota is shown separately when connected; tokens are not credits.'));
     node.append(el('p', 'headline-note',
       'Transcript prompt snapshots are not consumed-token totals. Only reported model-call usage is metered.'));
     if (cost.manualTokens > 0) {
@@ -492,10 +543,10 @@
     return sessionId.length > 12 ? sessionId.slice(0, 8) + '…' : sessionId;
   }
 
-  /** The fallback when nothing is pinned and nothing has been observed. */
+  /** Local coverage stays separate from the account API's combined usage. */
   function renderPeriod(period) {
     const block = el('div', 'gauge');
-    block.append(el('h3', null, 'This billing period'));
+    block.append(el('h3', null, 'Local sessions observed this month'));
     if (!period || period.sessions === 0) {
       block.append(el('p', 'missing',
         'No session metadata yet. Session cost and account allowance are not interchangeable.'));
@@ -541,7 +592,8 @@
     button.addEventListener('click', () => post('session'));
     block.append(button);
     if (!session) {
-      block.append(el('p', 'missing', 'No session selected or observed; showing the period roll-up instead.'));
+      block.append(el('p', 'headline-note',
+        'All sessions: combined account usage against your Copilot plan allowance. Select a session to compare its cost and prompt context.'));
       block.append(renderPeriod(period));
       return block;
     }

@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { it } = require('node:test');
-const { ChatUsageWatcher, applyLine, newParserState, sessionUsage } = require(
+const { ChatUsageWatcher, applyLine, newParserState, sessionUsage, chatSessionIndex } = require(
   path.join(process.env.BEAR_TEST_BUILD, 'chatWatcher.js')
 );
 
@@ -41,9 +41,85 @@ it('carries the name the user gave the session and drops derived transcript titl
   applyLine(JSON.stringify({ kind: 3, k: ['customTitle'] }), state);
   assert.equal(sessionUsage(state, 'fallback', 1).title, undefined);
   applyLine(JSON.stringify({ kind: 1, k: ['customTitle'], v: 'x'.repeat(200) }), state);
-  assert.equal(sessionUsage(state, 'fallback', 1).title.length, 80);
+  assert.equal(sessionUsage(state, 'fallback', 1).title.length, 200);
   applyLine(JSON.stringify({ kind: 1, k: ['customTitle'], v: 42 }), state);
   assert.equal(sessionUsage(state, 'fallback', 1).title, undefined);
+});
+
+it('projects VS Code history titles and activity timestamps without retaining prompt or response content', () => {
+  const sessions = chatSessionIndex({ version: 1, entries: {
+    s: { sessionId: 's', title: 'Business canvas feasibility', lastMessageDate: 1234, response: 'private' },
+    renamed: { sessionId: 'renamed', title: 'DAWID TESTING', lastMessageDate: 5678, message: 'private' }
+  } });
+  assert.equal(sessions[0].title, 'Business canvas feasibility');
+  assert.equal(sessions[1].title, 'DAWID TESTING');
+  assert.equal(sessions[1].updatedAt, 5678);
+  assert.doesNotMatch(JSON.stringify(sessions), /private|response|message/);
+  assert.throws(() => chatSessionIndex({ version: 2, entries: {} }), /Unsupported/);
+});
+
+it('uses the same titles as chat history, including renames without a transcript change and legacy JSON', (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-chat-index-'));
+  const workspace = path.join(dir, 'workspaceStorage', 'w');
+  const chat = path.join(workspace, 'chatSessions');
+  fs.mkdirSync(chat, { recursive: true });
+  const db = new DatabaseSync(path.join(workspace, 'state.vscdb'));
+  db.exec('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)');
+  const writeIndex = (title) => db.prepare('INSERT OR REPLACE INTO ItemTable VALUES (?, ?)').run(
+    'chat.ChatSessionStore.index', JSON.stringify({ version: 1, entries: {
+      s: { sessionId: 's', title, lastMessageDate: 5000 },
+      legacy: { sessionId: 'legacy', title: 'Repository cleanup', lastMessageDate: 1000 },
+      indexed: { sessionId: 'indexed', title: 'Metadata-only chat', lastMessageDate: 2000 }
+    } })
+  );
+  writeIndex('DAWID TESTING');
+  fs.writeFileSync(path.join(chat, 's.jsonl'), JSON.stringify({ kind: 0, v: {
+    sessionId: 's', customTitle: 'Stale transcript name', requests: [{ copilotCredits: 10 }]
+  } }) + '\n');
+  fs.writeFileSync(path.join(chat, 's.json'), JSON.stringify({ sessionId: 's', requests: [{ copilotCredits: 999 }] }));
+  fs.writeFileSync(path.join(chat, 'legacy.json'), JSON.stringify({ sessionId: 'legacy', requests: [{ copilotCredits: 5 }] }));
+  const deltas = [];
+  const service = new ChatUsageWatcher({
+    globalStorageUri: { fsPath: path.join(dir, 'profiles', 'custom', 'globalStorage', 'bear') },
+    globalState: { get: () => undefined, update: async () => {} }
+  }, (delta) => deltas.push(delta));
+  t.after(() => { service.dispose(); db.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  service.scan();
+  assert.deepEqual(service.sessions.map((s) => s.title), ['DAWID TESTING', 'Metadata-only chat', 'Repository cleanup']);
+  assert.equal(service.sessions[0].credits, 10, 'JSONL supersedes the stale flat JSON copy');
+  assert.equal(service.sessions[0].updatedAt, 5000, 'chat activity, not transcript filesystem time');
+  assert.equal(service.sessions[2].credits, 5);
+  writeIndex('Renamed in chat');
+  service.scan();
+  assert.equal(service.sessions[0].title, 'Renamed in chat');
+  assert.deepEqual(deltas, [], 'discovering and renaming histories never charges them');
+  fs.writeFileSync(path.join(chat, 'indexed.jsonl'), JSON.stringify({ kind: 0, v: {
+    sessionId: 'indexed', requests: [{ copilotCredits: 50 }]
+  } }) + '\n');
+  service.scan();
+  assert.deepEqual(deltas, [], 'a transcript discovered after its index entry is still a history baseline');
+  fs.writeFileSync(path.join(chat, 'legacy.json'), JSON.stringify({ sessionId: 'legacy', requests: [{ copilotCredits: 7 }] }));
+  service.scan();
+  assert.deepEqual(deltas, [2]);
+});
+
+it('counts the first reported credits for an already observed empty legacy JSON session', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-legacy-empty-'));
+  const chat = path.join(dir, 'globalStorage', 'emptyWindowChatSessions');
+  fs.mkdirSync(chat, { recursive: true });
+  const file = path.join(chat, 's.json');
+  fs.writeFileSync(file, JSON.stringify({ sessionId: 's', requests: [] }));
+  const deltas = [];
+  const service = new ChatUsageWatcher({
+    globalStorageUri: { fsPath: path.join(dir, 'globalStorage', 'bear') },
+    globalState: { get: () => undefined, update: async () => {} }
+  }, (delta) => deltas.push(delta));
+  t.after(() => { service.dispose(); fs.rmSync(dir, { recursive: true, force: true }); });
+  service.scan();
+  fs.writeFileSync(file, JSON.stringify({ sessionId: 's', requests: [{ copilotCredits: 3 }] }));
+  service.scan();
+  assert.deepEqual(deltas, [3]);
 });
 
 it('matches VS Code Session Cost including backend totals, missing and zero credits', () => {

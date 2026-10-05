@@ -18,6 +18,7 @@ then press `F5` for an Extension Development Host.
 | `src/api.ts`, `src/extension.ts` | Public contract, shared reporting adapter, activation and commands. |
 | `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
+| `src/accountUsage.ts`, `src/sqlite.ts` | Authenticated GitHub quota lookup and shared runtime read-only SQLite support. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
 | `.github/extensions/ai-attribution/lib/tokenCoverage.cjs` / `.d.cts` | Shared token reporting/paired-count logic, bundled into the typed extension and used directly by the build-free canvas. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
@@ -36,7 +37,11 @@ dependencies; reload extensions in the app after editing. Its tests run with
 
 ## Accounting invariants
 
-- Read only transcript session metadata and reported credits; ignore token
+- Read displayed titles and activity timestamps from the exact VS Code
+  chat-history index key, including generated titles and renames. Support JSON
+  and JSONL transcripts, preferring JSONL when both exist; never derive titles
+  from prompt text. Keep index titles current even without transcript changes.
+  Read only transcript session metadata and reported credits; ignore token
   snapshots and content. Replay snapshot, set, push/splice and delete records.
   Use VS Code's `max(sum(turn credits), reported session credits)` formula.
 - Reconcile metrics and spans with `max()` per dimension, not addition. No
@@ -92,10 +97,15 @@ dependencies; reload extensions in the app after editing. Its tests run with
 - Keep elapsed session duration (idle-inclusive), agent invocation latency and
   model latency separate. Throughput uses output tokens and matching model-call
   time. Turn index is not an LLM round-trip count.
-- Keep billing credits, cumulative tokens and prompt occupancy separate. Pin a
-  comparison session explicitly; do not imply active-chat detection. Without a
-  reported prompt allowance or explicit personal target, render unscaled ice
-  and no percentage. Never imply measured emissions or actual ice loss.
+- Keep account quota, billing credits, cumulative tokens and prompt occupancy
+  separate. No pin means all sessions/account scope, never an implicit latest
+  session. Use the reported account percentage and entitlement basis; never add
+  local credits or divide pooled `credits_used` by an entitlement. Preserve
+  legacy request units. The GitHub quota endpoint is unofficial: expose failures,
+  never persist/log credentials or quota bodies, and invalidate expired data.
+  A pinned chat uses its own reported prompt allowance, never another chat's
+  context. Without a usable denominator or explicit personal target, render
+  unscaled ice and no percentage. Never imply measured emissions or actual ice loss.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.

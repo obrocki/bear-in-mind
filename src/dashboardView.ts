@@ -36,6 +36,9 @@ class DashboardHost implements vscode.Disposable {
           case 'session':
             void vscode.commands.executeCommand('iceberg.selectSession');
             break;
+          case 'account':
+            void vscode.commands.executeCommand('iceberg.refreshAccountUsage');
+            break;
           case 'restore':
             void vscode.commands.executeCommand('iceberg.restoreDefaults');
             break;

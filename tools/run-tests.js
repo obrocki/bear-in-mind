@@ -12,7 +12,7 @@ const esbuild = require('esbuild');
 const repoRoot = path.resolve(__dirname, '..');
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-tests-'));
 
-const ENTRIES = ['src/api.ts', 'src/chatWatcher.ts', 'src/restore.ts', 'src/spanUsage.ts', 'src/otelParse.ts', 'src/otelSummary.ts', 'src/otelWatcher.ts', 'src/tokenMeter.ts'];
+const ENTRIES = ['src/api.ts', 'src/accountUsage.ts', 'src/chatWatcher.ts', 'src/restore.ts', 'src/spanUsage.ts', 'src/otelParse.ts', 'src/otelSummary.ts', 'src/otelWatcher.ts', 'src/tokenMeter.ts'];
 
 const vscodeStub = {
   name: 'vscode-stub',

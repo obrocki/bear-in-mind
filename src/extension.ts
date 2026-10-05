@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { AccountUsageWatcher } from './accountUsage';
 import { createIcebergApi, type IcebergApi } from './api';
 import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
@@ -57,6 +58,10 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   context.subscriptions.push(watcher);
   watcher.start();
 
+  const account = new AccountUsageWatcher(log);
+  context.subscriptions.push(account, account.onDidChange((state) => meter.setAccountUsage(state)));
+  account.start();
+
   const otel = new OtelWatcher(
     storage,
     (delta) => meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests),
@@ -67,6 +72,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   const updateContext = () => {
     const session = selectedSession({ transcripts: watcher.sessions, spans: otel.spanDigest, selectedSessionId });
+    meter.setSessionSelected(selectedSessionId !== undefined);
     meter.setContext(session?.trace?.context);
     meter.refreshBasis();
   };
@@ -96,6 +102,9 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       if (e.affectsConfiguration('iceberg.otel') || e.affectsConfiguration(OTEL_SECTION)) {
         otel.reconfigure();
       }
+      if (e.affectsConfiguration('iceberg.accountUsage')) {
+        account.start();
+      }
     })
   );
 
@@ -114,6 +123,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       source: usage.source,
       basis: usage.basis,
       context: usage.context,
+      account: usage.account,
       drift: usage.drift,
       manualTokens: usage.manualTokens,
       legacyTokens: usage.legacyTokens,
@@ -168,7 +178,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         `- Across local sessions/workspaces since ${new Date(meter.since).toISOString()}; not selected-session cost.`,
         `- Source: ${s.source === 'otel' ? 'OpenTelemetry (metrics/spans, not added together)' : 'awaiting telemetry'}`,
         `- Explicit manual reports: ${fmt(s.manualTokens)} tokens; excluded legacy estimates: ${fmt(s.legacyTokens)}.`,
-        '- Account usage and monthly credit allowance are not read.',
+        `- Account: ${accountReadout(s)}`,
         '',
         `${s.bearName} ${moodLine(s.health)}`,
         '',
@@ -199,15 +209,28 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
     vscode.commands.registerCommand('iceberg.connectTelemetry', () => connectTelemetry(otel, output, globalState)),
 
+    vscode.commands.registerCommand('iceberg.refreshAccountUsage', async () => {
+      if (suspended || globalState.isSealed) {
+        await promptReload('Bear in Mind was restored to defaults. Reload before connecting account usage.');
+        return;
+      }
+      await account.refresh(true);
+      if (account.snapshot.status === 'error') {
+        await vscode.window.showErrorMessage(account.snapshot.message ?? 'Copilot account usage is unavailable.');
+      } else if (account.snapshot.status === 'disabled') {
+        await vscode.window.showInformationMessage('Enable iceberg.accountUsage.enabled to read your Copilot plan allowance.');
+      }
+    }),
+
     vscode.commands.registerCommand('iceberg.restoreDefaults', () =>
-      restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, suspend })
+      restoreDefaults({ context, otel, watcher, account, globalState, workspaceState, output, suspend })
     ),
 
     vscode.commands.registerCommand('iceberg.telemetryDiagnostics', () => showDiagnostics(otel, meter, output, snapshot().session)),
 
     vscode.commands.registerCommand('iceberg.selectSession', async () => {
       const choices = [
-        { label: 'Latest observed session', description: 'Not automatically the active VS Code chat', sessionId: undefined },
+        { label: 'All sessions', description: 'Combined account usage against your Copilot plan allowance', sessionId: undefined },
         ...sessionComparisons(watcher.sessions, otel.spanDigest.sessions).map((session) => ({
           label: sessionLabel(session),
           description: [
@@ -224,7 +247,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         title: 'Session to compare with Copilot',
         matchOnDescription: true,
         matchOnDetail: true,
-        placeHolder: 'Pick a session by name, repository or user, or follow the most recently observed session'
+        placeHolder: 'Show all sessions and your plan allowance, or pick a chat by its VS Code title, repository or user'
       });
       if (choice) {
         selectedSessionId = choice.sessionId;
@@ -241,7 +264,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
         `${iceReadout(s)}. Local totals across sessions/workspaces: ` +
           `in ${fmt(s.input)}, out ${fmt(s.output)}, ${s.requests} model calls + manual reports; ` +
           `reported credits ${s.credits > 0 ? s.credits.toFixed(1) : 'not reported'} · ${source}. ` +
-          `Not selected-session cost or account usage; the monthly credit allowance is not read.`,
+          `Not selected-session cost. Account: ${accountReadout(s)}.`,
         'Open Dashboard',
         'Open Habitat'
       );
@@ -527,6 +550,7 @@ interface RestoreContext {
   context: vscode.ExtensionContext;
   otel: OtelWatcher;
   watcher: ChatUsageWatcher;
+  account: AccountUsageWatcher;
   globalState: SealableMemento;
   workspaceState: SealableMemento;
   output: vscode.OutputChannel;
@@ -539,7 +563,7 @@ interface RestoreContext {
  * back to the user's own values, Bear in Mind's user settings to their defaults,
  * and its stored data and feed file removed. Copilot's own files are untouched.
  */
-async function restoreDefaults({ context, otel, watcher, globalState, workspaceState, output, suspend }: RestoreContext): Promise<void> {
+async function restoreDefaults({ context, otel, watcher, account, globalState, workspaceState, output, suspend }: RestoreContext): Promise<void> {
   if (globalState.isSealed) {
     await promptReload('Bear in Mind is already restored to its defaults. Reload the window to finish.');
     return;
@@ -615,6 +639,7 @@ async function restoreDefaults({ context, otel, watcher, globalState, workspaceS
   suspend();
   otel.stop();
   watcher.stop();
+  account.dispose();
   // Announce the reset before touching settings, so a Connect running in
   // another window refuses rather than re-enabling telemetry mid-restore.
   await globalState.seal();
@@ -772,7 +797,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   }
   const observed = otel.rollup.tokenTotals();
   output.appendLine(`  feed with history   ${observed.input} input / ${observed.output} output tokens`);
-  output.appendLine('  billing allowance   not read; tokens are not credits');
+  output.appendLine(`  account allowance   ${accountReadout(usage)}; never added to local usage`);
   output.appendLine(
     `  reconciliation      ${
       drift.pending
@@ -989,14 +1014,31 @@ function registerChatParticipant(context: vscode.ExtensionContext, meter: TokenM
 function iceReadout(s: UsageSnapshot): string {
   const pct = Math.round(s.health * 100);
   if (s.basis === 'unavailable') {
-    return 'ice unscaled: no reported prompt limit or user-selected target; not an environmental measurement';
+    return 'ice unscaled: no usable account allowance, selected-session prompt limit or personal token target; not an environmental measurement';
   }
   if (s.basis === 'demo') {
     return `${pct}% demo ice remaining (synthetic animation, no usage recorded)`;
   }
+  if (s.basis === 'account') {
+    return `${pct}% Copilot plan allowance remaining (combined account usage; ${accountReadout(s)}; not a spending cap)`;
+  }
   return s.basis === 'context' && s.context
     ? `${pct}% latest prompt allowance free (used ${s.context.used.toLocaleString('en-US')} / limit ${s.context.limit.toLocaleString('en-US')} tokens; session ${s.context.sessionId ?? 'not reported'})`
     : `${pct}% local token budget remaining (counted ${s.total.toLocaleString('en-US')} / target ${s.budget.toLocaleString('en-US')} tokens; visual target, not a Copilot spending cap)`;
+}
+
+function accountReadout(s: UsageSnapshot): string {
+  const account = s.account;
+  if (account?.status !== 'ready') {
+    return account?.message ?? (account?.status === 'loading' ? 'reading GitHub quota' : 'not connected; run Refresh Copilot Account Usage');
+  }
+  const quota = account.quota;
+  const amount = quota.unlimited
+    ? `pooled or unlimited allowance${quota.creditsUsed !== undefined ? `; ${quota.creditsUsed} reported credits used` : ''}`
+    : `${quota.used !== undefined ? `${quota.approximate ? 'approximately ' : ''}${quota.used.toLocaleString('en-US')} used / ` : ''}` +
+      `${quota.allowance?.toLocaleString('en-US') ?? 'unreported'} ${quota.unit} allowance`;
+  return `${quota.login} · ${quota.plan ?? 'plan not reported'} · ${amount}` +
+    `${quota.resetAtMs !== undefined ? `; resets ${new Date(quota.resetAtMs).toISOString()}` : ''}; GitHub unofficial quota API`;
 }
 
 function fmt(n: number): string {

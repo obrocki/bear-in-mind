@@ -23,6 +23,7 @@ const SHOTS = [
   { file: 'panel-full.png', page: 'shot.html', q: 'health=1', w: 330, h: 440, dsf: 2, settle: 6000 },
   { file: 'panel-mid.png', page: 'shot.html', q: 'health=0.54', w: 330, h: 440, dsf: 2, settle: 6500 },
   { file: 'panel-context.png', page: 'shot.html', q: 'context', w: 330, h: 440, dsf: 2, settle: 6500 },
+  { file: 'panel-account.png', page: 'shot.html', q: 'account', w: 330, h: 440, dsf: 2, settle: 6500 },
   { file: 'panel-low.png', page: 'shot.html', q: 'health=0.16', w: 330, h: 440, dsf: 2, settle: 7000 },
   { file: 'panel-melted.png', page: 'shot.html', q: 'health=0', w: 330, h: 440, dsf: 2, settle: 6000 },
   { file: 'editor-view.png', page: 'shot.html', q: 'health=0.38&compact=0&chrome=0', w: 900, h: 520, dsf: 2, settle: 8000 },
@@ -34,6 +35,7 @@ const SHOTS = [
   { file: 'dashboard-high-contrast-light.png', page: 'dashboard.html', q: 'theme=high-contrast-light', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-sdk.png', page: 'dashboard.html', q: 'credits&sdk', w: 560, h: 1250, dsf: 2, settle: 1200 },
   { file: 'dashboard-context.png', page: 'dashboard.html', q: 'context', w: 1180, h: 1000, dsf: 2, settle: 1200 },
+  { file: 'dashboard-account.png', page: 'dashboard.html', q: 'account', w: 1180, h: 1300, dsf: 2, settle: 1200 },
   { file: 'dashboard-empty.png', page: 'dashboard.html', q: 'empty', w: 1180, h: 470, dsf: 2, settle: 1200 },
   { file: 'dashboard-waiting.png', page: 'dashboard.html', q: 'waiting', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-credits.png', page: 'dashboard.html', q: 'credits', w: 560, h: 900, dsf: 2, settle: 1200 }

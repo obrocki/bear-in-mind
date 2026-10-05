@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.6.4
+
+- Session picker titles now come from VS Code's chat-history index, including
+  generated names and renames, instead of exposing GUIDs when transcript custom
+  titles are absent. Support legacy JSON transcripts and custom-profile storage.
+- **All sessions** is the default: no implicit latest-session selection.
+  Explicitly selected chats retain their own cost and prompt-context comparison.
+- Added **Refresh Copilot Account Usage** and a separate, authorized account
+  connection to GitHub's unofficial quota API used by VS Code. Combined account
+  usage drives the gauge against the reported plan allowance; local tokens and
+  credits are never added to account usage, and legacy request units stay separate.
+- Account sign-in, API errors, stale/reset quotas and pooled/unlimited plans are
+  explicit. No hard-coded allowance or invented per-user denominator; account
+  data and credentials are not persisted or logged, and no local chat data is sent.
+- Updated dashboard, habitat, status/diagnostic text, settings descriptions,
+  README and data-handling documentation; added synthetic account-usage screenshots.
+
 ## 0.6.3
 
 - VS Code alignment: time-appropriate repository/actor context across native

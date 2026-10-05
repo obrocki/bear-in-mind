@@ -14,6 +14,7 @@
     compact=0       editor-tab layout      bear=<name>  bear name
     pixelScale=<n>  0 = auto-fit           note=0       hide the compassion note
     context        show latest-prompt headroom with separate local totals
+    account        show a synthetic Copilot plan allowance and combined usage
 -->
 <style>
   :root {
@@ -93,7 +94,7 @@
           <span id="source" class="source">metered by OpenTelemetry</span>
           <button id="btnDashboard" type="button">Dashboard &rarr;</button>
         </div>
-        <p class="note">A usage metaphor, not measured energy or ice loss. No default token target; not your Copilot credit balance.</p>
+        <p class="note">A usage metaphor, not measured energy or ice loss. All sessions use the reported Copilot plan allowance; selected chats use prompt context. Not a spending cap.</p>
       </div>
     </div>
     <div id="statusbar"><span id="sb">&#10052; 100%</span></div>
@@ -105,6 +106,12 @@
       var health = parseFloat(q.get('health') || '1');
       var budget = parseInt(q.get('budget') || '0', 10);
       var demo = q.has('health') && !q.has('context') && !budget;
+      var account = q.has('account') ? { status: 'ready', quota: {
+        login: 'octocat', plan: 'pro', unit: 'credits', unlimited: false,
+        allowance: 1000, used: 250, percentRemaining: 75, approximate: false,
+        fetchedAtMs: Date.now(), resetAtMs: Date.now() + 86400000
+      } } : undefined;
+      if (account) { demo = false; health = 0.75; }
 
       document.documentElement.setAttribute('data-compact', String(q.get('compact') !== '0'));
       if (q.get('hud') === '0') document.getElementById('hud').style.display = 'none';
@@ -131,8 +138,9 @@
           output: total - input,
           total: total,
           budget: budget,
-          basis: context ? 'context' : demo ? 'demo' : budget ? 'budget' : 'unavailable',
+          basis: context ? 'context' : account ? 'account' : demo ? 'demo' : budget ? 'budget' : 'unavailable',
           context: context,
+          account: account,
           source: 'otel',
           requests: Math.max(1, Math.round((1 - health) * 140)),
           credits: Math.round((1 - health) * 3200) / 10,

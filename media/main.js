@@ -920,29 +920,40 @@
     el.pct.textContent = unscaled ? '—' : pct + '%';
     el.fill.style.width = unscaled ? '0%' : Math.max(0, state.targetHealth * 100) + '%';
     const prompt = s.basis === 'context' && s.context;
-    el.tokens.textContent = unscaled ? 'No reported limit · no default token target' : demo ? 'Demo animation · no usage recorded' : prompt
+    const account = s.basis === 'account' && s.account && s.account.status === 'ready' && s.account.quota;
+    el.tokens.textContent = unscaled ? 'No usable allowance · no default token target' : demo ? 'Demo animation · no usage recorded' : account
+      ? (account.used !== undefined ? (account.approximate ? 'About ' : '') + account.used.toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' used' : 'Usage not reported') +
+        ' / ' + (account.allowance !== undefined ? account.allowance.toLocaleString('en-US') : 'unreported') + ' ' + account.unit + ' allowance'
+      : prompt
       ? 'Prompt used ' + prompt.used.toLocaleString('en-US') + ' / limit ' + prompt.limit.toLocaleString('en-US') + ' tokens'
       : 'Counted ' + s.total.toLocaleString('en-US') + ' / target ' + s.budget.toLocaleString('en-US') + ' tokens';
-    el.tokens.title = unscaled || demo ? 'The ice is a usage metaphor, not measured energy, CO2 or ice loss.' : prompt
+    el.tokens.title = unscaled || demo ? 'The ice is a usage metaphor, not measured energy, CO2 or ice loss.' : account
+      ? 'Combined Copilot account usage / reported plan allowance. GitHub unofficial quota API; not a spending cap.'
+      : prompt
       ? 'Latest observed prompt / max_prompt_tokens; not the selected chat\'s full context window.'
       : 'Enabled token dimensions / iceberg.tokenBudget; a local visual target, not a Copilot spending cap.';
     el.split.textContent = 'local in ' + fmt(s.input) + ' · out ' + fmt(s.output);
     if (el.basis) {
-      // The percentage means two different things depending on what the
-      // telemetry can see, so say which one it is rather than leaving a bare
-      // number to be misread.
       el.basis.textContent =
-        unscaled ? 'ice unscaled' : demo ? 'demo ice remaining' : prompt ? 'latest prompt free' : 'local budget remaining';
+        unscaled ? 'ice unscaled' : demo ? 'demo ice remaining' : account ? 'plan allowance remaining'
+          : prompt ? 'latest prompt free' : 'local budget remaining';
     }
     if (el.source) {
       el.source.textContent =
-        prompt
-          ? 'comparison session · prompt'
+        account ? 'all sessions · GitHub account' : prompt ? 'comparison session · prompt'
+          : s.account && s.account.status === 'error' ? 'account usage unavailable'
+            : s.account && s.account.status === 'signedOut' ? 'account usage not connected'
+              : s.account && s.account.status === 'ready' && s.account.quota.unlimited ? 'account allowance pooled / unlimited'
           : s.source === 'otel' ? 'local usage · OpenTelemetry' : 'awaiting telemetry';
-      el.source.title = prompt
+      el.source.title = account
+        ? account.login + ' · ' + (account.plan || 'plan not reported') + ' · GitHub unofficial quota API'
+        : prompt
         ? (prompt.sessionId || 'session not reported') + ' · ' + (prompt.model || 'unknown model') + ' · ' + new Date(prompt.atMs).toISOString()
+        : s.account && s.account.message ? s.account.message
+          : s.account && s.account.status === 'ready' && s.account.quota.unlimited
+            ? 'GitHub reports no per-user denominator; pooled or unlimited account allowance stays unscaled.'
         : 'Observed across local sessions/workspaces, not the selected chat or account billing period.';
-      el.source.dataset.live = s.source === 'otel' ? 'true' : 'false';
+      el.source.dataset.live = account || s.source === 'otel' ? 'true' : 'false';
     }
 
     const accent = pct > 50 ? '#9fd8ff' : pct > 20 ? '#ffcf7a' : '#ff8a6b';

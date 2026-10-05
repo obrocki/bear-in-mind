@@ -86,7 +86,7 @@ class HabitatHost implements vscode.Disposable {
       <span id="source" class="source" title="Where the numbers come from">—</span>
       <button id="btnDashboard" type="button" title="Open the cost, speed and quality dashboard">Dashboard →</button>
     </div>
-    <p class="note">A usage metaphor, not measured energy or ice loss. No default token target; not your Copilot credit balance.</p>
+    <p class="note">A usage metaphor, not measured energy or ice loss. All sessions use the reported Copilot plan allowance; selected chats use prompt context. Not a spending cap.</p>
   </div>
   <script nonce="${nonce}" src="${script}"></script>
 </body>
