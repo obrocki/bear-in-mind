@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- AI attribution canvas: time-appropriate repository context and consistent
+  trace-only coverage without fabricated sessions; nullable token subtotals,
+  per-field coverage and cache-read share over paired reported counts.
+- AI attribution canvas: **Intersection** across all five surfaces, excluding
+  missing/unverified fields and distinguishing native from conditional
+  availability. **App / system**, Light and Dark themes now work without host
+  token injection and follow live host/system changes.
+- Attribution research/model: current organisation token/customization
+  aggregates, self-reported task completion, primary-source CLI/OTel/billing
+  verification and explicit gross/discount/net billing reconciliation.
 - **User attribution** from VS Code 1.140's OpenTelemetry identity capture:
   `user.name` (the signed-in GitHub account) is read from agent spans in the
   trace store and file feed, inherited by model calls from the time-appropriate

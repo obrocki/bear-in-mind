@@ -22,6 +22,9 @@ To rebuild one screenshot: `npm run media:shots -- dashboard-waiting.png`.
 Canvas shots start the real AI attribution canvas server, load synthetic SQLite
 stores, and can be rebuilt one at a time, for example:
 `npm run media:canvas -- canvas-coverage.png`.
+The canvas harness also verifies live system theme changes, body-injected host
+tokens, explicit Light/Dark overrides and body-text contrast of at least 4.5:1.
+It includes light and dark Intersection views; it never reads live stores.
 
 Preview `shot.html?health=0.3&chrome=0` or `dashboard.html?waiting` in a browser.
 Both harnesses support `?context` for latest-prompt headroom; the dashboard also

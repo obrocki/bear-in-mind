@@ -163,6 +163,51 @@ function credits(nano) {
   return nano / NANO_AIU_PER_CREDIT;
 }
 
+class TokenTally {
+  constructor() {
+    this.fields = Object.fromEntries(
+      ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']
+        .map((key) => [key, { total: 0, calls: 0 }]),
+    );
+    this.pairedInput = 0;
+    this.pairedCache = 0;
+    this.pairedCalls = 0;
+  }
+  add(values) {
+    const reported = {};
+    for (const [key, field] of Object.entries(this.fields)) {
+      const value = nanoAiu(values[key]);
+      reported[key] = value !== null && Number.isSafeInteger(value) ? value : null;
+      if (reported[key] !== null) {
+        field.total += reported[key];
+        field.calls += 1;
+      }
+    }
+    const { inputTokens: input, cacheReadTokens: cached } = reported;
+    if (input !== null && cached !== null && cached <= input) {
+      this.pairedInput += input;
+      this.pairedCache += cached;
+      this.pairedCalls += 1;
+    }
+  }
+  totals() {
+    return Object.fromEntries(Object.entries(this.fields).map(([key, field]) => [
+      key, field.calls ? field.total : null,
+    ]));
+  }
+  coverage(calls) {
+    return Object.fromEntries(Object.entries(this.fields).map(([key, field]) => [
+      key, { reportedCalls: field.calls, share: share(field.calls, calls) },
+    ]));
+  }
+  ratioCoverage(calls) {
+    return { reportedCalls: this.pairedCalls, share: share(this.pairedCalls, calls) };
+  }
+  cacheReadRatio() {
+    return share(this.pairedCache, this.pairedInput);
+  }
+}
+
 class Tally {
   constructor() {
     this.map = new Map();
@@ -314,12 +359,8 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     calls: 0,
     creditedCalls: 0,
     nano: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheWriteTokens: 0,
-    reasoningTokens: 0,
   };
+  const tokens = new TokenTally();
   const stages = {
     observed: newAcc(),
     session: newAcc(),
@@ -345,11 +386,13 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     totals.calls += 1;
     totals.creditedCalls += hasCredit ? 1 : 0;
     totals.nano += nano;
-    totals.inputTokens += num(row.input_tokens);
-    totals.outputTokens += num(row.output_tokens);
-    totals.cacheReadTokens += num(row.cache_read_tokens);
-    totals.cacheWriteTokens += num(row.cache_write_tokens);
-    totals.reasoningTokens += num(row.reasoning_tokens);
+    tokens.add({
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      cacheReadTokens: row.cache_read_tokens,
+      cacheWriteTokens: row.cache_write_tokens,
+      reasoningTokens: row.reasoning_tokens,
+    });
     if (row.initiator === 'sub-agent' || present(row.agent_id)) subAgentNano += nano;
 
     const session = sessionId ? sessions.get(sessionId) : undefined;
@@ -408,19 +451,17 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
       calls: totals.calls,
       creditedCalls: totals.creditedCalls,
       credits: credits(totals.nano),
-      inputTokens: totals.inputTokens,
-      outputTokens: totals.outputTokens,
-      cacheReadTokens: totals.cacheReadTokens,
-      cacheWriteTokens: totals.cacheWriteTokens,
-      reasoningTokens: totals.reasoningTokens,
+      ...tokens.totals(),
     },
+    tokenCoverage: tokens.coverage(totals.calls),
+    metricCoverage: { cacheReadRatio: tokens.ratioCoverage(totals.calls) },
     funnel,
     metrics: {
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
       creditsToPrShare: refsAvailable ? share(stages.pullRequest.nano, totals.nano) : null,
       creditsToActorShare: null,
-      cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
+      cacheReadRatio: tokens.cacheReadRatio(),
       subAgentShare: share(subAgentNano, totals.nano),
     },
     breakdowns: {
@@ -442,6 +483,8 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
       windowed || !sinceDay ? null : 'created_at is missing, so the window could not be applied.',
       windowed ? 'Rows with only a date count when their whole day falls inside the window.' : null,
       'No user identity is stored per session, so credits cannot be attributed to an actor from this store.',
+      'Repository and branch come from the current session row, not time-versioned work context. Recorded references do not verify delivery.',
+      'Token totals are reported subtotals. Cache-read share uses only calls reporting both input and cache-read counts with cached tokens no greater than input.',
     ].filter(Boolean),
   };
 }
@@ -462,26 +505,8 @@ const CHAT_KEYS = [
   IDENTITY_KEY,
 ];
 
-/** The newest agent context for a chat span: its chat session, conversation, parent session, then trace. */
-function agentLink(maps, chat, parent) {
-  if (present(chat.chat_session_id) && maps.session.has(String(chat.chat_session_id))) {
-    return { ctx: maps.session.get(String(chat.chat_session_id)), link: 'chat session' };
-  }
-  if (present(chat.conversation_id) && maps.conversation.has(String(chat.conversation_id))) {
-    return { ctx: maps.conversation.get(String(chat.conversation_id)), link: 'conversation' };
-  }
-  if (present(parent) && maps.session.has(String(parent))) {
-    return { ctx: maps.session.get(String(parent)), link: 'parent session' };
-  }
-  if (present(chat.trace_id) && maps.trace.has(String(chat.trace_id))) {
-    return { ctx: maps.trace.get(String(chat.trace_id)), link: 'trace' };
-  }
-  return { ctx: null, link: 'none' };
-}
-
-function identityAt(entries, at) {
+function contextAt(entries, at) {
   if (!entries?.length) return null;
-  // A chat that started before every identity-bearing agent span stays unattributed rather than taking a later account.
   let match = null;
   for (const entry of entries) {
     if (entry.at <= at) match = entry;
@@ -490,24 +515,19 @@ function identityAt(entries, at) {
   return match;
 }
 
-function agentIdentityLink(maps, chat, parent, at) {
-  if (present(chat.chat_session_id)) {
-    const ctx = identityAt(maps.session.get(String(chat.chat_session_id)), at);
-    if (ctx) return ctx;
+/** Never use an agent context that started after the model call. */
+function agentLink(maps, chat, parent, at) {
+  for (const [map, key, link] of [
+    [maps.session, chat.chat_session_id, 'chat session'],
+    [maps.conversation, chat.conversation_id, 'conversation'],
+    [maps.session, parent, 'parent session'],
+    [maps.trace, chat.trace_id, 'trace'],
+  ]) {
+    if (!present(key)) continue;
+    const ctx = contextAt(map.get(String(key)), at);
+    if (ctx) return { ctx, link };
   }
-  if (present(chat.conversation_id)) {
-    const ctx = identityAt(maps.conversation.get(String(chat.conversation_id)), at);
-    if (ctx) return ctx;
-  }
-  if (present(parent)) {
-    const ctx = identityAt(maps.session.get(String(parent)), at);
-    if (ctx) return ctx;
-  }
-  if (present(chat.trace_id)) {
-    const ctx = identityAt(maps.trace.get(String(chat.trace_id)), at);
-    if (ctx) return ctx;
-  }
-  return null;
+  return { ctx: null, link: 'none' };
 }
 
 export function reasoningEffortFromOptions(raw) {
@@ -587,23 +607,12 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       if (present(row.key) && present(row.value)) agent.values[row.key] = String(row.value);
       agents.set(String(row.span_id), agent);
     }
-    // The newest agent span per session, conversation or trace supplies git context.
-    const remember = (map, key, ctx, at) => {
-      if (!present(key)) return;
-      const known = map.get(String(key));
-      if (!known || known.at <= at) map.set(String(key), { ...ctx, at });
-    };
     const rememberTimed = (map, key, ctx, at) => {
       if (!present(key)) return;
       const k = String(key);
       const entries = map.get(k) ?? [];
       entries.push({ ...ctx, at });
       map.set(k, entries);
-    };
-    const rememberAll = (maps, row, ctx, at) => {
-      remember(maps.session, row.chat_session_id, ctx, at);
-      remember(maps.conversation, row.conversation_id, ctx, at);
-      remember(maps.trace, row.trace_id, ctx, at);
     };
     const rememberAllTimed = (maps, row, ctx, at) => {
       rememberTimed(maps.session, row.chat_session_id, ctx, at);
@@ -621,10 +630,12 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
         commit: pick(GIT_KEYS.commit),
       };
       if (!ctx.repository && !ctx.branch && !ctx.commit) continue;
-      rememberAll(agentContext, agent.row, ctx, at);
+      rememberAllTimed(agentContext, agent.row, ctx, at);
     }
-    for (const map of Object.values(agentIdentity)) {
-      for (const entries of map.values()) entries.sort((a, b) => a.at - b.at);
+    for (const maps of [agentContext, agentIdentity]) {
+      for (const map of Object.values(maps)) {
+        for (const entries of map.values()) entries.sort((a, b) => a.at - b.at);
+      }
     }
   }
 
@@ -632,11 +643,8 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     calls: 0,
     creditedCalls: 0,
     nano: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    reasoningTokens: 0,
   };
+  const tokens = new TokenTally();
   const stages = {
     observed: newAcc(),
     session: newAcc(),
@@ -664,10 +672,12 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     totals.calls += 1;
     totals.creditedCalls += hasCredit ? 1 : 0;
     totals.nano += nano;
-    totals.inputTokens += num(chat.input_tokens);
-    totals.outputTokens += num(chat.output_tokens);
-    totals.cacheReadTokens += num(chat.cached_tokens);
-    totals.reasoningTokens += num(chat.reasoning_tokens);
+    tokens.add({
+      inputTokens: chat.input_tokens,
+      outputTokens: chat.output_tokens,
+      cacheReadTokens: chat.cached_tokens,
+      reasoningTokens: chat.reasoning_tokens,
+    });
 
     const sessionKey = present(chat.chat_session_id)
       ? String(chat.chat_session_id)
@@ -675,14 +685,15 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
         ? String(chat.conversation_id)
         : null;
     const parent = attrs['copilot_chat.parent_chat_session_id'];
-    const { ctx, link } = agentLink(agentContext, chat, parent);
-    const user = identityName(attrs[IDENTITY_KEY]) ?? agentIdentityLink(agentIdentity, chat, parent, num(chat.start_time_ms))?.user ?? null;
+    const at = num(chat.start_time_ms);
+    const { ctx, link } = agentLink(agentContext, chat, parent, at);
+    const user = identityName(attrs[IDENTITY_KEY]) ?? agentLink(agentIdentity, chat, parent, at).ctx?.user ?? null;
 
     const stageKey = sessionKey ?? (present(parent) ? String(parent) : null);
     // Every stage, including "observed", counts sessions by the same key so
     // session counts stay monotonic down the funnel.
     addTo(stages.observed, stageKey, nano);
-    if (stageKey) {
+    if (stageKey || present(chat.trace_id)) {
       addTo(stages.session, stageKey, nano);
       if (ctx?.repository) {
         addTo(stages.repository, stageKey, nano);
@@ -734,7 +745,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   const funnel = [
     stage('observed', 'Model calls (chat spans) observed', stages.observed),
-    stage('session', 'With a session, conversation or parent-session ID', stages.session),
+    stage('session', 'With a session, conversation, parent-session or trace key', stages.session),
     stage('repository', '…resolved to a repository via invoke_agent', stages.repository),
     stage('branch', '…and a branch or commit', stages.branch),
     stage('workRef', '…and a work reference', stages.workRef, false),
@@ -748,19 +759,17 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       calls: totals.calls,
       creditedCalls: totals.creditedCalls,
       credits: credits(totals.nano),
-      inputTokens: totals.inputTokens,
-      outputTokens: totals.outputTokens,
-      cacheReadTokens: totals.cacheReadTokens,
-      cacheWriteTokens: null,
-      reasoningTokens: totals.reasoningTokens,
+      ...tokens.totals(),
     },
+    tokenCoverage: tokens.coverage(totals.calls),
+    metricCoverage: { cacheReadRatio: tokens.ratioCoverage(totals.calls) },
     funnel,
     metrics: {
       creditCoverage: share(totals.creditedCalls, totals.calls),
       creditsToRepoShare: share(stages.repository.nano, totals.nano),
       creditsToPrShare: null,
       creditsToActorShare: share(actor.nano, totals.nano),
-      cacheReadRatio: share(totals.cacheReadTokens, totals.inputTokens),
+      cacheReadRatio: tokens.cacheReadRatio(),
       subAgentShare: null,
     },
     breakdowns: {
@@ -778,7 +787,9 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     freshness: { first, last },
     notes: [
       'VS Code emits no pull request or issue ID; the last two stages need a VCS join.',
+      'Repository and user context come from the latest matching agent span at or before each call. Trace-only calls can carry work context but are not counted as sessions.',
       'Copilot Chat prunes this store to recent history (about seven days).',
+      'Token totals are reported subtotals. Cache-read share uses only calls reporting both input and cache-read counts with cached tokens no greater than input.',
       hasAttributes ? null : 'span_attributes not found: credits and repository context are unavailable.',
       hasAttributes && actor.calls === 0
         ? 'No user.name on agent spans: turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) to attribute calls to a GitHub account.'

@@ -16,6 +16,7 @@ export const MODEL_SECTIONS = [
   'relationships',
   'tiers',
   'invariants',
+  'reconciliation',
   'outcomes',
   'gaps',
   'priorArt',

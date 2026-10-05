@@ -1,5 +1,6 @@
 'use strict';
 
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -27,7 +28,7 @@ const SHOTS = [
     file: 'canvas-coverage.png',
     view: 'coverage',
     w: 1280,
-    h: 1800,
+    h: 2300,
     dsf: 1,
     ready: "document.body.innerText.includes('Copilot CLI / app session store') && document.body.innerText.includes('VS Code agent-traces.db') && document.body.innerText.includes('Tool calls')",
   },
@@ -40,10 +41,27 @@ const SHOTS = [
     ready: "document.body.innerText.includes('What each surface emits') && document.querySelector('table.matrix')",
   },
   {
+    file: 'canvas-intersection.png',
+    view: 'intersection',
+    w: 1440,
+    h: 1080,
+    dsf: 1,
+    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+  },
+  {
+    file: 'canvas-intersection-dark.png',
+    view: 'intersection',
+    theme: 'dark',
+    w: 1440,
+    h: 1080,
+    dsf: 1,
+    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+  },
+  {
     file: 'canvas-model.png',
     view: 'model',
     w: 1280,
-    h: 980,
+    h: 1450,
     dsf: 1,
     ready: "document.body.innerText.includes('Canonical entities') && document.body.innerText.includes('Attribution tiers')",
   },
@@ -400,6 +418,59 @@ async function waitForRender(ws, sessionId, ready) {
   throw new Error(`canvas did not finish rendering; saw: ${text}`);
 }
 
+async function verifyThemes(ws, sessionId) {
+  const colors = async () => evaluate(ws, sessionId, `(() => {
+    const style = getComputedStyle(document.body);
+    const luminance = (color) => {
+      const values = color.match(/[\\d.]+/g).slice(0, 3).map(Number).map((v) => {
+        const c = v / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return values[0] * 0.2126 + values[1] * 0.7152 + values[2] * 0.0722;
+    };
+    const bg = luminance(style.backgroundColor), fg = luminance(style.color);
+    return { background: style.backgroundColor, mode: document.documentElement.dataset.canvasColorMode,
+      contrast: (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05) };
+  })()`);
+  const settled = () => evaluate(ws, sessionId, 'new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const select = (theme) => evaluate(ws, sessionId, `(() => {
+    const control = document.getElementById('theme');
+    control.value = ${JSON.stringify(theme)};
+    control.dispatchEvent(new Event('change'));
+  })()`);
+  await select('auto');
+  for (const [scheme, background] of [['dark', 'rgb(13, 17, 23)'], ['light', 'rgb(255, 255, 255)']]) {
+    await send(ws, 'Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] }, sessionId);
+    await settled();
+    const result = await colors();
+    assert.equal(result.mode, scheme, `system ${scheme}`);
+    assert.equal(result.background, background, `system ${scheme} palette`);
+    assert.ok(result.contrast >= 4.5, `system ${scheme} text contrast`);
+  }
+  await evaluate(ws, sessionId, `(() => {
+    document.body.dataset.colorMode = 'dark';
+    document.body.style.setProperty('--background-color-default', '#1a1a1a');
+    document.body.style.setProperty('--text-color-default', '#f0f6fc');
+  })()`);
+  await settled();
+  assert.equal((await colors()).background, 'rgb(26, 26, 26)', 'auto respects body-injected host tokens');
+  for (const [theme, background] of [['light', 'rgb(255, 255, 255)'], ['dark', 'rgb(13, 17, 23)']]) {
+    await select(theme);
+    const result = await colors();
+    assert.equal(result.background, background, `explicit ${theme} overrides host tokens`);
+    assert.ok(result.contrast >= 4.5, `explicit ${theme} text contrast`);
+  }
+  await evaluate(ws, sessionId, `(() => {
+    delete document.body.dataset.colorMode;
+    document.body.style.removeProperty('--background-color-default');
+    document.body.style.removeProperty('--text-color-default');
+  })()`);
+  await select('auto');
+  await settled();
+  assert.equal((await colors()).mode, 'light', 'return to system after host theme is removed');
+  console.log('Theme checks passed: system changes, body-injected host tokens, explicit overrides and text contrast >= 4.5:1.');
+}
+
 async function startServer(paths, now) {
   const [{ startCanvasServer }, { computeCoverage }, { loadModel, loadResearch }] = await Promise.all([
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'server.mjs')).href),
@@ -495,6 +566,7 @@ async function setServerView(serverUrl, view) {
     await send(ws, 'Page.enable', {}, sessionId);
     await send(ws, 'Runtime.enable', {}, sessionId);
 
+    let themesVerified = false;
     for (const shot of shots) {
       await setServerView(server.url, shot.view);
       await send(
@@ -505,6 +577,18 @@ async function setServerView(serverUrl, view) {
       );
       await send(ws, 'Page.navigate', { url: server.url }, sessionId);
       await waitForRender(ws, sessionId, shot.ready);
+      if (!themesVerified) {
+        await verifyThemes(ws, sessionId);
+        themesVerified = true;
+      }
+      await evaluate(ws, sessionId, `(() => {
+        const control = document.getElementById('theme');
+        control.value = ${JSON.stringify(shot.theme ?? 'light')};
+        control.dispatchEvent(new Event('change'));
+      })()`);
+      if (shot.view === 'intersection') {
+        assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('table.matrix .badge.missing, table.matrix .badge.unverified').length"), 0);
+      }
       await evaluate(ws, sessionId, 'window.scrollTo(0, 0)');
       const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       const buf = Buffer.from(data, 'base64');
@@ -512,6 +596,15 @@ async function setServerView(serverUrl, view) {
       fs.writeFileSync(out, buf);
       console.log(`${rel(out)}  ${shot.w * shot.dsf}x${shot.h * shot.dsf}  ${(buf.length / 1024).toFixed(1)} kB`);
     }
+    for (const [view, ready] of [
+      ['gaps', "document.body.innerText.includes('Verification status')"],
+      ['research', "document.querySelector('.md') && document.body.innerText.includes('Billing reconciliation contract')"],
+    ]) {
+      await setServerView(server.url, view);
+      await send(ws, 'Page.navigate', { url: server.url }, sessionId);
+      await waitForRender(ws, sessionId, ready);
+    }
+    console.log('Gaps and Research views rendered without schema or loading errors.');
   } finally {
     if (ws) {
       await send(ws, 'Browser.close').catch(() => {});

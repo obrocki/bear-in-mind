@@ -79,6 +79,92 @@ it('ROI model separates locally measured work links from return and baseline', (
   assert.equal(outcomes.reconciliation.availability, 'needs-org-api');
 });
 
+it('model distinguishes organisation aggregates, self-reported completion and billing scope', () => {
+  const concepts = Object.fromEntries(model.concepts.map((c) => [c.id, c]));
+  for (const id of ['tokens', 'mcp', 'skill']) assert.equal(concepts[id].surfaces.org.availability, 'partial', id);
+  for (const id of ['reasoning', 'latency', 'request_id', 'session']) assert.equal(concepts[id].surfaces.org.availability, 'missing', id);
+  assert.match(concepts.tokens.surfaces.org.field, /token_usage/);
+  assert.match(concepts.mcp.surfaces.org.note, /not tool calls/);
+  assert.match(concepts.skill.surfaces.org.note, /subset of skills/);
+  assert.match(concepts.task_completion.surfaces.cli.note, /no success field/);
+  assert.match(concepts.credits.surfaces.org.note, /not broken down by model/);
+  assert.match(model.reconciliation.source, /ai_credit\/usage/);
+  assert.match(model.reconciliation.grain, /preserve the request filters/);
+  assert.match(model.reconciliation.requirements.join(' '), /gross.*discount.*net/);
+  assert.match(model.reconciliation.allocationPolicy, /T3.*not measured/);
+  assert.equal(model.verification.find((v) => v.claim === '--max-ai-credits and /limits exist').status, 'verified');
+  assert.equal(model.verification.find((v) => v.claim.includes('limits reset grain')).status, 'unverified');
+});
+
+it('intersection includes only verified availability across every surface', async () => {
+  const { intersectConcepts } = await import(pathToFileURL(path.join(extensionDir, 'ui', 'intersection.mjs')));
+  const rows = intersectConcepts(model);
+  assert.deepEqual(rows.map((c) => c.id), [
+    'time', 'surface', 'actor', 'agent', 'model', 'tokens', 'credits', 'repository', 'code_change',
+  ]);
+  assert.equal(rows.find((c) => c.id === 'repository').intersectionAvailability, 'native');
+  assert.equal(rows.find((c) => c.id === 'tokens').intersectionAvailability, 'partial');
+  assert.equal(model.concepts.some((c) => 'intersectionAvailability' in c), false, 'does not mutate the model');
+  assert.deepEqual(intersectConcepts({ surfaces: [], concepts: model.concepts }), []);
+  const sample = { surfaces: [{ id: 'one' }, { id: 'two' }], concepts: [
+    { id: 'derived', surfaces: { one: { availability: 'native' }, two: { availability: 'derived' } } },
+    { id: 'missing', surfaces: { one: { availability: 'native' } } },
+    { id: 'unverified', surfaces: { one: { availability: 'native' }, two: { availability: 'unverified' } } },
+  ] };
+  assert.deepEqual(intersectConcepts(sample).map((c) => [c.id, c.intersectionAvailability]), [['derived', 'partial']]);
+});
+
+it('theme follows host/system changes and explicit overrides without changing host attributes', async () => {
+  const { initializeTheme, resolveColorMode } = await import(pathToFileURL(path.join(extensionDir, 'ui', 'theme.mjs')));
+  assert.equal(resolveColorMode('auto', undefined, true), 'dark');
+  assert.equal(resolveColorMode('auto', 'light', true), 'light');
+  assert.equal(resolveColorMode('auto', 'dark', false), 'dark');
+  assert.equal(resolveColorMode('light', 'dark', true), 'light');
+  assert.equal(resolveColorMode('dark', 'light', false), 'dark');
+  const listeners = new Map();
+  const control = {
+    value: 'auto',
+    addEventListener: (_, fn) => listeners.set('control', fn),
+    removeEventListener: () => listeners.delete('control'),
+  };
+  const document = { documentElement: { dataset: {} }, body: { dataset: {} }, getElementById: () => control };
+  const media = {
+    matches: true,
+    addEventListener: (_, fn) => listeners.set('media', fn),
+    removeEventListener: () => listeners.delete('media'),
+  };
+  class Observer {
+    constructor(fn) { listeners.set('host', fn); }
+    observe() {}
+    disconnect() { listeners.delete('host'); }
+  }
+  const dispose = initializeTheme({ document, media, Observer });
+  const root = document.documentElement.dataset;
+  assert.equal(root.canvasColorMode, 'dark');
+  media.matches = false;
+  listeners.get('media')();
+  assert.equal(root.canvasColorMode, 'light');
+  document.body.dataset.colorMode = 'dark';
+  listeners.get('host')();
+  assert.equal(root.canvasColorMode, 'dark');
+  control.value = 'light';
+  listeners.get('control')();
+  assert.equal(root.canvasColorMode, 'light');
+  assert.equal(document.body.dataset.colorMode, 'dark');
+  dispose();
+  assert.equal(listeners.size, 0);
+});
+
+it('token formatting distinguishes unknown and measured zero', async () => {
+  const { formatTokens, coverageText } = await import(pathToFileURL(path.join(extensionDir, 'ui', 'format.mjs')));
+  assert.equal(formatTokens(null), '—');
+  assert.equal(formatTokens(undefined), '—');
+  assert.equal(formatTokens(0), '0');
+  assert.equal(coverageText({ reportedCalls: 0, share: 0 }, 3), '0 / 3 calls (0%)');
+  assert.equal(coverageText({ reportedCalls: 1, share: 1 / 3 }, 3), '1 / 3 calls (33%)');
+  assert.equal(coverageText(undefined, 3), 'Not measured');
+});
+
 it('normalises repository identifiers and drops credentials', async () => {
   const { normalizeRepository } = await load('coverage.mjs');
   assert.equal(normalizeRepository('obrocki/bear-in-mind'), 'obrocki/bear-in-mind');
@@ -313,7 +399,7 @@ it('VS Code traces: chat spans inherit repository from invoke_agent; PR stages a
   assert.equal(traces.totals.creditedCalls, 3);
   assert.equal(traces.totals.credits, 4);
   const stage = Object.fromEntries(traces.funnel.map((f) => [f.id, f]));
-  assert.equal(stage.session.calls, 2);
+  assert.equal(stage.session.calls, 4, 'all calls have a session or trace correlation key');
   assert.ok(stage.observed.sessions >= stage.session.sessions, 'session counts never grow down the funnel');
   assert.equal(stage.observed.sessions, 1, 'the parent-only sub-agent call belongs to chat-1');
   assert.equal(stage.repository.credits, 4);
@@ -459,7 +545,7 @@ it('canvas server: serves UI and API on loopback, rejects foreign hosts and orig
   const index = await request(port);
   assert.equal(index.status, 200);
   assert.match(index.type, /text\/html/);
-  for (const asset of ['/app.js', '/dom.js', '/markdown.js', '/style.css']) {
+  for (const asset of ['/app.js', '/dom.js', '/markdown.js', '/intersection.mjs', '/format.mjs', '/theme.mjs', '/style.css']) {
     assert.equal((await request(port, { pathname: asset })).status, 200, asset);
   }
   assert.deepEqual(JSON.parse((await request(port, { pathname: '/api/model' })).body), { title: 'm' });
@@ -613,4 +699,96 @@ it('VS Code traces: the newest agent span wins, and canonical git keys beat lega
   assert.equal(nanoAiu('abc'), null);
   assert.equal(nanoAiu(''), null);
   assert.equal(nanoAiu(null), null);
+});
+
+it('VS Code repository context is time-aware for session, conversation, parent and trace links', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { tracesCoverage } = await load('coverage.mjs');
+  for (const key of ['session', 'conversation', 'parent', 'trace']) {
+    const db = new DatabaseSync(':memory:');
+    t.after(() => db.close());
+    db.exec(`
+      CREATE TABLE spans (span_id TEXT PRIMARY KEY, operation_name TEXT, start_time_ms INTEGER,
+        chat_session_id TEXT, conversation_id TEXT, trace_id TEXT);
+      CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+    `);
+    const span = db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?)');
+    const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+    const agentKeys = [key === 'session' || key === 'parent' ? 's' : null, key === 'conversation' ? 'c' : null, key === 'trace' ? 't' : null];
+    const chatKeys = [key === 'session' ? 's' : null, key === 'conversation' ? 'c' : null, key === 'trace' ? 't' : null];
+    span.run('new', 'invoke_agent', 300, ...agentKeys);
+    attr.run('new', 'github.copilot.git.repository', 'o/new');
+    span.run('old', 'invoke_agent', 100, ...agentKeys);
+    attr.run('old', 'github.copilot.git.repository', 'o/old');
+    for (const [id, at, nano] of [['early', 50, NANO], ['before', 200, 2 * NANO], ['after', 400, 3 * NANO]]) {
+      span.run(id, 'chat', at, ...chatKeys);
+      attr.run(id, 'copilot_chat.copilot_usage_nano_aiu', String(nano));
+      if (key === 'parent') attr.run(id, 'copilot_chat.parent_chat_session_id', 's');
+    }
+    const result = tracesCoverage(db);
+    assert.deepEqual(Object.fromEntries(result.breakdowns.repository.map((r) => [r.key, r.credits])), {
+      'o/new': 3, 'o/old': 2, '(none)': 1,
+    }, key);
+    assert.equal(result.metrics.creditsToRepoShare, 5 / 6, key);
+  }
+});
+
+it('trace-only repository coverage agrees with its breakdown without fabricating sessions', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { tracesCoverage } = await load('coverage.mjs');
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, operation_name TEXT, start_time_ms INTEGER, trace_id TEXT);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+    INSERT INTO spans VALUES ('a', 'invoke_agent', 100, 'trace'), ('c', 'chat', 200, 'trace');
+    INSERT INTO span_attributes VALUES ('a', 'github.copilot.git.repository', 'o/r'),
+      ('a', 'github.copilot.git.branch', 'main'), ('c', 'copilot_chat.copilot_usage_nano_aiu', '1000000000');
+  `);
+  const result = tracesCoverage(db);
+  assert.equal(result.totals.sessions, 0);
+  assert.equal(result.metrics.creditsToRepoShare, 1);
+  assert.deepEqual(result.breakdowns.repository, [{ key: 'o/r', calls: 1, credits: 1 }]);
+  for (const stage of result.funnel.slice(0, 4)) {
+    assert.equal(stage.sessions, 0);
+    assert.equal(stage.calls, 1);
+    assert.equal(stage.credits, 1);
+  }
+});
+
+it('token subtotals preserve unknowns and cache ratios use the same reported-call population', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { sessionStoreCoverage, tracesCoverage } = await load('coverage.mjs');
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  db.exec(`
+    CREATE TABLE assistant_usage_events (session_id TEXT, input_tokens INTEGER, output_tokens INTEGER,
+      cache_read_tokens INTEGER, reasoning_tokens INTEGER);
+    INSERT INTO assistant_usage_events VALUES ('s', 100, NULL, 50, 3), ('s', 900, 0, NULL, NULL),
+      ('s', NULL, NULL, 25, -1), ('s', 100, NULL, 101, 1.5);
+  `);
+  const result = sessionStoreCoverage(db);
+  assert.equal(result.totals.inputTokens, 1100);
+  assert.equal(result.totals.outputTokens, 0, 'one call reports a measured zero');
+  assert.equal(result.totals.cacheWriteTokens, null, 'missing column is unknown');
+  assert.equal(result.totals.reasoningTokens, 3, 'invalid counts are excluded from reported subtotals');
+  assert.equal(result.metrics.cacheReadRatio, 0.5, 'missing input/cache and invalid subset pairs do not change the denominator');
+  assert.deepEqual(result.tokenCoverage.reasoningTokens, { reportedCalls: 1, share: 0.25 });
+  assert.deepEqual(result.metricCoverage.cacheReadRatio, { reportedCalls: 1, share: 0.25 });
+  db.exec('DELETE FROM assistant_usage_events; INSERT INTO assistant_usage_events (session_id) VALUES (\'s\');');
+  const unknown = sessionStoreCoverage(db);
+  assert.equal(unknown.totals.inputTokens, null);
+  assert.equal(unknown.totals.cacheReadTokens, null);
+  assert.equal(unknown.metrics.cacheReadRatio, null);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, operation_name TEXT, start_time_ms INTEGER, input_tokens INTEGER,
+      output_tokens INTEGER, cached_tokens INTEGER, reasoning_tokens INTEGER);
+    INSERT INTO spans VALUES ('a', 'chat', 100, 100, NULL, NULL, NULL), ('b', 'chat', 200, NULL, 0, 0, 0);
+  `);
+  const traces = tracesCoverage(db);
+  assert.equal(traces.metrics.cacheReadRatio, null);
+  assert.equal(traces.totals.outputTokens, 0);
+  assert.equal(traces.totals.cacheWriteTokens, null);
+  assert.deepEqual(traces.tokenCoverage.reasoningTokens, { reportedCalls: 1, share: 0.5 });
+  assert.equal(traces.metricCoverage.cacheReadRatio.reportedCalls, 0);
 });

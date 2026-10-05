@@ -9,7 +9,7 @@ import { computeCoverage } from './lib/coverage.mjs';
 import { EXTENSION_DIR, MODEL_SECTIONS, loadModel, loadResearch } from './lib/model.mjs';
 import { startCanvasServer } from './lib/server.mjs';
 
-const VIEWS = ['outcomes', 'surfaces', 'model', 'gaps', 'coverage', 'research'];
+const VIEWS = ['outcomes', 'surfaces', 'intersection', 'model', 'gaps', 'coverage', 'research'];
 const DEFAULT_WINDOW_DAYS = 30;
 const UI_DIR = path.join(EXTENSION_DIR, 'ui');
 
@@ -47,6 +47,8 @@ function summarize(coverage) {
       reason: s.reason,
       totals: s.totals,
       metrics: s.metrics,
+      tokenCoverage: s.tokenCoverage,
+      metricCoverage: s.metricCoverage,
       funnel: s.funnel?.map(({ id, sessions, calls, credits, emitted }) => ({ id, sessions, calls, credits, emitted })),
     })),
     caveats: coverage.caveats,
@@ -148,7 +150,7 @@ await joinSession({
       actions: [
         {
           name: 'show_view',
-          description: 'Switch the canvas to a tab: outcomes, surfaces, model, gaps, coverage or research.',
+          description: 'Switch the canvas to outcomes, surfaces, intersection, model, gaps, coverage or research.',
           inputSchema: {
             type: 'object',
             additionalProperties: false,

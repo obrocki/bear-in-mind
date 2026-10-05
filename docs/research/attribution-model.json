@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "title": "Measuring ROI on AI-assisted development",
-  "updated": "2026-10-01",
+  "updated": "2026-10-05",
   "workstream": "Data and Attribution Model",
   "question": "What does AI-assisted development cost, what value does it deliver, and can we credibly attribute the difference?",
   "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
@@ -52,7 +52,7 @@
     { "id": "partial", "label": "Partial", "description": "Emitted for some calls, at a coarser grain, hashed, or only in the UI." },
     { "id": "derived", "label": "Derived", "description": "Computable from other native fields on the same surface." },
     { "id": "missing", "label": "Missing", "description": "Not emitted; needs an external join." },
-    { "id": "unverified", "label": "Unverified", "description": "Documented by secondary sources only." }
+    { "id": "unverified", "label": "Unverified", "description": "Not verified against primary sources or local evidence." }
   ],
   "groups": [
     { "id": "identity", "label": "Identity" },
@@ -98,8 +98,8 @@
       "otel": "user.name (span); process.user.name, host.name (resource)",
       "surfaces": {
         "vscode": { "availability": "partial", "field": "user.name on invoke_agent spans; process.user.name, host.name resource attributes", "note": "Opt-in since VS Code 1.140 (github.copilot.chat.otel.captureIdentity; managed telemetry.capture.identity / CopilotOtelCaptureIdentity policy wins). Local harness only. user.name is the signed-in GitHub account; chat spans inherit it through the session ID. agent-traces.db stores span attributes, not resource attributes." },
-        "cli": { "availability": "missing", "field": "signed-in login not stored per row", "note": "A collector can add a salted pseudonym." },
-        "app": { "availability": "missing", "field": "signed-in login not stored per row" },
+        "cli": { "availability": "partial", "field": "enduser.pseudo.id on OTel invoke_agent; no identity in session-store rows", "note": "An analytics pseudonym when available, not a GitHub login. A governed mapping or collector-supplied account is needed to join user_login." },
+        "app": { "availability": "partial", "field": "shared-runtime OTel enduser.pseudo.id; no identity in session-store rows", "note": "Pseudonymous telemetry is not a verified login-to-organisation join; live actor coverage is unavailable from this store." },
         "cloud": { "availability": "native", "field": "audit user, commit co-author" },
         "org": { "availability": "native", "field": "user_login, user_id" }
       }
@@ -129,7 +129,7 @@
         "cli": { "availability": "native", "field": "agentId, subagent.*.agentName, interactionType, initiator" },
         "app": { "availability": "native", "field": "agentId, subagent.*.agentName, interactionType, initiator" },
         "cloud": { "availability": "partial", "field": "session log" },
-        "org": { "availability": "partial", "field": "totals_by_vscode_agent" }
+        "org": { "availability": "partial", "field": "totals_by_custom_agent (CLI starts); totals_by_vscode_agent (window sessions/messages)", "note": "Custom-agent arrays are capped at five and customer identifiers are grouped as other. Agents-window counts are not an agent-name breakdown." }
       }
     },
     {
@@ -171,7 +171,7 @@
         "cli": { "availability": "native", "field": "inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens" },
         "app": { "availability": "native", "field": "inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens" },
         "cloud": { "availability": "partial", "field": "Agents panel", "note": "Shown in the UI, not exported per call." },
-        "org": { "availability": "missing", "field": "—" }
+        "org": { "availability": "partial", "field": "totals_by_cli.token_usage; totals_by_copilot_app.token_usage", "note": "Daily prompt_tokens_sum and output_tokens_sum only, without session IDs, cache or reasoning subtotals." }
       }
     },
     {
@@ -182,10 +182,10 @@
       "otel": "none in semconv",
       "surfaces": {
         "vscode": { "availability": "native", "field": "copilot_chat.copilot_usage_nano_aiu; transcript copilotCredits", "note": "Same CAPI copilot_usage.total_nano_aiu as the CLI. Older builds omit it; unknown is not zero." },
-        "cli": { "availability": "native", "field": "copilotUsage.totalNanoAiu, cost multiplier" },
-        "app": { "availability": "native", "field": "copilotUsage.totalNanoAiu, cost multiplier" },
-        "cloud": { "availability": "partial", "field": "billed per session plus steering", "note": "No per-session value in audit fields." },
-        "org": { "availability": "native", "field": "ai_credits_used; billing usageItems netQuantity / netAmount" }
+        "cli": { "availability": "native", "field": "copilotUsage.totalNanoAiu; OTel github.copilot.nano_aiu", "note": "SDK cost / OTel github.copilot.cost is a request multiplier, not credits or currency. CLI OTel guidance uses root invoke_agent nano_aiu totals, never parent plus children." },
+        "app": { "availability": "native", "field": "copilotUsage.totalNanoAiu; shared-runtime OTel github.copilot.nano_aiu", "note": "A request multiplier is not monetary cost. The live canvas reads per-call session-store usage, not CLI OTel." },
+        "cloud": { "availability": "partial", "field": "AI-credit usage-based billing; legacy annual plans use premium requests", "note": "Billing unit is documented; a reliable per-session cost export is not verified or connected here." },
+        "org": { "availability": "native", "field": "ai_credits_used; billing ai_credit usageItems grossQuantity / discountQuantity / netQuantity / netAmount", "note": "ai_credits_used is per-user consumption, not invoicing and not broken down by model, feature or surface. Billing reports accept user/day/model filters." }
       }
     },
     {
@@ -242,7 +242,7 @@
         "cli": { "availability": "native", "field": "mcpServerName, mcpToolName" },
         "app": { "availability": "native", "field": "mcpServerName, mcpToolName" },
         "cloud": { "availability": "unverified", "field": "session log" },
-        "org": { "availability": "missing", "field": "—" }
+        "org": { "availability": "partial", "field": "totals_by_mcp; distinct_mcp_use_count", "note": "CLI connection/reconnection attempts, not tool calls. Top five; customer-defined names grouped as other. Optional during rollout." }
       }
     },
     {
@@ -256,7 +256,7 @@
         "cli": { "availability": "native", "field": "skill.invoked name, pluginName" },
         "app": { "availability": "native", "field": "skill.invoked name, pluginName" },
         "cloud": { "availability": "unverified", "field": "—" },
-        "org": { "availability": "missing", "field": "—" }
+        "org": { "availability": "partial", "field": "totals_by_skill; totals_by_plugin; distinct_*_use_count", "note": "CLI invocation aggregates, capped at five, with customer-defined names grouped as other. Plugin interactions are a subset of skills; never sum them." }
       }
     },
     {
@@ -266,7 +266,7 @@
       "canonical": "ai_session.repository",
       "otel": "vcs.repository.url.full",
       "surfaces": {
-        "vscode": { "availability": "native", "field": "github.copilot.git.repository on invoke_agent", "note": "Child chat spans inherit it through the session ID." },
+        "vscode": { "availability": "native", "field": "github.copilot.git.repository on invoke_agent", "note": "Calls inherit the latest matching agent context at or before their start, via session, conversation, parent session or trace." },
         "cli": { "availability": "native", "field": "session.start.context.repository, repositoryHost" },
         "app": { "availability": "native", "field": "session.start.context.repository, repositoryHost" },
         "cloud": { "availability": "native", "field": "cloud.repository" },
@@ -351,8 +351,8 @@
       "otel": "none",
       "surfaces": {
         "vscode": { "availability": "partial", "field": "agent.edit_response.count success / error" },
-        "cli": { "availability": "native", "field": "session.task_complete success, shutdownType" },
-        "app": { "availability": "native", "field": "session.task_complete success, shutdownType" },
+        "cli": { "availability": "partial", "field": "session.task_complete summary; session.shutdown.shutdownType", "note": "Completion is self-reported; task_complete has no success field. Routine shutdown is not evidence of correctness or delivery." },
+        "app": { "availability": "partial", "field": "session.task_complete summary; session.shutdown.shutdownType", "note": "The same self-reported completion contract as CLI, not a verified task-success score." },
         "cloud": { "availability": "native", "field": "session state, PR ready" },
         "org": { "availability": "missing", "field": "—" }
       }
@@ -433,7 +433,7 @@
       "id": "cost_ledger",
       "name": "cost_ledger",
       "grain": "billing line",
-      "fields": ["day, user", "product, SKU, model", "net quantity, net amount", "reconciliation only"]
+      "fields": ["billing entity and account type", "requested UTC day / user / model filters", "product, SKU, model, unitType, pricePerUnit", "gross / discount / net quantity and amount", "retrieved_at, source, coverage window", "reconciliation only"]
     }
   ],
   "relationships": [
@@ -447,43 +447,57 @@
     { "from": "cost_ledger", "to": "actor", "label": "billed to" }
   ],
   "tiers": [
-    { "id": "T0", "name": "Native", "method": "ID emitted by the surface", "example": "Cloud agent session → PR; session_refs PR; audit agent_session_id", "confidence": "high" },
-    { "id": "T1", "name": "Deterministic", "method": "Exact join on VCS keys", "example": "(repo, branch) → PR head ref; (repo, head commit) ∈ PR commits; app worktree branch → PR", "confidence": "high" },
+    { "id": "T0", "name": "Native", "method": "Work ownership emitted by the surface", "example": "Cloud-owned session → PR; audit agent_session_id. A mentioned session_refs PR is only a reference until verified.", "confidence": "high" },
+    { "id": "T1", "name": "Deterministic", "method": "Exact, unambiguous join on VCS keys", "example": "Match head repository, commit and time to a verified PR. Branch reuse, forks and multiple PR matches require explicit disambiguation.", "confidence": "high" },
     { "id": "T2", "name": "Inferred", "method": "Time and content overlap", "example": "Same repo and actor inside the PR commit window; modified files ∩ PR diff", "confidence": "medium" },
     { "id": "T3", "name": "Allocated", "method": "Proportional share", "example": "Org day/user/model credits distributed by attributed local share", "confidence": "low" },
     { "id": "U", "name": "Unattributed", "method": "Kept explicitly", "example": "Never dropped, so coverage stays visible", "confidence": "n/a" }
   ],
   "invariants": [
-    "Count each model call once, by stable call ID; never add invoke_agent totals to chat calls.",
-    "Never sum overlapping sources; use precedence or per-dimension max and record the source.",
+    "Count each model call once, by stable call ID. VS Code uses chat credits; CLI OTel guidance uses root invoke_agent nano_aiu totals. Never add parent and child totals; validate mappings per surface/version.",
+    "Never sum overlapping sources; use precedence, or conservative per-dimension max only for aligned scopes/windows, and record coverage and source.",
     "Unknown is not zero; report credit coverage alongside credit totals.",
     "Credits = nano-AIU / 1,000,000,000; no token-to-currency estimate without an explicit, labelled rate.",
     "Attribution weights per session sum to at most 1; the remainder stays unattributed.",
-    "Local observations are not a bill; reconcile against the billing usage API at day/user/model grain.",
+    "Local observations are not a bill. Reconcile matching consumption with gross AI-credit quantities from the billing AI-credit report, preserving scope filters; show discounts and net billed amounts separately.",
     "No prompt or response content; pseudonymise actors; keep MCP names hashed unless governed.",
-    "Never present credits, cache ratios or PR references as monetary ROI or proof of value; report cost, outcome and baseline coverage separately."
+    "Never present credits, cache ratios or PR references as monetary ROI or proof of value; report cost, outcome and baseline coverage separately.",
+    "Token fields are nullable reported subtotals with per-field call coverage. Cache-read share uses only paired, valid input/cache counts; unknown never becomes a measured zero."
   ],
+  "reconciliation": {
+    "source": "Billing AI-credit usage REST: /organizations/{org}/settings/billing/ai_credit/usage or the applicable enterprise/personal endpoint. Not connected by this canvas.",
+    "grain": "Billing entity × UTC day × user × product/SKU × model; preserve the request filters because usageItems do not carry every dimension.",
+    "requirements": [
+      "Organisation ai_credits_used is user-level consumption, not invoicing and not a model/feature/surface breakdown; reconcile it only at its published grain.",
+      "Use the billing entity that pays for the seat. Personal endpoints exclude organisation-managed seats; organisation/enterprise access requires the appropriate administrative permissions.",
+      "Match user identity, UTC date, model aliases, product/SKU, unitType and observed coverage. Compare local credits with gross AI-credit quantity only when those scopes align.",
+      "Keep gross, discount and net quantities/amounts separate. The documented nominal rate is USD 0.01 per AI credit, not proof of an incremental charge after allowances and discounts.",
+      "Store filters and returned scope metadata, retrieval time, coverage and a stable ledger key. Do not add overlapping per-day/user/model queries or duplicate local sources.",
+      "Report signed differences and unmatched usage explicitly. Include seats, Actions/infrastructure and human oversight separately before valuing an investment."
+    ],
+    "allocationPolicy": "User/day/model or work-item allocation is T3 estimation, not measured per-session billing. Preserve missing local/cloud usage and unallocated balances; never manufacture per-model usage from ai_credits_used."
+  },
   "outcomes": [
     { "id": "coverage", "name": "PR-reference coverage", "measure": "% of reported credits in sessions with a repository, branch and recorded PR reference; not verified delivery or value", "availability": "local", "liveMetric": "creditsToPrShare" },
-    { "id": "repo_coverage", "name": "Work-context coverage", "measure": "% of credits in sessions with a repository", "availability": "local", "liveMetric": "creditsToRepoShare" },
+    { "id": "repo_coverage", "name": "Work-context coverage", "measure": "% of reported credits on model calls with resolved repository context, including trace-only links; not verified work ownership", "availability": "local", "liveMetric": "creditsToRepoShare" },
     { "id": "credit_coverage", "name": "Credit coverage", "measure": "% of model calls that report credits", "availability": "local", "liveMetric": "creditCoverage" },
     { "id": "actor_coverage", "name": "Actor coverage", "measure": "% of reported credits on model calls attributed to a user.name (opt-in identity capture); a join key to per-user organisation data, not a productivity measure", "availability": "local", "liveMetric": "creditsToActorShare" },
     { "id": "cost_per_change", "name": "Cost per delivered change", "measure": "Credits per merged PR, per work-item type", "availability": "needs-vcs-join" },
     { "id": "ai_share", "name": "AI-assisted share", "measure": "% of merged PRs with T0/T1 attribution", "availability": "needs-vcs-join" },
-    { "id": "efficiency", "name": "Cache-read share", "measure": "Cached input tokens / reported input tokens; a usage mix indicator, not time or money saved", "availability": "local", "liveMetric": "cacheReadRatio" },
-    { "id": "speed", "name": "Speed", "measure": "PR lead time AI-assisted vs baseline; agent latency and TTFT", "availability": "needs-vcs-join" },
-    { "id": "quality", "name": "Quality", "measure": "Edit acceptance, survival, review rounds, CI pass rate, revert rate, task completion", "availability": "needs-vcs-join" },
-    { "id": "reconciliation", "name": "Billed AI cost", "measure": "Reconcile reported credits with billed net amount by user/day/model; include seat and infrastructure costs", "availability": "needs-org-api" },
+    { "id": "efficiency", "name": "Cache-read share", "measure": "Cache-read / input tokens over calls reporting both valid counts, with paired-call coverage; usage mix, not time or money saved", "availability": "local", "liveMetric": "cacheReadRatio" },
+    { "id": "speed", "name": "Speed", "measure": "Local latency/TTFT fields exist but are not rendered here; PR lead time vs a matched baseline needs verified PR data", "availability": "needs-vcs-join" },
+    { "id": "quality", "name": "Quality", "measure": "Acceptance/survival require the telemetry feed this canvas does not read; reviews, CI, reverts and verified task delivery require external joins", "availability": "needs-vcs-join" },
+    { "id": "reconciliation", "name": "Billed AI cost", "measure": "Match reported consumption with billing gross AI-credit quantity at the same user/day/model scope; retain discounts/net billed amounts, seats and infrastructure separately", "availability": "needs-org-api" },
     { "id": "human_effort", "name": "Human effort and rework", "measure": "Developer time spent prompting, reviewing, correcting and maintaining delivered work vs comparable non-AI work", "availability": "needs-baseline" },
     { "id": "roi", "name": "Incremental return", "measure": "(Valued incremental benefit − AI investment) / AI investment; include incremental spend and oversight, avoid double-counting time savings, and use a comparable baseline", "availability": "needs-baseline" }
   ],
   "gaps": [
     { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
-    { "id": "no-cloud-cost", "title": "No per-session credits for the cloud agent", "severity": "high", "surfaces": ["cloud"], "consequence": "PR-linked work has no cost.", "mitigation": "Session streaming / usage records; billing API at day grain; allocate." },
-    { "id": "no-session-in-org", "title": "No session ID in organisation data", "severity": "high", "surfaces": ["org"], "consequence": "Authoritative credits cannot join to sessions.", "mitigation": "Reconcile at user/day/model; allocate by local share." },
-    { "id": "no-actor", "title": "No actor locally by default", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "CLI/app rows hold no user, and VS Code emits user.name only when identity capture is on (Local harness), so per-user organisation data cannot otherwise be joined.", "mitigation": "Turn on VS Code identity capture and join user.name to user_login at user/day/model grain; have the collector add the signed-in login for CLI/app; pseudonymise before storage." },
-    { "id": "session-sparse", "title": "Session ID missing on many VS Code calls", "severity": "medium", "surfaces": ["vscode"], "consequence": "Auxiliary and language-model-API calls cannot inherit repository context.", "mitigation": "Fall back to conversation and trace IDs; report the rest as unattributed." },
-    { "id": "overlap", "title": "Overlapping sources", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Double counting (metrics vs spans, transcript vs trace, CLI store vs OTel).", "mitigation": "Precedence or per-dimension max, never sum; dedupe on call IDs." },
+    { "id": "no-cloud-cost", "title": "No verified per-session cloud cost export", "severity": "high", "surfaces": ["cloud"], "consequence": "The billing unit is documented, but PR-linked sessions have no cost source connected here.", "mitigation": "Verify a session usage export; otherwise use billing AI-credit reports with labelled T3 allocations and an unmatched balance." },
+    { "id": "no-session-in-org", "title": "No session ID in organisation data", "severity": "high", "surfaces": ["org"], "consequence": "Per-user ai_credits_used has no model/surface split and cannot join to sessions.", "mitigation": "Reconcile user/day consumption at its own grain; use filtered billing AI-credit reports for user/day/model and label any allocation T3." },
+    { "id": "no-actor", "title": "No verified local login join by default", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "CLI/app rows hold no user and their OTel pseudonym is not a verified login; VS Code user.name is opt-in and its user_login equivalence remains unverified.", "mitigation": "Verify the opt-in VS Code user.name to user_login join; use a governed identity mapping or collector-supplied login for CLI/app, and pseudonymise before storage." },
+    { "id": "session-sparse", "title": "Session ID missing on many VS Code calls", "severity": "medium", "surfaces": ["vscode"], "consequence": "Native session identity is incomplete even when trace-only work context can be resolved.", "mitigation": "Resolve time-appropriate session, conversation, parent-session or trace context; do not fabricate sessions, and retain unmatched calls." },
+    { "id": "overlap", "title": "Overlapping sources", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Double counting (metrics vs spans, transcript vs trace, CLI store vs OTel), or undercount with mismatched scopes.", "mitigation": "Use precedence or conservative max only for aligned scopes/windows; dedupe call IDs and never sum parent and child usage." },
     { "id": "no-ci", "title": "No CI/CD linkage", "severity": "medium", "surfaces": ["vscode", "cli", "app", "cloud", "org"], "consequence": "Build and deploy outcomes are unattributed.", "mitigation": "Join cicd.pipeline.run.* by repository and commit." },
     { "id": "credits-optional", "title": "Credits optional on spans", "severity": "low", "surfaces": ["vscode"], "consequence": "Unknown is not zero.", "mitigation": "Track credit coverage; prefer the session store or transcript." },
     { "id": "mcp-hashed", "title": "MCP server name hashed by default", "severity": "low", "surfaces": ["vscode"], "consequence": "Vendor-level tool cost needs content capture.", "mitigation": "Keep the hash as key; map names in a governed lookup." },
@@ -501,10 +515,13 @@
     { "claim": "VS Code reasoning effort", "status": "verified", "note": "Carried inside the copilot_chat.request.options JSON blob, not a dedicated attribute." },
     { "claim": "VS Code identity capture: user.name on agent invocation spans; process.user.name and host.name as resource attributes", "status": "verified", "note": "VS Code 1.140 release notes and otelIdentity.ts in microsoft/vscode extensions/copilot: off by default; user.name is the GitHub session account label; a managed policy overrides COPILOT_OTEL_CAPTURE_IDENTITY and the setting; agent-traces.db persists span attributes only; agent host support is tracked in microsoft/vscode#337413." },
     { "claim": "VS Code user.name equals the usage metrics user_login", "status": "unverified", "note": "Both should be the GitHub login; not tested against an organisation export." },
-    { "claim": "Copilot CLI OTel span, metric and environment-variable names", "status": "unverified", "note": "Primary docs section not retrieved." },
+    { "claim": "Copilot CLI OTel span, metric and environment-variable names", "status": "verified", "note": "Primary CLI reference documents COPILOT_OTEL_ENABLED, OTEL_EXPORTER_OTLP_ENDPOINT, COPILOT_OTEL_FILE_EXPORTER_PATH; invoke_agent/chat/execute_tool; gen_ai.* and github.copilot.*. github.copilot.cost is a multiplier; use the documented root-span nano_aiu aggregation, not VS Code's mapping." },
     { "claim": "copilot_chat.server_request_id equals CLI serviceRequestId", "status": "unverified", "note": "Both are service request IDs; equivalence not tested." },
-    { "claim": "Cloud agent billing unit (premium request per session vs AI credits)", "status": "unverified", "note": "2025 and 2026 changelog statements differ." },
-    { "claim": "--max-ai-credits, /limits, enterprise-managed OTel export", "status": "unverified", "note": "Secondary sources only." }
+    { "claim": "Cloud agent billing unit", "status": "verified", "note": "Primary usage-based billing docs include cloud agent and define one AI credit as USD 0.01. Premium requests remain for eligible existing annual plans; do not mix billing regimes." },
+    { "claim": "--max-ai-credits and /limits exist", "status": "verified", "note": "Both are in the primary CLI command reference. They are soft limits, not a hard spending guarantee." },
+    { "claim": "CLI limits reset grain and minimum for the installed runtime", "status": "unverified", "note": "The command reference says per response, while the session-limit guide says entire interactive session and a 30-credit minimum. Pin the runtime and verify reset/overshoot behaviour before promising semantics." },
+    { "claim": "Enterprise-managed OTel export and cost-centre budgets", "status": "verified", "note": "Primary OTel and organisation billing docs describe enforced telemetry settings and cost-centre budgets for additional charges after pooled credits are exhausted. This is capability evidence, not verification of an account's configuration." },
+    { "claim": "Reliable per-session cloud-agent cost export", "status": "unverified", "note": "Billing-unit documentation does not establish a session-ID-bearing usage export; no such source is connected to this canvas." }
   ],
   "sources": [
     { "title": "Monitor agent usage with OpenTelemetry (VS Code)", "url": "https://code.visualstudio.com/docs/agents/guides/monitoring-agents", "kind": "docs" },
@@ -529,6 +546,11 @@
     { "title": "Copilot metrics data", "url": "https://docs.github.com/en/copilot/reference/metrics-data", "kind": "docs" },
     { "title": "Add VS Code Agents to Copilot usage metrics", "url": "https://github.blog/changelog/2026-09-11-add-vs-code-agents-to-copilot-usage-metrics/", "kind": "changelog" },
     { "title": "Copilot agent session streaming (public preview)", "url": "https://github.blog/changelog/2026-07-02-copilot-agent-session-streaming-is-now-in-public-preview/", "kind": "changelog" },
-    { "title": "Copilot SDK usage and billing", "url": "https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md", "kind": "docs" }
+    { "title": "Copilot SDK usage and billing", "url": "https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md", "kind": "docs" },
+    { "title": "Copilot SDK streaming events", "url": "https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md", "kind": "source" },
+    { "title": "Usage-based billing for individuals", "url": "https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing", "kind": "docs" },
+    { "title": "Usage-based billing for organisations and enterprises", "url": "https://docs.github.com/en/copilot/concepts/billing-and-usage/organizations-and-enterprises/billing", "kind": "docs" },
+    { "title": "Legacy premium-request billing", "url": "https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/copilot-requests", "kind": "docs" },
+    { "title": "CLI session-limit guide (scope differs from command reference)", "url": "https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/set-session-limit", "kind": "docs" }
   ]
 }

@@ -1,9 +1,13 @@
 import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
+import { intersectConcepts } from './intersection.mjs';
+import { coverageText, formatTokens } from './format.mjs';
+import { initializeTheme } from './theme.mjs';
 
 const VIEWS = [
   { id: 'outcomes', label: 'Outcomes' },
   { id: 'surfaces', label: 'Surfaces' },
+  { id: 'intersection', label: 'Intersection' },
   { id: 'model', label: 'Data model' },
   { id: 'gaps', label: 'Gaps' },
   { id: 'coverage', label: 'Live coverage' },
@@ -37,7 +41,6 @@ async function api(path, init) {
 const fmtInt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const fmtCredits = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const pct = (v) => (v === null || v === undefined ? '—' : `${Math.round(v * 100)}%`);
-const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 });
 
 function badge(kind, text) {
   return h('span', { class: `badge ${kind}` }, text ?? kind);
@@ -83,6 +86,9 @@ function renderOutcomes() {
                     { class: 'value' },
                     pct(s.metrics[o.liveMetric]),
                     h('span', { class: 'who' }, SOURCE_SHORT[s.id] ?? s.label),
+                    o.liveMetric === 'cacheReadRatio'
+                      ? h('span', { class: 'who' }, `Paired counts: ${coverageText(s.metricCoverage?.cacheReadRatio, s.totals.calls)}`)
+                      : null,
                   ),
                 ),
               ),
@@ -159,10 +165,11 @@ function renderOutcomes() {
   ];
 }
 
-function renderSurfaces() {
+function renderSurfaces(intersection = false) {
   const m = state.model;
   const groups = [{ id: 'all', label: 'All' }, ...m.groups];
-  const concepts = m.concepts.filter((c) => state.group === 'all' || c.group === state.group);
+  const available = intersection ? intersectConcepts(m) : m.concepts;
+  const concepts = available.filter((c) => state.group === 'all' || c.group === state.group);
   const rows = [];
   for (const group of m.groups) {
     const inGroup = concepts.filter((c) => c.group === group.id);
@@ -177,6 +184,9 @@ function renderSurfaces() {
             'td',
             { class: 'concept' },
             h('strong', {}, c.name),
+            intersection
+              ? badge(c.intersectionAvailability, c.intersectionAvailability === 'native' ? 'Native across all' : 'Conditional across all')
+              : null,
             h('span', { class: 'mono', title: 'Canonical field' }, c.canonical),
             h('span', { class: 'mono', title: 'OTel semantic convention' }, `OTel: ${c.otel}`),
             c.note ? h('span', { class: 'small muted' }, c.note) : null,
@@ -199,8 +209,19 @@ function renderSurfaces() {
     h(
       'p',
       { class: 'lede' },
-      'What each surface emits for ROI inputs. The common spine is the OTel GenAI span tree, a session ID, repository/branch/commit and per-call model and tokens; verified outcomes, billed cost, human effort and a baseline still need to be joined.',
+      intersection
+        ? `Intersection across all five surfaces: ${available.length} concepts with native, partial or derived availability everywhere. Missing and unverified fields are excluded; native across all means directly emitted, not identical scope or semantics.`
+        : 'What each surface emits for ROI inputs. Local sessions and calls provide work context; the organisation plane is daily aggregates without session IDs. Verified outcomes, billed cost, human effort and a baseline still need to be joined.',
     ),
+    intersection
+      ? h('div', { class: 'callout' },
+          h('strong', {}, 'Shared availability is not a common join key. '),
+          'Daily aggregates, panel-only values, pseudonymous actors and local per-call data have different grains and access conditions. Read the per-surface notes before comparing values; this view does not join or sum sources.',
+        )
+      : null,
+    intersection && !concepts.length
+      ? h('p', { class: 'muted' }, 'No verified shared concepts in this group.')
+      : null,
     h(
       'div',
       { class: 'legend' },
@@ -319,6 +340,11 @@ function renderModel() {
       {},
       m.invariants.map((i) => h('li', {}, i)),
     ),
+    h('h2', {}, 'Billing reconciliation contract'),
+    h('p', {}, m.reconciliation.source),
+    h('p', {}, h('strong', {}, 'Grain: '), m.reconciliation.grain),
+    h('ul', {}, m.reconciliation.requirements.map((rule) => h('li', {}, rule))),
+    h('p', { class: 'muted small' }, m.reconciliation.allocationPolicy),
   ];
 }
 
@@ -489,7 +515,7 @@ function sourceCard(s) {
         ['Credits (nano-AIU / 1e9)', fmtCredits.format(t.credits)],
         ['Calls reporting credits', pct(s.metrics.creditCoverage)],
         ['Sessions', fmtInt.format(t.sessions)],
-        ['Input / output tokens', `${compact.format(t.inputTokens)} / ${compact.format(t.outputTokens)}`],
+        ['Input / output tokens', `${formatTokens(t.inputTokens)} / ${formatTokens(t.outputTokens)}`],
         ['Cache-read ratio', pct(s.metrics.cacheReadRatio)],
         s.metrics.subAgentShare !== null ? ['Sub-agent credit share', pct(s.metrics.subAgentShare)] : null,
         s.metrics.creditsToActorShare !== null && s.metrics.creditsToActorShare !== undefined
@@ -500,6 +526,25 @@ function sourceCard(s) {
         .map(([label, value]) =>
           h('div', { class: 'kpi' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value)),
         ),
+    ),
+    h('p', { class: 'muted small' },
+      `Cache-read share uses paired reported counts: ${coverageText(s.metricCoverage?.cacheReadRatio, t.calls)}.`,
+    ),
+    h('h3', {}, 'Reported token subtotals'),
+    h('p', { class: 'muted small' }, 'Missing or invalid counts are unknown, not zero. Partial totals include only calls reporting that field.'),
+    h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Field'), h('th', { class: 'num' }, 'Tokens'), h('th', {}, 'Reporting coverage'))),
+      h('tbody', {}, [
+        ['inputTokens', 'Input'],
+        ['outputTokens', 'Output'],
+        ['cacheReadTokens', 'Cache read'],
+        ['cacheWriteTokens', 'Cache write'],
+        ['reasoningTokens', 'Reasoning'],
+      ].map(([key, label]) => h('tr', {},
+        h('td', {}, label),
+        h('td', { class: 'num' }, formatTokens(t[key])),
+        h('td', {}, coverageText(s.tokenCoverage?.[key], t.calls)),
+      ))),
     ),
     sparkline(s.daily),
     h(
@@ -523,7 +568,7 @@ function sourceCard(s) {
         ? h(
             'div',
             {},
-            h('h3', {}, 'Tool calls'),
+            h('h3', {}, 'Tool calls · top 8 by calls'),
             h(
               'table',
               {},
@@ -637,7 +682,8 @@ function renderResearch() {
 
 const RENDERERS = {
   outcomes: renderOutcomes,
-  surfaces: renderSurfaces,
+  surfaces: () => renderSurfaces(),
+  intersection: () => renderSurfaces(true),
   model: renderModel,
   gaps: renderGaps,
   coverage: renderCoverage,
@@ -738,6 +784,7 @@ async function refresh(windowDays) {
 }
 
 async function start() {
+  initializeTheme();
   renderTabs();
   state.model = await api('/api/model');
   document.getElementById('question').textContent = state.model.question;

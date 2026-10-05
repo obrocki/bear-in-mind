@@ -3,7 +3,8 @@
 Research for **Data and Attribution Model**. The question: *what
 does AI-assisted development cost, what value does it deliver, and how can we
 attribute the difference?* Compiled
-30 September 2026; updated 1 October 2026 for VS Code 1.140 identity capture.
+30 September 2026; updated 5 October 2026 for measurement feasibility,
+current primary documentation and the shared-surface intersection.
 
 Scope: VS Code (Copilot Chat agents), Copilot CLI, the GitHub Copilot app,
 Copilot cloud agent (plus Copilot code review) and the organisation plane
@@ -45,6 +46,23 @@ benefit. If any of these inputs is absent, report coverage and directional
 proxies rather than a percentage ROI. Faster PRs or more merged PRs alone do
 not establish business value or causation.
 
+### Shared-surface intersection
+
+The canvas's **Intersection** tab derives the common concepts directly from
+the surface matrix: a concept qualifies only when every surface marks it
+native, partial or derived. Missing or unverified cells exclude it. **Native
+across all** means directly emitted everywhere; **Conditional across all**
+includes opt-in, aggregate, panel-only and otherwise partial availability.
+Neither label guarantees an identical value, grain or join key.
+
+The current intersection is time, surface/client, actor, agent, model, tokens,
+credits, repository and code change. Only repository and code change are marked
+native across all. Organisation time is daily, token totals cover CLI/app only,
+local actor identifiers can be pseudonymous, and cloud tokens are panel-only.
+Session IDs, branch/commit, request IDs, reasoning effort, latency, tool calls
+and verified quality are not universal. Always retain each source's scope and
+conditions rather than treating the intersection as a cross-surface inner join.
+
 ## 1. Headline findings
 
 1. **Two telemetry families, one shape.** VS Code Copilot Chat emits
@@ -55,8 +73,12 @@ not establish business value or causation.
    local session store and optional OTel export. Both families follow the GenAI
    span tree `invoke_agent → chat → execute_tool` and propagate W3C trace context.
 2. **Per-call consumption is well covered, and credits share one source.** Every
-   local surface reports model, input/output/cache/reasoning tokens, duration and
-   time to first token per call. VS Code's `copilot_chat.copilot_usage_nano_aiu`
+   local runtime can report model, input/output/cache/reasoning tokens, duration and
+   time to first token per call, but optional fields are not complete on every
+   call. The canvas exposes each token field's reporting coverage and nullable
+   reported subtotal. Cache-read share uses only calls reporting both valid
+   counts, not all input tokens paired with an incomplete cache subtotal.
+   VS Code's `copilot_chat.copilot_usage_nano_aiu`
    and the CLI/app's `copilotUsage.totalNanoAiu` both carry the Copilot API's
    `copilot_usage.total_nano_aiu`, so credits are comparable across surfaces.
 3. **Work linkage stops at the branch.** Repository, branch and commit exist
@@ -70,14 +92,16 @@ not establish business value or causation.
    completion. The cloud agent produces pull requests. The organisation plane
    reports pull-request throughput and merge time, but only as daily aggregates
    without session IDs.
-5. **There is no actor locally by default.** VS Code 1.140 adds opt-in identity
+5. **There is no verified local login join by default.** VS Code 1.140 adds opt-in identity
    capture (`github.copilot.chat.otel.captureIdentity`): `user.name`, the
    signed-in GitHub account, on agent invocation spans, plus `process.user.name`
    and `host.name` as resource attributes. It is off by default, a managed
    policy takes precedence, and it covers only the Local harness. `agent-traces.db`
    keeps span attributes, so it holds `user.name` but not the resource
    attributes. Without it, VS Code `session.id` identifies a window, not a
-   person. CLI and app stores hold no user ID. Organisation APIs are keyed by
+   person. CLI and app stores hold no user ID; their OTel agent spans can carry
+   `enduser.pseudo.id`, an analytics pseudonym that is not a verified GitHub login.
+   Organisation APIs are keyed by
    `user_login` and day, so `user.name` gives VS Code a direct user/day join;
    a collector should pseudonymise it before storage.
 6. **Each surface holds one half of the join.** Measured on one developer
@@ -101,11 +125,11 @@ not establish business value or causation.
 | --- | --- | --- | --- | --- | --- |
 | **Collection** | OTel OTLP or JSON-lines file; local span DB `agent-traces.db`; transcripts (internal) | Session events in `~/.copilot/session-state/`; SQLite session store; OTel export; cloud session sync | Same runtime and store as CLI | Session logs, Actions run, audit log, session streaming (preview) | Usage metrics REST/NDJSON, billing usage REST, seats, audit log |
 | **Session key** | `copilot_chat.chat_session_id`, `gen_ai.conversation.id`; resource `session.id` (per window) | `sessionId`, sub-agent `agentId`, `turn_index` | `sessionId`, one worktree branch per session | `agent_session_id`; task URL `github.com/copilot/tasks/{id}` | None (user/day, org/day, repo/day) |
-| **Consumption** | `gen_ai.usage.*` on `chat` spans; `copilot_chat.copilot_usage_nano_aiu`; transcript `copilotCredits` | `assistant.usage`: tokens incl. cache write, `copilotUsage.totalNanoAiu`, `cost` multiplier, `reasoningEffort`, `initiator` | Same as CLI | Token usage and session length in Agents panel; per-session billing plus steering; Actions minutes | `ai_credits_used` per user/day; billing `usageItems` with SKU, model, net amount |
+| **Consumption** | `gen_ai.usage.*` on `chat` spans; `copilot_chat.copilot_usage_nano_aiu`; transcript `copilotCredits` | Optional `assistant.usage` tokens, `copilotUsage.totalNanoAiu`, `cost` multiplier; OTel `github.copilot.nano_aiu` | Same as CLI | Panel usage; usage-based AI credits or legacy annual-plan premium requests; no verified per-session export here | User/day `ai_credits_used` without model split; CLI/app daily token sums; filtered billing gross/discount/net quantities and amounts |
 | **Work context** | `github.copilot.git.{repository,branch,commit_sha}`, `github.copilot.github.org` on `invoke_agent` | `session.start.context`: `repository`, `repositoryHost`, `branch`, `headCommit`, `baseCommit`, `gitRoot` | Same, plus the app-managed branch | Repository, branch and pull request are native | Repo/day report (PRs incl. coding agent and code review) |
-| **Outcomes** | Edit acceptance, hunk actions, survival, feedback, PR and cloud-session counters | `session.shutdown.codeChanges`, `session.task_complete`, tool success | Same as CLI | PR opened/merged, commits co-authored by the initiator | Impact dashboard: PR throughput, merge time, LoC agent vs user |
-| **Actor** | Opt-in (1.140+): `user.name` on `invoke_agent` spans; resource `process.user.name`, `host.name` | Signed-in login (not in local rows) | Same | Initiating `user` in audit log | `user_login` |
-| **Tools / MCP / skills** | `gen_ai.tool.*`, `github.copilot.tool.parameters.{skill_name,mcp_server_name_hash,mcp_tool_name}` | `toolName`, `mcpServerName`, `mcpToolName`, `skill.invoked`, `subagent.*`, hooks with `traceparent` | Same, plus extensions and canvases | Tool calls in session log | Not exposed |
+| **Outcomes** | Edit acceptance, hunk actions, survival, feedback, PR and cloud-session counters | Code changes, self-reported `session.task_complete.summary`, shutdown status and tool success; not verified correctness | Same as CLI | PR opened/merged, commits co-authored by the initiator | PR throughput, merge time, LoC agent vs user; scopes differ |
+| **Actor** | Opt-in (1.140+): `user.name` on `invoke_agent` spans; resource `process.user.name`, `host.name` | OTel `enduser.pseudo.id` when available; no identity in local rows | Same runtime | Initiating `user` in audit log | `user_login` |
+| **Tools / MCP / skills** | `gen_ai.tool.*`, `github.copilot.tool.parameters.{skill_name,mcp_server_name_hash,mcp_tool_name}` | `toolName`, `mcpServerName`, `mcpToolName`, `skill.invoked`, `subagent.*`, hooks with `traceparent` | Same, plus extensions and canvases | Tool calls in session log | Partial CLI skill/plugin/custom-agent counts and MCP connection attempts; top five, custom names grouped as `other` |
 
 ## 3. Commonalities
 
@@ -116,12 +140,12 @@ Canonical concepts that every surface can populate, with each surface's native f
 | Time | span start/end | event `timestamp` | session log, audit `@timestamp` | `day` |
 | Surface | `service.name`, `gen_ai.agent.name` | `session.start.producer` | `actor_is_agent` | report type, `used_*` flags |
 | Session | `copilot_chat.chat_session_id` | `sessionId` | `agent_session_id` | — |
-| Actor | `user.name` (opt-in, inherited from `invoke_agent`) | — | audit `user`, commit co-author | `user_login` |
-| Agent / sub-agent | `gen_ai.agent.name`, `github.copilot.agent.type` | `agentId`, `subagent.*.agentName`, `interactionType` | — | `totals_by_vscode_agent` |
+| Actor | `user.name` (opt-in, inherited from `invoke_agent`) | OTel `enduser.pseudo.id`; no login in local rows | audit `user`, commit co-author | `user_login` |
+| Agent / sub-agent | `gen_ai.agent.name`, `github.copilot.agent.type` | `agentId`, `subagent.*.agentName`, `interactionType` | — | Capped CLI `totals_by_custom_agent`; `totals_by_vscode_agent` is window session/message totals, not agent names |
 | Model | `gen_ai.response.model` | `model`, `isAuto`, `isByok` | session log | model breakdowns |
 | Reasoning effort | `copilot_chat.request.options` → `reasoning.effort` | `reasoningEffort` | session setting | — |
-| Tokens | `gen_ai.usage.{input,output}_tokens`, cache, reasoning | `inputTokens`, `outputTokens`, `cacheRead/WriteTokens`, `reasoningTokens` | panel only | — |
-| Credits | `copilot_chat.copilot_usage_nano_aiu` | `copilotUsage.totalNanoAiu` | billed per session | `ai_credits_used`, billing `netAmount` |
+| Tokens | Optional `gen_ai.usage.{input,output}_tokens`, cache, reasoning | Optional `inputTokens`, `outputTokens`, `cacheRead/WriteTokens`, `reasoningTokens` | panel only | CLI/app daily `token_usage.{prompt_tokens_sum,output_tokens_sum}` |
+| Credits | `copilot_chat.copilot_usage_nano_aiu` | `copilotUsage.totalNanoAiu`; OTel `github.copilot.nano_aiu` | Billing unit known; per-session export unverified | User/day `ai_credits_used` without model split; billing quantities/amounts |
 | Model call ID | `gen_ai.response.id`, `copilot_chat.server_request_id` | `apiCallId`, `serviceRequestId`, `providerCallId` | — | — |
 | Latency | span duration, `copilot_chat.time_to_first_token` | `duration`, `timeToFirstTokenMs` | session length | merge time |
 | Tool | `gen_ai.tool.name` | `toolName` | session log | — |
@@ -130,21 +154,22 @@ Canonical concepts that every surface can populate, with each surface's native f
 | Pull request | counter only | `session_refs` (when referenced) | native | repo/day counts |
 | Outcome | acceptance, survival, feedback | `codeChanges`, `task_complete` | PR state | throughput, merge time |
 
-The common spine is **the OTel GenAI span tree, a session ID,
-repository/branch/commit, and per-call model, tokens and credits**. That is enough
-for a shared schema. Every design still has to add two keys: the pull request and,
-outside VS Code with identity capture on, the actor.
+The local-runtime spine is **the OTel GenAI span tree, session/work context
+and per-call usage**. It is not universal: the organisation plane has no session
+IDs and its daily quantities cannot populate a per-call record. A shared schema
+must retain grain, optional-field coverage and attribution confidence. PR
+ownership and a verified actor join still need to be supplied.
 
 ## 4. Differences and gaps
 
 | Gap | Where | Consequence | Mitigation |
 | --- | --- | --- | --- |
 | No reliable PR / issue ID locally | VS Code (none), CLI and app (only when referenced) | Consumption stops at branch/commit | Resolve `(repo, branch)` and `(repo, commit)` to PRs through the GitHub API; adopt `vcs.change.id` |
-| No per-session credits for cloud agent | Cloud agent, audit log | PR-linked work has no cost | Session streaming / usage records; billing API at day grain; allocate |
-| No session ID in org data | Usage metrics, billing | Authoritative credits cannot join to sessions | Reconcile at user/day/model; allocate by local share |
-| No actor locally by default | VS Code (opt-in only), CLI, app | Cannot join to org per-user data | Turn on VS Code identity capture and join `user.name` to `user_login`; collector adds the signed-in login for CLI/app; pseudonymise both |
-| Session ID missing on many VS Code calls | VS Code | Auxiliary calls cannot inherit repository context | Fall back to conversation, parent-session and trace IDs; report the rest as unattributed |
-| Overlapping sources | VS Code metrics vs spans; transcript vs trace; CLI store vs OTel | Double counting | Precedence or max per dimension, never sum; dedupe on call IDs |
+| No verified per-session cloud cost export | Cloud agent, audit log | Billing unit known, but no session cost source connected here | Verify a usage export, or label billing-based allocation T3 with unmatched usage |
+| No session ID in org data | Usage metrics, billing | Per-user consumption has no model/surface split; cannot join to sessions | Use filtered billing AI-credit reports for user/day/model, preserve filters; allocate explicitly |
+| No verified local login join by default | VS Code (opt-in only), CLI, app | CLI/app OTel pseudonyms are not a verified login; local rows have no actor | Verify the VS Code login join; add a governed collector identity/mapping for CLI/app and pseudonymise both |
+| Session ID missing on many VS Code calls | VS Code | Native session coverage is incomplete | Resolve time-appropriate conversation, parent-session or trace context; trace-only calls do not create sessions |
+| Overlapping sources | VS Code metrics vs spans; transcript vs trace; CLI store vs OTel | Double counting or undercount with mismatched windows | Precedence; conservative max only for aligned scopes/windows; never sum parent and child totals |
 | No CI/CD linkage | All | Build/deploy outcomes unattributed | Join `cicd.pipeline.run.*` by repository and commit |
 | Credits optional on spans | VS Code | Unknown is not zero | Track credit coverage; prefer the session store or transcript |
 | MCP server name hashed by default | VS Code | Vendor-level tool cost needs content capture | Keep hash as key; map names in a governed lookup |
@@ -182,42 +207,66 @@ erDiagram
 | `work_item` | PR, issue, commit, branch, workflow run, task | provider, repo, number / SHA / ref, URL, opened / merged / closed |
 | `attribution` | session ↔ work item | tier, method, confidence, evidence, weight (per session ≤ 1) |
 | `outcome` | measured result | kind (edit accepted, survival, feedback, lines changed, task complete, PR merged, review rounds, CI result, revert, lead time), value, unit, source |
-| `cost_ledger` | billing line | day, user, product, SKU, model, net quantity / amount — reconciliation only |
+| `cost_ledger` | billing line with preserved request scope | billing entity/account type, requested UTC day/user/model, product/SKU, unit/rate, gross/discount/net quantities and amounts, retrieval time and coverage — reconciliation only |
 
 ### Attribution tiers
 
 | Tier | Method | Example |
 | --- | --- | --- |
-| T0 native | ID emitted by the surface | Cloud agent session → PR; `session_refs` PR; audit `agent_session_id` |
-| T1 deterministic | Exact join on VCS keys | `(repo, branch)` → PR head ref; `(repo, head commit)` ∈ PR commits; app worktree branch → PR |
+| T0 native | Work ownership emitted by the surface | Cloud-owned session → PR; audit `agent_session_id`. A mentioned PR is only a reference until verified |
+| T1 deterministic | Exact, unambiguous VCS join | Verify head repository, commit and time; disambiguate forks, branch reuse and multiple PR matches |
 | T2 inferred | Time and content overlap | Same repo and actor within PR commit window; modified files ∩ PR diff |
 | T3 allocated | Proportional share | Org day/user/model credits distributed by attributed local share |
 | Unattributed | Kept explicitly | Never dropped, so coverage is always visible |
 
 ### Accounting invariants
 
-1. Count each model call once, by stable call ID; never add `invoke_agent` totals to `chat` calls.
-2. Never sum overlapping sources; use precedence or per-dimension max and record the source.
+1. Count each model call once. VS Code reads `chat` credits; CLI OTel's primary guidance reads root `invoke_agent` `github.copilot.nano_aiu`. Never add parent and child totals; validate mappings per surface/version.
+2. Never sum overlapping sources; use precedence, or conservative per-dimension max only with aligned scopes/windows, and record the source and coverage.
 3. Unknown is not zero; report credit coverage alongside credit totals.
 4. Credits = nano-AIU / 1,000,000,000; no token-to-currency estimate without an explicit, labelled rate.
 5. Attribution weights per session sum to at most 1; the remainder stays unattributed.
-6. Local observations are not a bill; reconcile against the billing usage API at day/user/model grain.
+6. Local observations are not a bill; match consumption to gross billing AI-credit quantity at the same scope, retaining discounts and net billed amounts separately.
 7. No prompt or response content; pseudonymise actors; keep MCP names hashed unless governed.
+8. Token fields are nullable reported subtotals with per-field call coverage. Cache-read share uses only valid paired input/cache counts, with paired-call coverage.
+
+### Billing reconciliation contract
+
+Use the [billing AI-credit usage endpoint](https://docs.github.com/en/rest/billing/usage),
+not an inferred model split of organisation `ai_credits_used`. That usage-metrics
+field is per-user consumption only, with no feature, model or surface breakdown,
+and is not an invoice.
+
+Preserve the billing entity, account type, requested UTC day/user/model filters,
+product/SKU, `unitType`, price, retrieval time and coverage alongside each
+`usageItems` line: the response does not put every requested dimension on every
+line. Personal endpoints exclude organisation-managed seats; query the entity
+paying for the seat with appropriate administrative access. Avoid double-counting
+overlapping queries with a stable ledger key.
+
+Compare local credits with **gross AI-credit quantity** only when identity,
+day, model aliases, product and coverage match. Keep gross, discount and net
+quantities/amounts separate. The documented nominal value of one AI credit is
+USD 0.01, not proof of an incremental charge after allowances and discounts.
+Report signed differences, missing local/cloud usage and unallocated balances.
+Any session/work-item allocation from user/day/model totals is T3 estimation,
+not measured session billing. Include seats, Actions/infrastructure and human
+oversight separately. This canvas does not call billing APIs.
 
 ## 7. Desired outcomes
 
 | Outcome | Measure | Status |
 | --- | --- | --- |
 | PR-reference coverage | % reported credits in sessions with a repository, branch and recorded PR reference (not verified outcome attribution) | Local, generally stops at branch |
-| Work-context coverage | % credits in sessions with a repository | Local |
+| Work-context coverage | % reported credits on calls with resolved repository context, including trace-only links; not verified ownership | Local |
 | Credit coverage | % model calls reporting credits | Local |
 | Actor coverage | % reported credits on calls attributed to a `user.name`; a join key, not productivity | Local (VS Code, opt-in) |
 | Cost per delivered change | Credits per merged PR, per work-item type | Needs T1 join |
 | AI-assisted share | % merged PRs with T0/T1 attribution | Needs T1 join + org repo report |
-| Usage mix | Cache-read ratio, sub-agent share, model and reasoning-effort mix; not time or money saved | Local |
+| Usage mix | Paired-count cache-read share with coverage, sub-agent share, model and reasoning-effort mix; not savings | Local |
 | Speed | PR lead time AI-assisted vs baseline; agent latency and TTFT | Local latency; lead time needs PR data |
-| Quality | Edit acceptance, survival, review rounds, CI pass rate, revert rate, task completion | VS Code local; the rest needs PR/CI data |
-| Reconciliation | Local credits vs billing `netQuantity` by user/day/model | Needs org API |
+| Quality | Acceptance/survival need the telemetry feed this canvas does not read; reviews, CI, reverts and verified task delivery require joins | Feed plus PR/CI data |
+| Reconciliation | Scope-matched local consumption vs gross AI-credit quantity; discounts/net billed amounts separate | Needs billing API and preserved request scope |
 | Human effort and rework | Prompting, review, correction and maintenance time for comparable tasks | Needs time/effort data and baseline |
 | Incremental return | Valued incremental benefit less AI investment, divided by AI investment, with quality guardrails | Needs verified outcome, valuation, full costs and baseline |
 
@@ -227,9 +276,10 @@ erDiagram
    through the GitHub API, and record `attribution` rows with tier and evidence.
 2. **Actor key.** Turn on VS Code identity capture and key its calls by `user.name`; have the collector add the
    signed-in login to CLI/app sessions; pseudonymise both with the same salt so they join to `user_login`.
-3. **Cloud cost.** Take cloud-agent session cost from session streaming or usage records, or allocate from
-   the billing API at day grain.
-4. **Reconcile.** Compare local credits with the billing usage API by user, day and model, and publish the gap.
+3. **Cloud cost.** Verify a session-ID-bearing usage export before treating it as measured cost; otherwise
+   label billing-based allocation T3 and keep unmatched usage.
+4. **Reconcile.** Use scope-filtered billing AI-credit reports, match consumption to gross quantities,
+   preserve discounts/net billed amounts and publish the gap.
 5. **Align naming.** Emit or map to OTel `vcs.*` and `cicd.*` so external pipelines can join by commit.
 6. **Establish the counterfactual.** Record comparable non-AI delivery, rework and quality, full AI and human costs, and a declared valuation before publishing ROI.
 
@@ -248,16 +298,25 @@ Verified against current source and local data:
   `process.user.name` / `host.name` are resource attributes. It is off by default; a managed policy overrides
   `COPILOT_OTEL_CAPTURE_IDENTITY` and the setting. `agent-traces.db` stores span attributes only. The agent host
   (Copilot harness) is not covered yet ([microsoft/vscode#337413](https://github.com/microsoft/vscode/issues/337413)).
+- The primary CLI reference documents OTel enable/export variables, `gen_ai.*` / `github.copilot.*`,
+  pseudonymous `enduser.pseudo.id`, and `--max-ai-credits` / `/limits`. Limits are soft, not a hard cap.
+- Primary usage-based billing docs include cloud agent and define one AI credit as USD 0.01.
+  Legacy premium-request billing remains for eligible existing annual plans. Enterprise-managed OTel and
+  cost-centre budgets are documented capabilities, not verification of a particular account.
+- Current organisation reports include CLI/app daily tokens and partial CLI customization aggregates.
+  MCP counts connection attempts, not tool invocations; plugin interactions are already included in skills.
+- SDK `session.task_complete` carries an optional summary, not a success field. Routine
+  `session.shutdown.shutdownType` means normal shutdown, not verified correctness.
 
 Still unverified:
 
 - Whether VS Code `user.name` always equals the usage metrics `user_login` (expected; not tested against an
   organisation export).
-- Copilot CLI OTel span, metric and environment-variable names (primary docs section not retrieved).
 - Whether `copilot_chat.server_request_id` equals the CLI's `serviceRequestId` (candidate dedupe key).
-- The current cloud-agent billing unit (2025 "one premium request per session" vs 2026 AI credits) and
-  code-review Actions minutes.
-- `--max-ai-credits`, `/limits`, enterprise-managed OTel export and cost-centre behaviour (secondary sources).
+- A reliable per-session cloud-agent cost export and code-review Actions-minute attribution.
+- Limits reset grain/minimum for the installed runtime: the CLI command reference says per response,
+  while the session-limit guide says an entire interactive session and a 30-credit minimum. Pin the
+  runtime and verify reset and overshoot behaviour before promising either contract.
 
 ## 9. Sources
 
@@ -267,3 +326,4 @@ Still unverified:
 - GitHub: [OpenTelemetry for Copilot](https://docs.github.com/en/copilot/concepts/enterprise/opentelemetry), [Session data](https://docs.github.com/en/copilot/concepts/security-governance-and-network-settings/session-data), [CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference), [Copilot app agent sessions](https://docs.github.com/en/copilot/how-tos/github-copilot-app/agent-sessions), [Manage and track agents](https://docs.github.com/en/copilot/how-tos/copilot-on-github/use-copilot-agents/manage-and-track-agents), [Agentic audit log events](https://docs.github.com/en/copilot/reference/enterprise-administrators/agentic-audit-log-events), [Copilot usage metrics](https://docs.github.com/en/copilot/reference/copilot-usage-metrics/copilot-usage-metrics), [Billing usage REST](https://docs.github.com/en/rest/billing/usage), [Copilot user management REST](https://docs.github.com/en/rest/copilot/copilot-user-management), [Metrics data](https://docs.github.com/en/copilot/reference/metrics-data)
 - Changelog: [VS Code Agents in usage metrics](https://github.blog/changelog/2026-09-11-add-vs-code-agents-to-copilot-usage-metrics/), [Agent session streaming preview](https://github.blog/changelog/2026-07-02-copilot-agent-session-streaming-is-now-in-public-preview/)
 - Copilot SDK: [usage and billing](https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md); session event types shipped with the Copilot app SDK (`generated/session-events.d.ts`)
+- Current contracts: [SDK streaming events](https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md), [individual AI-credit billing](https://docs.github.com/en/copilot/concepts/billing-and-usage/individuals/billing), [organisation billing and budgets](https://docs.github.com/en/copilot/concepts/billing-and-usage/organizations-and-enterprises/billing), [legacy premium requests](https://docs.github.com/en/copilot/reference/copilot-billing/request-based-billing-legacy/copilot-requests), [CLI limits guide](https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/set-session-limit)

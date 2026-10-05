@@ -21,6 +21,7 @@ synthetic session and trace stores, so they never read live Copilot databases.
 | --- | --- |
 | Outcomes | ROI-readiness metrics, reported credits with/without a PR reference, and the cost, value and baseline inputs still needed |
 | Surfaces | Concept × surface matrix with native / partial / missing / unverified fields |
+| Intersection | Verified concepts available across all five surfaces, with native vs conditional availability and each source's grain/access caveats |
 | Data model | Entities, relationships, attribution tiers and accounting invariants |
 | Gaps | Gaps by impact, verification status and prior art |
 | Live coverage | Per-source funnel, breakdowns by model, agent, reasoning effort, repository, user and tools |
@@ -42,6 +43,49 @@ then deleted. Only aggregates are produced (counts, token and credit sums, and
 model, agent, tool, repository and user names); prompt, response and tool content is
 never read. Nothing leaves the machine, and the two sources are shown side by
 side rather than summed.
+
+### Reading coverage and token values
+
+Repository and user context use the latest matching agent span **at or before**
+each model call, through session, conversation, parent-session or trace keys.
+Trace-only calls contribute to repository coverage and the breakdown but do
+not create sessions. CLI/app repository and branch still come from the current
+session row; that store does not version historical work context.
+
+Token values are **reported subtotals**, with a per-field reporting-call count.
+No reports displays `—`, not zero; a reported zero is still zero. Cache-read
+share divides cache-read by input tokens only on calls reporting both valid
+counts (cache cannot exceed input), and shows that paired-call coverage.
+Partial reasoning or cache subtotals must not be treated as complete usage.
+
+The surface matrix describes source capabilities, not everything ingested by
+this canvas. Organisation reports include daily CLI/app tokens and partial
+skill, plugin, custom-agent and MCP aggregates; MCP counts connections, not
+tool calls. Task-completion events are self-reports, not correctness signals.
+The **Data model** tab carries the billing reconciliation contract: preserve
+query scope, compare matching gross AI-credit consumption, and keep discounts,
+net billed amounts and T3 allocations separate. Billing is not connected here.
+
+### Intersection
+
+The **Intersection** tab derives concepts available across VS Code, CLI, app,
+cloud agent and organisation data from the model. Every cell must be native,
+partial or derived; missing and unverified fields are excluded. Native across
+all means directly emitted, not equivalent grain or comparable values.
+Conditional across all includes opt-in, daily aggregates and panel-only data.
+It does not join or sum sources.
+
+![Shared-surface intersection](../../../docs/media/canvas-intersection.png)
+
+### Theme
+
+**App / system** uses the documented host theme tokens and color mode when
+available, otherwise the system light/dark preference. It follows live theme
+changes. The **Theme** selector can explicitly choose Light or Dark for the
+current page; reloading returns to App / system. No app-internal tokens are
+required.
+
+![Intersection in dark mode](../../../docs/media/canvas-intersection-dark.png)
 
 ### User attribution
 
