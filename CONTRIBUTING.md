@@ -150,6 +150,42 @@ builds and verifies the VSIX, creates `vX.Y.Z` at that exact tested commit, and
 publishes the GitHub release. No pre-merge tag or second workflow dispatch is
 required. A tag pointing to a different commit fails rather than being moved.
 
+### Marketplace publication
+
+For an independently owned personal release, use a personally controlled
+Microsoft account and personal Marketplace publisher, rather than an
+employer-managed work account or an employer's publisher. This is the intended
+publishing setup for `obrocki.bear-in-mind`; it is not a Marketplace account-type
+requirement.
+
+A publisher account controls uploads; it does not establish intellectual-property
+ownership or permission to release code. Confirm the right to distribute the
+code under MIT and any applicable third-party or employer release approvals
+before publishing. The license notice and independent-project disclaimer do
+not resolve an ownership question.
+
+Confirm ownership of the `obrocki` publisher in
+[Marketplace management](https://marketplace.visualstudio.com/manage) before
+publishing. The existing workflow uses a repository secret named `VSCE_PAT`:
+an Azure DevOps personal access token with **Marketplace → Manage** scope and
+**All accessible organizations** selected. Never put the token in source,
+logs or issues. Manual VSIX upload through Marketplace management is an
+alternative that does not require a repository secret.
+
+Adding the secret does not publish a version already released on GitHub:
+`release.yml` skips existing non-draft GitHub releases before its Marketplace
+step. Prepare a new version for automatic publication, or manually upload the
+existing release's VSIX. If Marketplace publication fails after the GitHub
+release is created, publish that exact VSIX manually; rerunning the workflow
+currently skips it. Do not delete or move an existing release tag to retry.
+
+Marketplace validation/scanning and Microsoft signing happen on publication.
+The build script's archive verification is not Marketplace certification.
+Verified-publisher status and GitHub build-provenance attestations are separate,
+optional trust measures, not prerequisites for ordinary publication. See the
+[publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
+and [Marketplace protections](https://code.visualstudio.com/docs/configure/extensions/extension-runtime-security).
+
 ## Pull requests and bugs
 
 Keep changes focused. Use two-space indentation, single quotes and semicolons.

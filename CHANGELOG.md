@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.6.5
+
+- Prepared Marketplace installation instructions alongside the existing VSIX
+  route, without claiming the listing is already published.
+- Clarified desktop, optional SQLite and identity-capture requirements, the
+  independent publisher and the opt-in unofficial account quota API.
+- Clarified MIT reuse and modification permissions, retained the existing
+  personal copyright notice, and stated that the project is not an official,
+  sponsored or endorsed Microsoft or GitHub product. Documented personal
+  publisher setup separately from rights and release approvals.
+- Documented Marketplace publishing credentials and manual recovery when a
+  GitHub release already exists. Distinguished archive verification from
+  Marketplace scanning/signing and optional publisher/provenance verification.
+- Fixed a dashboard account-refresh menu entry misplaced in the command
+  declarations, which produced an invalid-command-title warning in VS Code.
+
 ## 0.6.4
 
 - Session picker titles now come from VS Code's chat-history index, including

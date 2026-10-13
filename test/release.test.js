@@ -38,6 +38,20 @@ it('keeps release versions synchronized and waits for main CI instead of publish
   assert.match(workflow, /target_commitish: \$\{\{ steps\.release\.outputs\.commit \}\}/);
 });
 
+it('keeps command contributions valid and account refresh in the dashboard title menu', () => {
+  const commands = manifest.contributes.commands;
+  assert.equal(new Set(commands.map(({ command }) => command)).size, commands.length);
+  for (const { command, title } of commands) {
+    const text = typeof title === 'string' ? title : title?.value;
+    assert.ok(typeof text === 'string' && text.length > 0, `${command} needs a title`);
+  }
+  assert.ok(manifest.contributes.menus['view/title'].some((item) =>
+    item.command === 'iceberg.refreshAccountUsage' &&
+    item.when === 'view == iceberg.dashboard' &&
+    item.group === '1_config'
+  ));
+});
+
 it('keeps dependency versions matched to their locked tarballs during release version bumps', () => {
   for (const name of ['deep-extend', 'tunnel-agent']) {
     const dependency = lockfile.packages[`node_modules/${name}`];
