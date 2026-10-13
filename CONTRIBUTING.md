@@ -152,6 +152,18 @@ required. A tag pointing to a different commit fails rather than being moved.
 
 ### Marketplace publication
 
+For an independently owned personal release, use a personally controlled
+Microsoft account and personal Marketplace publisher, rather than an
+employer-managed work account or an employer's publisher. This is the intended
+publishing setup for `obrocki.bear-in-mind`; it is not a Marketplace account-type
+requirement.
+
+A publisher account controls uploads; it does not establish intellectual-property
+ownership or permission to release code. Confirm the right to distribute the
+code under MIT and any applicable third-party or employer release approvals
+before publishing. The license notice and independent-project disclaimer do
+not resolve an ownership question.
+
 Confirm ownership of the `obrocki` publisher in
 [Marketplace management](https://marketplace.visualstudio.com/manage) before
 publishing. The existing workflow uses a repository secret named `VSCE_PAT`:

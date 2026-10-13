@@ -64,10 +64,12 @@ publishing additionally requires the repository's `VSCE_PAT` secret.
 - Data files must be accessible to the extension host. Remote extension-host
   placement can change which machine's telemetry and history are available.
 
-Bear in Mind is an independent extension, not an official GitHub or Microsoft
-product. The optional account connection uses an **unofficial GitHub API** that
-can change or fail. See [SECURITY.md](SECURITY.md) for the local data read,
-network requests, consent and disconnect behavior.
+Bear in Mind is an independent personal project by Dawid Obrocki, not an official
+GitHub or Microsoft product. It is not sponsored or endorsed by either company.
+Product names identify compatible services, not sponsorship or endorsement.
+The optional account connection uses an **unofficial GitHub API** that can change
+or fail. See [SECURITY.md](SECURITY.md) for the local data read, network requests,
+consent and disconnect behavior, and [License](#license) for reuse permissions.
 
 ## The dashboard
 
@@ -330,5 +332,18 @@ npm run vsix
 The VSIX build typechecks, bundles and verifies the archive. Press `F5` for an
 Extension Development Host. See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture,
 accounting invariants and release steps.
+
+## License
+
+This project is licensed under the standard [MIT License](LICENSE). You may use,
+copy, modify, merge, publish, distribute, sublicense and sell it, including for
+commercial use and as part of proprietary software. You do not have to publish
+your modifications.
+
+Keep the copyright and permission notice in copies or substantial portions of
+the software. The existing notice names Dawid Obrocki, not Microsoft or GitHub.
+The software is provided **as is**, without warranty. The independent-project
+statement above clarifies project status; it does not add restrictions to the
+MIT license.
 
 [MIT](LICENSE) © Dawid Obrocki
