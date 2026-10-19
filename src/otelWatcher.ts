@@ -76,7 +76,12 @@ export interface OtelUsageDelta {
 
 interface TraceAccounting {
   since: number;
-  /** `harness` marks calls charged to the harness ledger while no Local source had them. */
+  /**
+   * `harness` marks a call whose charge the meter accepted into the harness
+   * ledger and has not yet moved to `traces`. Set only after acceptance, and
+   * cleared only after the move is accepted, so display-only periods neither
+   * invent a transfer nor drop a pending one.
+   */
   seen: Record<string, { input: number; output: number; at: number; harness?: true }>;
 }
 
@@ -166,7 +171,8 @@ export class OtelWatcher implements vscode.Disposable {
 
   constructor(
     private readonly context: Pick<vscode.ExtensionContext, 'globalStorageUri'> & { readonly globalState: vscode.Memento },
-    private readonly onUsage: (delta: OtelUsageDelta) => void,
+    /** Returns `false` when the meter rejects the delta (display-only telemetry). */
+    private readonly onUsage: (delta: OtelUsageDelta) => boolean | void,
     private readonly log?: (message: string) => void
   ) {
     const stored = context.globalState.get<Partial<PersistedState>>(STATE_KEY);
@@ -721,6 +727,9 @@ export class OtelWatcher implements vscode.Disposable {
       }
     }
     let size = Object.keys(seen).length;
+    // Applied only if the meter accepts the matching delta.
+    const charged: string[] = [];
+    const pendingMoves = new Map<string, TraceAccounting['seen'][string]>();
     for (const span of spans) {
       if (span.operation !== 'chat' || span.start < this.traceAccounting.since ||
           span.start < cutoff || (span.input === undefined && span.output === undefined)) {
@@ -733,10 +742,12 @@ export class OtelWatcher implements vscode.Disposable {
       }
       // A call charged as harness-only that a Local source now also records
       // overlaps the Local metric feed: its charge moves to the traces ledger.
-      if (previous?.harness && !harnessOnly.has(span.id)) {
+      const moving = previous?.harness === true && !harnessOnly.has(span.id);
+      if (moving) {
         moved.input += previous.input;
         moved.output += previous.output;
         moved.requests++;
+        pendingMoves.set(span.id, previous);
       }
       const isHarness = harnessOnly.has(span.id) && (!previous || previous.harness === true);
       const delta = isHarness ? harness : traces;
@@ -748,14 +759,28 @@ export class OtelWatcher implements vscode.Disposable {
         size++;
         delta.requests++;
       }
-      seen[span.id] = isHarness ? { input, output, at: span.start, harness: true } : { input, output, at: span.start };
+      seen[span.id] = previous?.harness ? { input, output, at: span.start, harness: true } : { input, output, at: span.start };
+      if (isHarness && !previous) {
+        charged.push(span.id);
+      }
     }
     let changed = false;
-    for (const delta of [moved, traces, harness]) {
-      if (delta.input || delta.output || delta.requests) {
-        this.onUsage(delta);
-        changed = true;
+    const emit = (delta: OtelUsageDelta): boolean => {
+      if (!delta.input && !delta.output && !delta.requests) {
+        return false;
       }
+      changed = true;
+      return this.onUsage(delta) !== false;
+    };
+    if (emit(moved)) {
+      for (const id of pendingMoves.keys()) delete seen[id].harness;
+    } else {
+      // Rejected: keep the charged amounts so a later scan retries the same move.
+      for (const [id, previous] of pendingMoves) seen[id] = previous;
+    }
+    emit(traces);
+    if (emit(harness)) {
+      for (const id of charged) seen[id].harness = true;
     }
     if (changed) {
       this.persist();

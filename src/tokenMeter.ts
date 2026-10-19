@@ -207,9 +207,10 @@ export class TokenMeter implements vscode.Disposable {
     }
   }
 
-  observe(from: 'otel' | 'traces' | 'harness', input: number, output: number, requests: boolean | number = true): void {
-    if (!this.config.get<boolean>('otel.enabled', true) || !this.config.get<boolean>('otel.authoritative', true)) {
-      return;
+  /** Returns whether the usage was accepted; display-only or disabled telemetry rejects it. */
+  observe(from: 'otel' | 'traces' | 'harness', input: number, output: number, requests: boolean | number = true): boolean {
+    if (!this.accepting) {
+      return false;
     }
     const target = from === 'traces' ? this.state.traces : from === 'harness' ? this.state.harness : this.state.metrics;
     target.input += sane(input);
@@ -217,16 +218,22 @@ export class TokenMeter implements vscode.Disposable {
     target.requests += sane(typeof requests === 'boolean' ? Number(requests) : requests);
     this.persist();
     this.publish();
+    return true;
+  }
+
+  private get accepting(): boolean {
+    return this.config.get<boolean>('otel.enabled', true) && this.config.get<boolean>('otel.authoritative', true);
   }
 
   /**
    * Moves usage first charged to the harness ledger to `traces`, once a Local
    * source has also recorded those calls, so the metrics/traces `max()`
-   * reconciles them instead of counting them twice.
+   * reconciles them instead of counting them twice. Returns whether it was
+   * applied, so a rejected move can be retried.
    */
-  moveHarnessToTraces(input: number, output: number, requests: number): void {
-    if (!this.config.get<boolean>('otel.enabled', true) || !this.config.get<boolean>('otel.authoritative', true)) {
-      return;
+  moveHarnessToTraces(input: number, output: number, requests: number): boolean {
+    if (!this.accepting) {
+      return false;
     }
     const { harness, traces } = this.state;
     for (const [key, amount] of [['input', input], ['output', output], ['requests', requests]] as const) {
@@ -236,6 +243,7 @@ export class TokenMeter implements vscode.Disposable {
     }
     this.persist();
     this.publish();
+    return true;
   }
 
   /** Refreshes context expiry and publishes when the gauge basis changes. */

@@ -572,3 +572,74 @@ for (const order of ['agent host first', 'local first']) {
     assert.equal(watcher.spanDigest.chatCalls, 1);
   });
 }
+
+function overlapFixture(t) {
+  const { TokenMeter } = require(path.join(process.env.BEAR_TEST_BUILD, 'tokenMeter.js'));
+  let now = Date.UTC(2026, 9, 19, 12);
+  t.mock.method(Date, 'now', () => now);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-authoritative-'));
+  const userData = path.join(dir, 'Code');
+  const localFile = path.join(dir, 'agent-traces.db');
+  const store = new Map();
+  const memento = { get: (key) => store.get(key), update: async (key, value) => store.set(key, structuredClone(value)) };
+  globalThis.__BEAR_SETTINGS__ = { 'iceberg.otel.tracesDbPath': localFile };
+  const meter = new TokenMeter(memento);
+  const watcher = new OtelWatcher(
+    { globalStorageUri: { fsPath: path.join(userData, 'User', 'globalStorage', 'obrocki.bear-in-mind') }, globalState: memento },
+    (delta) => delta.fromHarness
+      ? meter.moveHarnessToTraces(delta.input, delta.output, delta.requests)
+      : meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests)
+  );
+  t.after(() => {
+    watcher.dispose();
+    meter.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+    delete globalThis.__BEAR_SETTINGS__;
+  });
+  now += 2000;
+  const at = now - 1000;
+  const write = (file) => {
+    const { db, span, attr } = agentHostStore(file);
+    span.run('call', 't1', null, 'chat', at, at + 500, 0, 'chat', 'harness-1', 'opus', 100, 10, 0, null);
+    if (file !== localFile) attr.run('call', 'github.copilot.nano_aiu', '1000000000');
+    db.close();
+  };
+  const scan = () => {
+    now += 31_000; // past the path refresh interval
+    watcher.scan();
+  };
+  const authoritative = (value) => { globalThis.__BEAR_SETTINGS__['iceberg.otel.authoritative'] = value; };
+  return { meter, scan, authoritative, writeAgentHost: () => write(path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db')), writeLocal: () => write(localFile) };
+}
+
+it('never moves a display-only harness call into the meter when metering is switched on later', (t) => {
+  const { meter, scan, authoritative, writeAgentHost, writeLocal } = overlapFixture(t);
+  authoritative(false);
+  writeAgentHost();
+  scan();
+  assert.equal(meter.snapshot().total, 0, 'display-only telemetry is not charged');
+  authoritative(true);
+  writeLocal();
+  scan();
+  scan();
+  assert.equal(meter.snapshot().total, 0, 'no transfer of usage that was never charged');
+  assert.equal(meter.snapshot().requests, 0);
+});
+
+it('retries a harness-to-traces move rejected while metering was display-only', (t) => {
+  const { meter, scan, authoritative, writeAgentHost, writeLocal } = overlapFixture(t);
+  meter.observe('otel', 100, 10, 0);
+  writeAgentHost();
+  scan();
+  assert.equal(meter.snapshot().total, 220, 'charged as harness-only before the overlap is known');
+  authoritative(false);
+  writeLocal();
+  scan();
+  assert.equal(meter.snapshot().total, 220, 'the move is rejected while display-only');
+  authoritative(true);
+  scan();
+  assert.equal(meter.snapshot().total, 110, 'the pending move is applied once metering resumes');
+  assert.equal(meter.snapshot().requests, 1);
+  scan();
+  assert.equal(meter.snapshot().total, 110, 'and applied only once');
+});
