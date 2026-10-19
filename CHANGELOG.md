@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Refreshed the attribution research and canvas model to 19 October 2026:
+  per-session cloud agent AI credits (Agent Tasks REST, preview), VS Code's
+  Copilot-harness Agent Host telemetry, managed OTel identity capture, the
+  usage-metrics agent undercount, and OTel GenAI metric and token-breakdown
+  changes. Local measurements were re-run, and the research preamble is now a
+  last-updated date.
+- README: Copilot-harness sessions get identity only through managed
+  `telemetry.capture.identity`, and this extension does not yet read their
+  Agent Host telemetry.
+
 ## 0.6.5
 
 - Prepared Marketplace installation instructions alongside the existing VSIX

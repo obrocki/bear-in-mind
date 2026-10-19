@@ -205,8 +205,10 @@ Identity capture also reaches an OTLP collector that stays connected, and the
 prompt says so. If replacing a collector fails, Connect leaves identity capture
 off. `COPILOT_OTEL_CAPTURE_IDENTITY` outranks the setting, so when it is set
 Connect does not offer the choice. An organisation policy
-(`CopilotOtelCaptureIdentity`) overrides both, and identity currently covers
-only the Local chat harness, not the Copilot harness. **Iceberg: Telemetry
+(`CopilotOtelCaptureIdentity`) overrides both. The setting covers only the Local
+chat harness; Copilot-harness sessions get identity only through managed
+`telemetry.capture.identity` (VS Code 1.141+), and their Agent Host telemetry is
+not read by this extension. **Iceberg: Telemetry
 Diagnostics** shows whether capture is requested and how many retained calls
 are attributed to a user.
 
