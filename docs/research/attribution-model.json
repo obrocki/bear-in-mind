@@ -1,16 +1,16 @@
 {
   "schemaVersion": 1,
   "title": "Measuring ROI on AI-assisted development",
-  "updated": "2026-10-05",
+  "updated": "2026-10-19",
   "workstream": "Data and Attribution Model",
   "question": "What does AI-assisted development cost, what value does it deliver, and can we credibly attribute the difference?",
-  "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
+  "summary": "ROI requires both the incremental cost of AI-assisted work and its incremental value against a comparable baseline. Local Copilot stores report consumption and some work context, not monetary cost, developer time saved or delivered value. Agent Tasks REST (public preview) reports per-session cloud-agent usage, but this canvas does not ingest it and it is not an invoice. The live measurements below show how much reported usage can be linked to work; they are ROI readiness indicators, not ROI. A deterministic PR join, verified delivery and quality outcomes, billing and human effort data, and a comparable baseline are needed before calculating a return.",
   "surfaces": [
     {
       "id": "vscode",
       "name": "VS Code",
       "detail": "Copilot Chat agents",
-      "collection": "OTel (OTLP or JSON-lines file), local span DB agent-traces.db, chat transcripts (internal)",
+      "collection": "Extension-host OTel (OTLP or JSON-lines file), local span DB agent-traces.db; separate Agent Host OTel pipeline",
       "sessionKey": "copilot_chat.chat_session_id / gen_ai.conversation.id",
       "liveSource": "traces"
     },
@@ -34,7 +34,7 @@
       "id": "cloud",
       "name": "Copilot cloud agent",
       "detail": "Runs in GitHub Actions, opens PRs",
-      "collection": "Session logs, Actions workflow runs, agentic audit log, session streaming (preview)",
+      "collection": "Agent Tasks REST (public preview), session logs, Actions workflow runs, agentic audit log, session streaming (preview)",
       "sessionKey": "agent_session_id",
       "liveSource": null
     },
@@ -97,7 +97,7 @@
       "canonical": "actor.actor_key",
       "otel": "user.name (span); process.user.name, host.name (resource)",
       "surfaces": {
-        "vscode": { "availability": "partial", "field": "user.name on invoke_agent spans; process.user.name, host.name resource attributes", "note": "Opt-in since VS Code 1.140 (github.copilot.chat.otel.captureIdentity; managed telemetry.capture.identity / CopilotOtelCaptureIdentity policy wins). Local harness only. user.name is the signed-in GitHub account; chat spans inherit it through the session ID. agent-traces.db stores span attributes, not resource attributes." },
+        "vscode": { "availability": "partial", "field": "user.name on invoke_agent spans; process.user.name, host.name resource attributes",         "note": "Local harness: opt-in since VS Code 1.140 (github.copilot.chat.otel.captureIdentity; managed policy wins). Copilot Agent Host identity requires managed telemetry.capture.identity and uses a separate pipeline; this extension does not read Agent Host telemetry. user.name is the signed-in GitHub account; chat spans inherit it through the session ID. agent-traces.db stores span attributes, not resource attributes." },
         "cli": { "availability": "partial", "field": "enduser.pseudo.id on OTel invoke_agent; no identity in session-store rows", "note": "An analytics pseudonym when available, not a GitHub login. A governed mapping or collector-supplied account is needed to join user_login." },
         "app": { "availability": "partial", "field": "shared-runtime OTel enduser.pseudo.id; no identity in session-store rows", "note": "Pseudonymous telemetry is not a verified login-to-organisation join; live actor coverage is unavailable from this store." },
         "cloud": { "availability": "native", "field": "audit user, commit co-author" },
@@ -111,10 +111,10 @@
       "canonical": "ai_session.session_key",
       "otel": "gen_ai.conversation.id",
       "surfaces": {
-        "vscode": { "availability": "partial", "field": "copilot_chat.chat_session_id, gen_ai.conversation.id", "note": "Auxiliary and language-model-API calls carry no session ID; measured on 28% of chat spans on one machine." },
+        "vscode": { "availability": "partial", "field": "copilot_chat.chat_session_id, gen_ai.conversation.id",         "note": "Some auxiliary and language-model-API calls lack a chat-session ID; trace-only context does not fabricate a session." },
         "cli": { "availability": "native", "field": "sessionId, turn_index" },
         "app": { "availability": "native", "field": "sessionId, turn_index" },
-        "cloud": { "availability": "native", "field": "agent_session_id, github.com/copilot/tasks/{id}" },
+        "cloud": { "availability": "native", "field": "agent_session_id; Agent Tasks task.id and sessions[].id" },
         "org": { "availability": "missing", "field": "user/day, org/day, repo/day aggregates" }
       }
     },
@@ -129,7 +129,7 @@
         "cli": { "availability": "native", "field": "agentId, subagent.*.agentName, interactionType, initiator" },
         "app": { "availability": "native", "field": "agentId, subagent.*.agentName, interactionType, initiator" },
         "cloud": { "availability": "partial", "field": "session log" },
-        "org": { "availability": "partial", "field": "totals_by_custom_agent (CLI starts); totals_by_vscode_agent (window sessions/messages)", "note": "Custom-agent arrays are capped at five and customer identifiers are grouped as other. Agents-window counts are not an agent-name breakdown." }
+        "org": { "availability": "partial", "field": "totals_by_custom_agent (CLI starts); totals_by_vscode_agent (window sessions/messages)", "note": "Custom-agent arrays are capped at five and customer identifiers are grouped as other. Agents-window counts are not an agent-name breakdown; SDK-migration undercount affects IDE agent activity for affected periods." }
       }
     },
     {
@@ -165,9 +165,9 @@
       "name": "Tokens",
       "group": "consumption",
       "canonical": "model_call.{input,output,cache_read,cache_write,reasoning}_tokens",
-      "otel": "gen_ai.usage.*",
+      "otel": "gen_ai.usage.* span attributes; gen_ai.client.inference.usage.* counters",
       "surfaces": {
-        "vscode": { "availability": "native", "field": "gen_ai.usage.input_tokens, output_tokens, cache_read.input_tokens, reasoning.output_tokens" },
+        "vscode": { "availability": "native", "field": "Span attributes: gen_ai.usage.input_tokens, output_tokens, cache_read.input_tokens, cache_write.input_tokens, reasoning.output_tokens. Metric conventions: gen_ai.client.inference.usage.* counters, gen_ai.token.modality; per-operation input/output token histograms are distribution-only.", "note": "Cache-read/write counters are subsets of input tokens; reasoning counters are subsets of output tokens. Do not add these to totals. The GenAI metric conventions are in development." },
         "cli": { "availability": "native", "field": "inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens" },
         "app": { "availability": "native", "field": "inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens" },
         "cloud": { "availability": "partial", "field": "Agents panel", "note": "Shown in the UI, not exported per call." },
@@ -184,7 +184,7 @@
         "vscode": { "availability": "native", "field": "copilot_chat.copilot_usage_nano_aiu; transcript copilotCredits", "note": "Same CAPI copilot_usage.total_nano_aiu as the CLI. Older builds omit it; unknown is not zero." },
         "cli": { "availability": "native", "field": "copilotUsage.totalNanoAiu; OTel github.copilot.nano_aiu", "note": "SDK cost / OTel github.copilot.cost is a request multiplier, not credits or currency. CLI OTel guidance uses root invoke_agent nano_aiu totals, never parent plus children." },
         "app": { "availability": "native", "field": "copilotUsage.totalNanoAiu; shared-runtime OTel github.copilot.nano_aiu", "note": "A request multiplier is not monetary cost. The live canvas reads per-call session-store usage, not CLI OTel." },
-        "cloud": { "availability": "partial", "field": "AI-credit usage-based billing; legacy annual plans use premium requests", "note": "Billing unit is documented; a reliable per-session cost export is not verified or connected here." },
+        "cloud": { "availability": "native", "field": "Agent Tasks REST sessions[].usage.type and amount", "note": "Public preview; per-session usage distinguishes ai_credits from premium_requests. This canvas does not ingest it, and usage is not an invoice." },
         "org": { "availability": "native", "field": "ai_credits_used; billing ai_credit usageItems grossQuantity / discountQuantity / netQuantity / netAmount", "note": "ai_credits_used is per-user consumption, not invoicing and not broken down by model, feature or surface. Billing reports accept user/day/model filters." }
       }
     },
@@ -393,7 +393,7 @@
       "grain": "person",
       "fields": ["identity (native, conditional: user.name or SDK enduser.pseudo.id)", "actor_key (derived salted pseudonym of a verified account)", "device_key (derived, optional; resource inputs are not a person)", "org, team / cost centre (configured or externally enriched)"],
       "fieldProvenance": [
-        { "field": "user.name", "kind": "native", "readPath": "VS Code invoke_agent span; export or span store", "conditions": "Opt-in, policy-controlled Local harness only; verify equivalence with organisation user_login before joining." },
+        { "field": "user.name", "kind": "native", "readPath": "VS Code Local-harness invoke_agent span; export or span store", "conditions": "Opt-in, policy-controlled Local harness; Agent Host identity is a separate pipeline enabled only by managed telemetry.capture.identity and is not read by this extension. Verify equivalence with organisation user_login before joining." },
         { "field": "enduser.pseudo.id", "kind": "native", "readPath": "SDK/CLI invoke_agent OTel span", "conditions": "Opaque analytics identity when available, not a GitHub login. Session-store rows do not contain it." },
         { "field": "actor_key", "kind": "derived", "readPath": "Collector normalization or a configured precomputed attribute", "conditions": "Use a governed salted pseudonym of a verified account; Copilot does not automatically generate this canonical field." },
         { "field": "process.user.name, host.name", "kind": "native", "readPath": "Opt-in OTel resource attributes in export", "conditions": "Not stored in agent-traces.db. OS account/machine identity is not person identity and must not replace user.name." },
@@ -502,11 +502,12 @@
   ],
   "gaps": [
     { "id": "no-pr-locally", "title": "No reliable PR / issue ID locally", "severity": "high", "surfaces": ["vscode", "cli", "app"], "consequence": "Consumption stops at branch/commit: VS Code emits no work-item ID, and CLI/app session_refs capture one only when the agent references it.", "mitigation": "Resolve (repo, branch) and (repo, commit) to PRs through the GitHub API; adopt vcs.change.id." },
-    { "id": "no-cloud-cost", "title": "No verified per-session cloud cost export", "severity": "high", "surfaces": ["cloud"], "consequence": "The billing unit is documented, but PR-linked sessions have no cost source connected here.", "mitigation": "Verify a session usage export; otherwise use billing AI-credit reports with labelled T3 allocations and an unmatched balance." },
+    { "id": "no-cloud-cost", "title": "No cloud usage integration", "severity": "high", "surfaces": ["cloud"], "consequence": "Agent Tasks REST public preview exposes per-session usage, but this canvas does not ingest it and it is not invoice data.", "mitigation": "Read task sessions and preserve task/session IDs and usage.type (ai_credits or premium_requests); reconcile AI credits separately with billing." },
     { "id": "no-session-in-org", "title": "No session ID in organisation data", "severity": "high", "surfaces": ["org"], "consequence": "Per-user ai_credits_used has no model/surface split and cannot join to sessions.", "mitigation": "Reconcile user/day consumption at its own grain; use filtered billing AI-credit reports for user/day/model and label any allocation T3." },
     { "id": "no-actor", "title": "No verified local login join by default", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "CLI/app rows hold no user and their OTel pseudonym is not a verified login; VS Code user.name is opt-in and its user_login equivalence remains unverified.", "mitigation": "Verify the opt-in VS Code user.name to user_login join; use a governed identity mapping or collector-supplied login for CLI/app, and pseudonymise before storage." },
     { "id": "session-sparse", "title": "Session ID missing on many VS Code calls", "severity": "medium", "surfaces": ["vscode"], "consequence": "Native session identity is incomplete even when trace-only work context can be resolved.", "mitigation": "Resolve time-appropriate session, conversation, parent-session or trace context; do not fabricate sessions, and retain unmatched calls." },
     { "id": "overlap", "title": "Overlapping sources", "severity": "medium", "surfaces": ["vscode", "cli", "app"], "consequence": "Double counting (metrics vs spans, transcript vs trace, CLI store vs OTel), or undercount with mismatched scopes.", "mitigation": "Use precedence or conservative max only for aligned scopes/windows; dedupe call IDs and never sum parent and child usage." },
+    { "id": "usage-metrics-agent-undercount", "title": "Agent activity undercount in usage metrics", "severity": "medium", "surfaces": ["org"], "consequence": "IDE agent activity moved to the Copilot SDK was omitted or misclassified; historical gaps cannot be backfilled.", "mitigation": "Treat affected-period activity metrics as incomplete, update affected IDEs, and re-baseline forward reporting; billing was not affected." },
     { "id": "no-ci", "title": "No CI/CD linkage", "severity": "medium", "surfaces": ["vscode", "cli", "app", "cloud", "org"], "consequence": "Build and deploy outcomes are unattributed.", "mitigation": "Join cicd.pipeline.run.* by repository and commit." },
     { "id": "credits-optional", "title": "Credits optional on spans", "severity": "low", "surfaces": ["vscode"], "consequence": "Unknown is not zero.", "mitigation": "Track credit coverage; prefer the session store or transcript." },
     { "id": "mcp-hashed", "title": "MCP server name hashed by default", "severity": "low", "surfaces": ["vscode"], "consequence": "Vendor-level tool cost needs content capture.", "mitigation": "Keep the hash as key; map names in a governed lookup." },
@@ -519,10 +520,13 @@
     { "name": "vscode-insights (hackathon)", "proved": "Copilot SDK instrumentation (assistant.usage, subagent.*, skill.invoked, quota snapshots) into one records table.", "learned": "Stable call keys like sdk:<sessionId>:call:<apiCallId>; account checked against the signed-in login." }
   ],
   "verification": [
-    { "claim": "copilot_chat.copilot_usage_nano_aiu is emitted on VS Code chat spans", "status": "verified", "note": "genAiAttributes.ts in microsoft/vscode extensions/copilot; present on 124 of 125 local chat spans." },
-    { "claim": "github.copilot.* attribute namespace (agent.type, git.*, tool.parameters.*)", "status": "verified", "note": "Defined in current source and observed locally on invoke_agent / execute_tool spans." },
+    { "claim": "copilot_chat.copilot_usage_nano_aiu is emitted on VS Code chat spans", "status": "verified", "note": "Defined in genAiAttributes.ts in microsoft/vscode extensions/copilot; no VS Code trace store was present in the 2026-10-19 local coverage rerun." },
+    { "claim": "github.copilot.* attribute namespace (agent.type, git.*, tool.parameters.*)", "status": "verified", "note": "Defined in current source; no VS Code trace store was present in the 2026-10-19 local coverage rerun." },
     { "claim": "VS Code reasoning effort", "status": "verified", "note": "Carried inside the copilot_chat.request.options JSON blob, not a dedicated attribute." },
-    { "claim": "VS Code identity capture: user.name on agent invocation spans; process.user.name and host.name as resource attributes", "status": "verified", "note": "VS Code 1.140 release notes and otelIdentity.ts in microsoft/vscode extensions/copilot: off by default; user.name is the GitHub session account label; a managed policy overrides COPILOT_OTEL_CAPTURE_IDENTITY and the setting; agent-traces.db persists span attributes only; agent host support is tracked in microsoft/vscode#337413." },
+    { "claim": "VS Code identity capture in Local and Copilot harnesses", "status": "verified", "note": "Local harness: VS Code 1.140 user.name span attribute and process.user.name / host.name resource attributes; managed policy overrides the user setting and environment. Copilot Agent Host uses a separate OTel pipeline; identity capture requires managed telemetry.capture.identity and is not read by this extension." },
+    { "claim": "Agent Tasks REST per-session cloud-agent usage", "status": "verified", "note": "Public-preview task responses include sessions[] with id and usage.type / usage.amount; type distinguishes ai_credits and premium_requests. This canvas does not call the API." },
+    { "claim": "Copilot usage-metrics agent activity undercount", "status": "verified", "note": "GitHub's 2026-10-06 changelog says SDK migration caused IDE agent activity to be omitted or misclassified; historical gaps cannot be backfilled and billing was unaffected." },
+    { "claim": "GenAI inference token metric breakdown", "status": "verified", "note": "Development conventions define gen_ai.client.inference.usage.* counters, modality, cache-read/cache-write and reasoning subsets, and per-operation token histograms for distributions rather than total usage." },
     { "claim": "VS Code user.name equals the usage metrics user_login", "status": "unverified", "note": "Both should be the GitHub login; not tested against an organisation export." },
     { "claim": "Copilot CLI OTel span, metric and environment-variable names", "status": "verified", "note": "Primary CLI reference documents COPILOT_OTEL_ENABLED, OTEL_EXPORTER_OTLP_ENDPOINT, COPILOT_OTEL_FILE_EXPORTER_PATH; invoke_agent/chat/execute_tool; gen_ai.* and github.copilot.*. github.copilot.cost is a multiplier; use the documented root-span nano_aiu aggregation, not VS Code's mapping." },
     { "claim": "copilot_chat.server_request_id equals CLI serviceRequestId", "status": "unverified", "note": "Both are service request IDs; equivalence not tested." },
@@ -530,16 +534,18 @@
     { "claim": "--max-ai-credits and /limits exist", "status": "verified", "note": "Both are in the primary CLI command reference. They are soft limits, not a hard spending guarantee." },
     { "claim": "CLI limits reset grain and minimum for the installed runtime", "status": "unverified", "note": "The command reference says per response, while the session-limit guide says entire interactive session and a 30-credit minimum. Pin the runtime and verify reset/overshoot behaviour before promising semantics." },
     { "claim": "Enterprise-managed OTel export and cost-centre budgets", "status": "verified", "note": "Primary OTel and organisation billing docs describe enforced telemetry settings and cost-centre budgets for additional charges after pooled credits are exhausted. This is capability evidence, not verification of an account's configuration." },
-    { "claim": "Reliable per-session cloud-agent cost export", "status": "unverified", "note": "Billing-unit documentation does not establish a session-ID-bearing usage export; no such source is connected to this canvas." }
+    { "claim": "Agent Tasks session usage is a billing amount", "status": "unverified", "note": "The preview returns per-session usage, but equivalence to invoice-level consumption has not been verified; preserve the distinction and reconcile separately." }
   ],
   "sources": [
     { "title": "Monitor agent usage with OpenTelemetry (VS Code)", "url": "https://code.visualstudio.com/docs/agents/guides/monitoring-agents", "kind": "docs" },
     { "title": "Optimize AI credit usage (VS Code)", "url": "https://code.visualstudio.com/docs/agents/guides/optimize-usage", "kind": "docs" },
     { "title": "Agent harnesses (VS Code)", "url": "https://code.visualstudio.com/docs/agents/run/agent-harnesses", "kind": "docs" },
+    { "title": "Agent Host OTel architecture (microsoft/vscode)", "url": "https://github.com/microsoft/vscode/blob/main/src/vs/platform/agentHost/OTEL.md", "kind": "source" },
     { "title": "genAiAttributes.ts (microsoft/vscode)", "url": "https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/otel/common/genAiAttributes.ts", "kind": "source" },
     { "title": "otelIdentity.ts (microsoft/vscode)", "url": "https://github.com/microsoft/vscode/blob/main/extensions/copilot/src/platform/otel/common/otelIdentity.ts", "kind": "source" },
     { "title": "VS Code 1.140: Capture user identity in OpenTelemetry", "url": "https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry", "kind": "changelog" },
     { "title": "OTel GenAI semantic conventions", "url": "https://github.com/open-telemetry/semantic-conventions-genai", "kind": "spec" },
+    { "title": "OTel GenAI inference token metrics", "url": "https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-token-metrics.md", "kind": "spec" },
     { "title": "OTel MCP attributes", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/mcp/", "kind": "spec" },
     { "title": "OTel VCS attributes", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/vcs/", "kind": "spec" },
     { "title": "OTel CICD attributes", "url": "https://opentelemetry.io/docs/specs/semconv/registry/attributes/cicd/", "kind": "spec" },
@@ -552,8 +558,10 @@
     { "title": "Copilot usage metrics", "url": "https://docs.github.com/en/copilot/reference/copilot-usage-metrics/copilot-usage-metrics", "kind": "docs" },
     { "title": "Billing usage REST API", "url": "https://docs.github.com/en/rest/billing/usage", "kind": "docs" },
     { "title": "Copilot user management REST API", "url": "https://docs.github.com/en/rest/copilot/copilot-user-management", "kind": "docs" },
+    { "title": "Agent Tasks REST API", "url": "https://docs.github.com/en/rest/agent-tasks/agent-tasks", "kind": "docs" },
     { "title": "Copilot metrics data", "url": "https://docs.github.com/en/copilot/reference/metrics-data", "kind": "docs" },
     { "title": "Add VS Code Agents to Copilot usage metrics", "url": "https://github.blog/changelog/2026-09-11-add-vs-code-agents-to-copilot-usage-metrics/", "kind": "changelog" },
+    { "title": "Restore agent activity in Copilot usage metrics", "url": "https://github.blog/changelog/2026-10-06-update-your-ide-to-restore-agent-activity-in-copilot-usage-metrics/", "kind": "changelog" },
     { "title": "Copilot agent session streaming (public preview)", "url": "https://github.blog/changelog/2026-07-02-copilot-agent-session-streaming-is-now-in-public-preview/", "kind": "changelog" },
     { "title": "Copilot SDK usage and billing", "url": "https://github.com/github/copilot-sdk/blob/main/docs/features/usage-and-billing.md", "kind": "docs" },
     { "title": "Copilot SDK streaming events", "url": "https://github.com/github/copilot-sdk/blob/main/docs/features/streaming-events.md", "kind": "source" },

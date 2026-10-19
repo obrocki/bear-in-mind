@@ -93,7 +93,7 @@ required.
 
 ### User attribution
 
-VS Code 1.140 can add the signed-in GitHub account to Copilot telemetry as
+The VS Code Local chat harness can add the signed-in GitHub account to telemetry as
 `user.name` on agent invocation spans
 ([identity capture](https://code.visualstudio.com/updates/v1_140#_capture-user-identity-in-opentelemetry),
 `github.copilot.chat.otel.captureIdentity`, off by default). The VS Code source
@@ -104,7 +104,10 @@ session or trace. It reports the share of credits attributed to a user
 `host.name` are resource attributes, which `agent-traces.db` does not store.
 The CLI / app session store records no user, so its actor coverage is not
 measured. This user name is the join key to organisation data keyed by
-`user_login`; pseudonymise it before it leaves the machine.
+`user_login`; pseudonymise it before it leaves the machine. Copilot harness
+sessions use a separate Agent Host telemetry pipeline; identity is captured only
+through managed `telemetry.capture.identity`. This extension does not yet read
+Agent Host telemetry.
 
 ![AI attribution canvas live coverage tab showing synthetic store funnels and breakdowns](../../../docs/media/canvas-coverage.png)
 
