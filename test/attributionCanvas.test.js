@@ -123,7 +123,7 @@ it('refreshed model records preview cloud usage, harness identity and usage-metr
   assert.match(concepts.credits.surfaces.cloud.field, /sessions\[\]\.usage\.type and amount/);
   assert.match(concepts.credits.surfaces.cloud.note, /public preview/i);
   assert.match(concepts.tokens.otel, /gen_ai\.client\.inference\.usage/);
-  assert.match(concepts.tokens.surfaces.vscode.field, /cache_write\.input_tokens/);
+  assert.match(concepts.tokens.surfaces.vscode.field, /cache_creation\.input_tokens/);
   assert.match(concepts.tokens.surfaces.vscode.note, /subsets/);
   assert.match(concepts.actor.surfaces.vscode.note, /telemetry\.capture\.identity/);
   assert.match(concepts.actor.surfaces.vscode.note, /does not read Agent Host telemetry/);
