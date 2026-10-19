@@ -201,7 +201,11 @@ export interface FeedHealth {
   jsonlPath?: string;
   jsonlActive: boolean;
   sqlitePath?: string;
+  /** A trace store (Local harness or Agent Host) supplied spans. */
   sqliteActive: boolean;
+  /** VS Code Agent Host (Copilot harness) trace store, when it exists. */
+  agentHostPath?: string;
+  agentHostActive?: boolean;
   /** Set when an OTLP endpoint is configured that `outfile` would displace. */
   otlpEndpoint?: string;
   /**

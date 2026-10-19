@@ -138,7 +138,7 @@ The dashboard and Copilot report different units and scopes:
 | --- | --- |
 | Copilot account usage and allowance | GitHub quota API values across sessions and surfaces, with reported plan and reset date. Requires authorized GitHub sign-in; unofficial API, not an invoice. |
 | Copilot **Session Cost** | Compare with transcript credits for the same session. Uses VS Code's `max(sum(turn credits), reported session credits)` formula and includes existing history. |
-| Local tokens | Persisted metric/span usage since the meter start, reconciled by per-dimension maximum, plus labeled manual reports. Not a session or billing-period total. |
+| Local tokens | Persisted metric/span usage since the meter start, reconciled by per-dimension maximum, plus Copilot-harness calls only the Agent Host recorded and labeled manual reports. Not a session or billing-period total. |
 | Trace credits | Reported on unique model-call spans. Coverage is shown; missing credits are unknown. Diagnostics only, never added to transcript credits or the meter. |
 | Gauge with All sessions | Remaining account allowance from GitHub, kept separate from local tokens and credits. Pooled/unlimited plans have no percentage denominator. |
 | Context Window and selected-session gauge | The native window includes prompt and completion tokens against the selected model's full window. The selected-session gauge uses a trace's reported prompt allowance, not that full window. |
@@ -171,9 +171,25 @@ then send a chat request. Allow time for the export to arrive.
 
 | Source | Provides | Exporter impact |
 | --- | --- | --- |
-| Local trace store (`agent-traces.db`) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch and user, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
+| Local trace store (`agent-traces.db`, plus `agent-host-traces.db` for the Copilot harness) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch and user, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
 | JSON-lines file feed | Token metrics, quality signals and (in current Copilot) serialized spans with session details. | **Replaces the OTLP exporter.** The command warns first. |
 | Both | All available signals. | Same replacement caveat as the file feed. |
+
+VS Code 1.141+ can run chats in the **Copilot harness**, which is becoming the
+default. Its telemetry comes from VS Code's Agent Host, not Copilot Chat, so
+choosing the trace store also turns on the Agent Host's local store
+(`chat.agentHost.otel.dbSpanExporter.enabled`). Connect skips this when the
+Agent Host already exports traces over OTLP protobuf or gRPC, because its store
+would keep them from that collector. The Agent Host reads the setting only when
+it starts: quit and reopen VS Code, or run **Developer: Restart Local Agent
+Host**, which interrupts running Copilot-harness chats.
+
+Bear in Mind reads only Copilot runtime traces from that store (spans stamped
+with `github.copilot.*`), not Claude or Codex harness sessions. Calls recorded
+only there are metered in their own ledger and added to the reconciled Local
+figure, because they never reach the Local metric feed; a call also recorded by
+a Local source reconciles with it. Their `github.copilot.nano_aiu` appears as
+**SDK root-invocation credits**, never as VS Code model-call credits.
 
 Older file-feed spans may serialize as `{}`; use the trace store for exact
 timings and session credits on those builds. Quality appears after actions such
@@ -205,8 +221,10 @@ Identity capture also reaches an OTLP collector that stays connected, and the
 prompt says so. If replacing a collector fails, Connect leaves identity capture
 off. `COPILOT_OTEL_CAPTURE_IDENTITY` outranks the setting, so when it is set
 Connect does not offer the choice. An organisation policy
-(`CopilotOtelCaptureIdentity`) overrides both, and identity currently covers
-only the Local chat harness, not the Copilot harness. **Iceberg: Telemetry
+(`CopilotOtelCaptureIdentity`) overrides both. The setting covers only the Local
+chat harness; Copilot-harness sessions get identity only through managed
+`telemetry.capture.identity` (VS Code 1.141+), and only when the bundled runtime
+adds `user.name`. **Iceberg: Telemetry
 Diagnostics** shows whether capture is requested and how many retained calls
 are attributed to a user.
 
@@ -216,9 +234,9 @@ Choose **Restore defaults and disconnect…** in the connect picker or dashboard
 or run **Iceberg: Restore Defaults and Disconnect…**. A confirmation lists
 changes first. Restore then:
 
-- returns each Copilot Chat telemetry setting it changed, including identity
-  capture, to your previous user value (or the default), leaving any you changed
-  yourself afterwards alone;
+- returns each Copilot telemetry setting it changed, including identity capture
+  and the Agent Host trace store, to your previous user value (or the default),
+  leaving any you changed yourself afterwards alone;
 - resets Bear in Mind's user settings, but not workspace settings;
 - disconnects account usage, immediately clears the displayed account quota,
   and resets the saved connection opt-in. Requests do not resume after reload
@@ -228,8 +246,9 @@ changes first. Restore then:
   there, and a feed at a custom `iceberg.otel.feedPath` is never deleted. Other
   open windows stop saving their copies and start fresh when reloaded.
 
-Copilot's trace store and transcripts are untouched. Reload so Copilot Chat
-applies the restored settings, or choose **Uninstall Bear in Mind**. Connections
+Copilot's trace stores and transcripts are untouched. Reload so Copilot Chat
+applies the restored settings (the Agent Host applies them when it next
+restarts), or choose **Uninstall Bear in Mind**. Connections
 made before 0.6.3 have no saved previous values; only settings still matching
 Bear in Mind's values can be reset.
 Account disconnection takes effect even if you dismiss the reload prompt.

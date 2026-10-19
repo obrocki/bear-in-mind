@@ -3,6 +3,7 @@
 // Sources:
 //   - Copilot CLI / GitHub Copilot app session store ($COPILOT_HOME/session-store.db)
 //   - VS Code Copilot Chat span store (globalStorage/github.copilot-chat/agent-traces.db)
+//   - VS Code Agent Host span store for the Copilot harness (<userData>/agent-host/otel/agent-host-traces.db)
 //
 // Only aggregates leave this module: counts, token and credit sums, model,
 // agent and repository names. Prompt, response and tool content are never read.
@@ -68,12 +69,25 @@ export function defaultSessionStorePath(options = {}) {
   return path.join(copilotHome(options), 'session-store.db');
 }
 
-export function vscodeGlobalStorageDirs({ env = process.env, platform = process.platform, home = os.homedir() } = {}) {
+export function vscodeGlobalStorageDirs(options = {}) {
+  return vscodeUserDataDirs(options).map((userData) => path.join(userData, 'User', 'globalStorage'));
+}
+
+export function vscodeUserDataDirs({ env = process.env, platform = process.platform, home = os.homedir() } = {}) {
   let base;
   if (platform === 'win32') base = env.APPDATA || path.join(home, 'AppData', 'Roaming');
   else if (platform === 'darwin') base = path.join(home, 'Library', 'Application Support');
   else base = env.XDG_CONFIG_HOME || path.join(home, '.config');
-  return ['Code', 'Code - Insiders'].map((product) => path.join(base, product, 'User', 'globalStorage'));
+  return ['Code', 'Code - Insiders'].map((product) => path.join(base, product));
+}
+
+/** The Agent Host's span store (VS Code 1.141+), written only when its DB mode is on; prefers the most recent. */
+export function findAgentHostTracesDb(userDataDirs) {
+  const found = userDataDirs
+    .map((userData) => path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db'))
+    .filter(isFile);
+  found.sort((a, b) => mtime(b) - mtime(a));
+  return found[0];
 }
 
 /** Mirrors Bear in Mind's discovery (src/otelWatcher.ts); prefers the most recently written store. */
@@ -454,13 +468,23 @@ const GIT_KEYS = {
 };
 /** The signed-in GitHub account on agent invocation spans, when Copilot's identity capture is on (VS Code 1.140+). */
 const IDENTITY_KEY = 'user.name';
+/** Per-turn AI units on Copilot runtime chat spans; root invoke_agent totals are never added to them. */
+const RUNTIME_CREDIT_KEY = 'github.copilot.nano_aiu';
 const CHAT_KEYS = [
   'copilot_chat.copilot_usage_nano_aiu',
+  RUNTIME_CREDIT_KEY,
   'copilot_chat.request.options',
   'copilot_chat.parent_chat_session_id',
   'gen_ai.usage.cache_creation.input_tokens',
+  // Semantic-convention names the Agent Host's Copilot runtime emits; aliases are selected, never added.
+  'gen_ai.usage.cache_write.input_tokens',
+  'gen_ai.usage.reasoning.output_tokens',
+  'gen_ai.request.reasoning.level',
   IDENTITY_KEY,
 ];
+/** Agent Host DB mode also stores Claude and Codex traces; only Copilot runtime traces carry github.copilot.*. */
+const COPILOT_RUNTIME_TRACES = `trace_id IN (SELECT r.trace_id FROM spans r JOIN span_attributes ra ON ra.span_id = r.span_id
+         WHERE r.start_time_ms >= ? AND ra.key LIKE 'github.copilot.%')`;
 
 function contextAt(entries, at, accepts) {
   if (!entries?.length) return null;
@@ -502,17 +526,27 @@ export function reasoningEffortFromOptions(raw) {
   }
 }
 
-/** Coverage for VS Code's agent-traces.db. */
-export function tracesCoverage(db, { sinceMs = 0 } = {}) {
+/**
+ * Coverage for VS Code's agent-traces.db, or with `copilotRuntime` for the
+ * Agent Host's agent-host-traces.db: same schema, but only Copilot runtime
+ * traces count and credits are the per-turn github.copilot.nano_aiu on chat spans.
+ */
+export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false } = {}) {
   const tables = tableNames(db);
   if (!tables.has('spans')) {
     return { status: 'schema', reason: 'Table spans not found; the trace store schema may have changed.' };
   }
   const cols = tableColumns(db, 'spans');
-  for (const required of ['span_id', 'operation_name', 'start_time_ms']) {
+  for (const required of ['span_id', 'operation_name', 'start_time_ms', ...(copilotRuntime ? ['trace_id'] : [])]) {
     if (!cols.has(required)) return { status: 'schema', reason: `Column spans.${required} not found.` };
   }
   const hasAttributes = tables.has('span_attributes');
+  if (copilotRuntime && !hasAttributes) {
+    return { status: 'schema', reason: 'Table span_attributes not found, so Copilot runtime traces cannot be identified.' };
+  }
+  const runtime = copilotRuntime ? ` AND ${COPILOT_RUNTIME_TRACES}` : '';
+  const windowArgs = copilotRuntime ? [sinceMs, sinceMs] : [sinceMs];
+  const creditKey = copilotRuntime ? RUNTIME_CREDIT_KEY : 'copilot_chat.copilot_usage_nano_aiu';
 
   const chats = db
     .prepare(
@@ -529,9 +563,9 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
         'cached_tokens',
         'reasoning_tokens',
         'start_time_ms',
-      ])} FROM spans WHERE operation_name = 'chat' AND start_time_ms >= ?`,
+      ])} FROM spans WHERE operation_name = 'chat' AND start_time_ms >= ?${runtime}`,
     )
-    .all(sinceMs);
+    .all(...windowArgs);
 
   const chatAttributes = new Map();
   const agentContext = { session: new Map(), conversation: new Map(), trace: new Map() };
@@ -628,7 +662,7 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
   for (const chat of chats) {
     const attrs = chatAttributes.get(String(chat.span_id)) ?? {};
-    const reportedNano = nanoAiu(attrs['copilot_chat.copilot_usage_nano_aiu']);
+    const reportedNano = nanoAiu(attrs[creditKey]);
     const hasCredit = reportedNano !== null;
     const nano = reportedNano ?? 0;
     totals.calls += 1;
@@ -638,8 +672,10 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
       inputTokens: chat.input_tokens,
       outputTokens: chat.output_tokens,
       cacheReadTokens: chat.cached_tokens,
-      cacheWriteTokens: attrs['gen_ai.usage.cache_creation.input_tokens'],
-      reasoningTokens: chat.reasoning_tokens,
+      cacheWriteTokens: present(attrs['gen_ai.usage.cache_creation.input_tokens'])
+        ? attrs['gen_ai.usage.cache_creation.input_tokens']
+        : attrs['gen_ai.usage.cache_write.input_tokens'],
+      reasoningTokens: present(chat.reasoning_tokens) ? chat.reasoning_tokens : attrs['gen_ai.usage.reasoning.output_tokens'],
     });
 
     const sessionKey = present(chat.chat_session_id)
@@ -666,7 +702,11 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
 
     byModel.add(chat.response_model || chat.request_model, 1, nano);
     byAgent.add(chat.agent_name, 1, nano);
-    byEffort.add(reasoningEffortFromOptions(attrs['copilot_chat.request.options']), 1, nano);
+    byEffort.add(
+      reasoningEffortFromOptions(attrs['copilot_chat.request.options']) ?? effortWord(attrs['gen_ai.request.reasoning.level']),
+      1,
+      nano,
+    );
     byRepository.add(ctx?.repository, 1, nano);
     byLink.add(link, 1, nano);
     byUser.add(user, 1, nano);
@@ -688,9 +728,9 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
   const tools = db
     .prepare(
       `SELECT ${cols.has('tool_name') ? 'tool_name' : 'NULL AS tool_name'}, ${cols.has('status_code') ? 'status_code' : 'NULL AS status_code'}
-             FROM spans WHERE operation_name = 'execute_tool' AND start_time_ms >= ?`,
+             FROM spans WHERE operation_name = 'execute_tool' AND start_time_ms >= ?${runtime}`,
     )
-    .all(sinceMs);
+    .all(...windowArgs);
   // Only spans with a reported status count toward failures; older stores
   // without `status_code` leave the failure count unknown, not zero.
   const toolTally = new Map();
@@ -750,12 +790,22 @@ export function tracesCoverage(db, { sinceMs = 0 } = {}) {
     freshness: { first, last },
     notes: [
       'VS Code emits no pull request or issue ID; the last two stages need a VCS join.',
+      copilotRuntime
+        ? 'Only Copilot runtime traces (spans stamped with github.copilot.*) are counted; Claude and Codex Agent Host sessions are excluded.'
+        : null,
+      copilotRuntime
+        ? 'Credits are the per-turn github.copilot.nano_aiu on chat spans. Root invoke_agent totals are never added to them.'
+        : null,
       'Repository and user context come from the latest matching agent span at or before each call. Trace-only calls can carry work context but are not counted as sessions.',
-      'Copilot Chat prunes this store to recent history (about seven days).',
+      copilotRuntime
+        ? 'The Agent Host prunes this store to recent history (about seven days) and writes it only while chat.agentHost.otel.dbSpanExporter.enabled is on.'
+        : 'Copilot Chat prunes this store to recent history (about seven days).',
       'Token totals are reported subtotals. Cache-read share uses only calls reporting both input and cache-read counts with cached tokens no greater than input.',
       hasAttributes ? null : 'span_attributes not found: credits and repository context are unavailable.',
       hasAttributes && actor.calls === 0
-        ? 'No user.name on agent spans: turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) to attribute calls to a GitHub account.'
+        ? copilotRuntime
+          ? 'No user.name on agent spans: Copilot-harness identity needs the managed telemetry.capture.identity setting (VS Code 1.141+).'
+          : 'No user.name on agent spans: turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) to attribute calls to a GitHub account.'
         : null,
       actor.calls > 0
         ? 'User comes from user.name on agent spans in the same session, conversation, parent session or trace. process.user.name and host.name are resource attributes and are not stored in this database.'
@@ -805,8 +855,8 @@ async function readDatabase(file, read) {
 }
 
 /**
- * @param {{ windowDays?: number, sessionStorePath?: string, tracesDbPath?: string, now?: number,
- *           env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string }} options
+ * @param {{ windowDays?: number, sessionStorePath?: string, tracesDbPath?: string, agentHostTracesDbPath?: string,
+ *           now?: number, env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string }} options
  */
 export async function computeCoverage(options = {}) {
   const {
@@ -822,9 +872,16 @@ export async function computeCoverage(options = {}) {
 
   const storePath = options.sessionStorePath || defaultSessionStorePath({ env, home });
   const tracesPath = options.tracesDbPath || findTracesDb(vscodeGlobalStorageDirs({ env, platform, home }));
+  const agentHostPath = options.agentHostTracesDbPath || findAgentHostTracesDb(vscodeUserDataDirs({ env, platform, home }));
 
   const store = await readDatabase(storePath, (db) => sessionStoreCoverage(db, { sinceDay, sinceMs }));
   const traces = await readDatabase(tracesPath, (db) => tracesCoverage(db, { sinceMs }));
+  const agentHost = agentHostPath
+    ? await readDatabase(agentHostPath, (db) => tracesCoverage(db, { sinceMs, copilotRuntime: true }))
+    : {
+        status: 'missing',
+        reason: 'No agent-host-traces.db. VS Code 1.141+ stores Copilot-harness traces locally only while chat.agentHost.otel.dbSpanExporter.enabled is on.',
+      };
 
   return {
     generatedAt: new Date(now).toISOString(),
@@ -838,9 +895,16 @@ export async function computeCoverage(options = {}) {
         ...store,
       },
       { id: 'traces', label: 'VS Code agent-traces.db', surfaces: ['vscode'], path: tracesPath ?? null, ...traces },
+      {
+        id: 'agentHost',
+        label: 'VS Code Copilot harness agent-host-traces.db',
+        surfaces: ['vscode'],
+        path: agentHostPath ?? null,
+        ...agentHost,
+      },
     ],
     caveats: [
-      'Sources are shown side by side and never summed: VS Code-hosted Copilot CLI sessions can appear in both.',
+      'Sources are shown side by side and never summed: VS Code-hosted Copilot CLI sessions can appear in more than one.',
       'Local observations, not a bill. Credits = nano-AIU / 1,000,000,000.',
     ],
   };

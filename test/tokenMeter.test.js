@@ -120,6 +120,35 @@ it('reconciles each dimension independently without changing the split', (t) => 
   assert.equal(meter.snapshot().output, 20);
 });
 
+it('adds Copilot-harness calls to the reconciled Local figure and keeps them out of drift', (t) => {
+  const { meter, store } = fixture(t);
+  meter.observe('otel', 1000000, 1000, 0);
+  meter.observe('traces', 400000, 400, 1);
+  meter.observe('harness', 300000, 300, 2);
+  const snapshot = meter.snapshot();
+  assert.equal(snapshot.input, 1300000, 'a leading metric ledger cannot hide harness usage');
+  assert.equal(snapshot.output, 1300);
+  assert.equal(snapshot.total, 1301300);
+  assert.equal(snapshot.requests, 3);
+  assert.equal(snapshot.drift.spanObserved, 400400, 'drift compares Local metrics with Local spans only');
+  meter.dispose();
+  assert.deepEqual(store.get('iceberg.usage.v4').harness, { input: 300000, output: 300, requests: 2 });
+});
+
+it('moves harness usage into the reconciled ledger once a Local source records the same calls', (t) => {
+  const { meter } = fixture(t);
+  meter.observe('otel', 100, 10, 0);
+  meter.observe('harness', 100, 10, 1);
+  assert.equal(meter.snapshot().total, 220, 'before the overlap is known the call is counted in both');
+  meter.moveHarnessToTraces(100, 10, 1);
+  const snapshot = meter.snapshot();
+  assert.equal(snapshot.total, 110, 'metrics and the moved spans reconcile by max, not addition');
+  assert.equal(snapshot.requests, 1);
+  assert.equal(snapshot.drift.spanObserved, 110);
+  meter.moveHarnessToTraces(5000, 0, 3);
+  assert.equal(meter.snapshot().input, 5100, 'the harness ledger never goes below zero');
+});
+
 it('has no arbitrary default target or implied percentage', (t) => {
   const { meter } = fixture(t);
   meter.observe('otel', 5000000, 1000000);

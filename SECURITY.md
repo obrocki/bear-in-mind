@@ -15,6 +15,10 @@ Bear in Mind meters local files:
   the default-profile history and shared workspace storage.
 - The configured Copilot OpenTelemetry JSON-lines feed and read-only
   `agent-traces.db`, for metrics, timings and outcome labels.
+- VS Code's read-only Agent Host store `<userData>/agent-host/otel/agent-host-traces.db`
+  (VS Code 1.141+), for the same span metadata from Copilot-harness chats. Only
+  Copilot runtime traces are used; Claude and Codex harness traces in the same
+  store are skipped.
 
 From span metadata the dashboard also shows repository and branch names
 (`github.copilot.git.*` on agent spans, with any credentials in remote URLs
@@ -55,7 +59,10 @@ language-model API, like other chat participants.
 Usage ledgers, bounded overlap evidence and file cursors are saved in VS Code's
 local global state. **Connect Copilot Telemetry** also changes the selected Copilot
 settings, records their previous user values, and creates the chosen feed
-directory. It warns before replacing an OTLP exporter, and turns on identity
+directory. Choosing the trace store also turns on the Agent Host trace store
+(`chat.agentHost.otel.dbSpanExporter.enabled`), unless the Agent Host exports
+traces over OTLP protobuf or gRPC, which that store would keep from the
+collector. It warns before replacing an OTLP exporter, and turns on identity
 capture only if you accept a separate prompt, which notes when a connected OTLP
 collector would receive the identity too.
 
@@ -69,7 +76,7 @@ clears the published account quota and resets the connection opt-in, so requests
 do not resume after reload without an explicit reconnect. The GitHub
 authentication session is left intact for other extensions. That folder is kept
 while Copilot is still set to write there, and a feed at a custom
-`iceberg.otel.feedPath` is not deleted. Copilot's trace store and transcripts
+`iceberg.otel.feedPath` is not deleted. Copilot's trace stores and transcripts
 are untouched.
 
 ## Reporting a vulnerability

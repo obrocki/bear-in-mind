@@ -1,9 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { AGENT_HOST_DB_KEY, AGENT_HOST_SECTION, agentHostTracesDbPath } from './agentHost';
 import { loadSqlite, type SqliteDatabase } from './sqlite';
 import { OtelRollup } from './otelParse';
-import { digestSpans, fileUsageSpan, mergeUsageSpan, usageSpan, type UsageSpan } from './spanUsage';
+import {
+  digestSpans, fileUsageSpan, mergeUsageSpan, spanAncestor, usageSpan, type SpanAncestor, type UsageSpan
+} from './spanUsage';
 import {
   emptySpanDigest,
   redactUrl,
@@ -28,7 +31,9 @@ const NUMERIC_SPAN_KEYS = [
   'copilot_chat.request.max_prompt_tokens', 'copilot_chat.turn_count',
   'copilot_chat.copilot_usage_nano_aiu', 'gen_ai.usage.reasoning.output_tokens',
   'github.copilot.nano_aiu', 'github.copilot.cost', 'github.copilot.turn_count',
-  'gen_ai.response.time_to_first_chunk', 'gen_ai.usage.cache_creation.input_tokens'
+  'gen_ai.response.time_to_first_chunk', 'gen_ai.usage.cache_creation.input_tokens',
+  // Semantic-convention name the Agent Host's Copilot runtime emits.
+  'gen_ai.usage.cache_write.input_tokens'
 ];
 /** `span_attributes` read as short strings: identity and work context, never content. */
 const TEXT_SPAN_KEYS = [
@@ -40,17 +45,44 @@ const TEXT_SPAN_KEYS = [
 ];
 /** Request-option blobs larger than this are skipped, matching the file-span path. */
 const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;
+/**
+ * Agent Host DB mode also stores Claude and Codex harness traces. Only traces
+ * the Copilot runtime stamped with `github.copilot.*` count as Copilot usage.
+ */
+const COPILOT_RUNTIME_TRACES =
+  'trace_id IN (SELECT r.trace_id FROM spans r JOIN span_attributes ra ON ra.span_id = r.span_id ' +
+  "WHERE r.start_time_ms >= ? AND ra.key LIKE 'github.copilot.%')";
+
+/** Spans from one trace store, plus parent links for spans that carry no GenAI operation. */
+interface StoreSpans {
+  spans: UsageSpan[];
+  ancestors: SpanAncestor[];
+}
+
+const NO_SPANS: StoreSpans = { spans: [], ancestors: [] };
 
 export interface OtelUsageDelta {
   input: number;
   output: number;
   requests: number;
-  source?: 'traces';
+  /** `harness`: Copilot-harness calls seen only in the Agent Host store. */
+  source?: 'traces' | 'harness';
+  /**
+   * Usage already charged to the harness ledger whose call a Local source has
+   * since recorded: move it to `traces` rather than adding it again.
+   */
+  fromHarness?: true;
 }
 
 interface TraceAccounting {
   since: number;
-  seen: Record<string, { input: number; output: number; at: number }>;
+  /**
+   * `harness` marks a call whose charge the meter accepted into the harness
+   * ledger and has not yet moved to `traces`. Set only after acceptance, and
+   * cleared only after the move is accepted, so display-only periods neither
+   * invent a transfer nor drop a pending one.
+   */
+  seen: Record<string, { input: number; output: number; at: number; harness?: true }>;
 }
 
 interface PersistedState {
@@ -85,12 +117,16 @@ interface PersistedState {
  * Reads the telemetry Copilot Chat emits and turns it into usage deltas and a
  * dashboard rollup.
  *
- * Two sources, because neither is sufficient alone:
+ * Three sources, because none is sufficient alone:
  *
  * - **The JSONL file feed** carries metrics, log events and current serialized
  *   spans. Legacy SDK v2 exports can contain empty `{}` span records instead.
- * - **`agent-traces.db`** carries completed spans and their attributes. Read
- *   metadata only and merge by span ID so file/SQLite copies count just once.
+ * - **`agent-traces.db`** carries completed Local-harness spans and their
+ *   attributes. Read metadata only and merge by span ID so file/SQLite copies
+ *   count just once.
+ * - **`agent-host-traces.db`** carries Copilot-harness spans from VS Code's
+ *   Agent Host (1.141+), when its DB mode is on. Same schema; only Copilot
+ *   runtime traces are read, and they merge by span ID with the others.
  *
  * They are also not equally intrusive. Setting `outfile` *replaces* whatever
  * OTLP exporter the user configured, silently cutting off their collector. The
@@ -112,10 +148,12 @@ export class OtelWatcher implements vscode.Disposable {
   private state: PersistedState;
   private spans: SpanDigest = emptySpanDigest();
   private readonly fileSpans = new Map<string, UsageSpan>();
-  private dbSpans: UsageSpan[] = [];
+  private localStore: StoreSpans = NO_SPANS;
+  private agentHostStore: StoreSpans = NO_SPANS;
   private readonly traceAccounting: TraceAccounting;
   private feedPath: string | undefined;
   private dbPath: string | undefined;
+  private agentHostPath: string | undefined;
   private pathsResolvedAt = 0;
   private timer: NodeJS.Timeout | undefined;
   private saveTimer: NodeJS.Timeout | undefined;
@@ -133,7 +171,8 @@ export class OtelWatcher implements vscode.Disposable {
 
   constructor(
     private readonly context: Pick<vscode.ExtensionContext, 'globalStorageUri'> & { readonly globalState: vscode.Memento },
-    private readonly onUsage: (delta: OtelUsageDelta) => void,
+    /** Returns `false` when the meter rejects the delta (display-only telemetry). */
+    private readonly onUsage: (delta: OtelUsageDelta) => boolean | void,
     private readonly log?: (message: string) => void
   ) {
     const stored = context.globalState.get<Partial<PersistedState>>(STATE_KEY);
@@ -164,6 +203,10 @@ export class OtelWatcher implements vscode.Disposable {
 
   private get copilotConfig(): vscode.WorkspaceConfiguration {
     return vscode.workspace.getConfiguration('github.copilot.chat.otel');
+  }
+
+  private get agentHostConfig(): vscode.WorkspaceConfiguration {
+    return vscode.workspace.getConfiguration(AGENT_HOST_SECTION);
   }
 
   get enabled(): boolean {
@@ -272,6 +315,15 @@ export class OtelWatcher implements vscode.Disposable {
     return undefined;
   }
 
+  /**
+   * Locates the Agent Host's `agent-host-traces.db`, which exists only once its
+   * DB mode (`chat.agentHost.otel.dbSpanExporter.enabled`) has written spans.
+   */
+  resolveAgentHostDbPath(): string | undefined {
+    const candidate = agentHostTracesDbPath(this.context.globalStorageUri.fsPath);
+    return fileExists(candidate) ? candidate : undefined;
+  }
+
   // ----------------------------------------------------------------- scan ---
 
   scan(): void {
@@ -284,6 +336,7 @@ export class OtelWatcher implements vscode.Disposable {
       if (now - this.pathsResolvedAt > PATH_REFRESH_MS) {
         this.feedPath = this.resolveFeedPath();
         this.dbPath = this.resolveDbPath();
+        this.agentHostPath = this.resolveAgentHostDbPath();
         this.pathsResolvedAt = now;
       }
 
@@ -296,14 +349,20 @@ export class OtelWatcher implements vscode.Disposable {
       this.consumeFeed();
       this.readSpans();
       const spans = new Map(this.fileSpans);
-      for (const span of this.dbSpans) {
-        if (span.start >= cutoff) {
-          spans.set(span.id, mergeUsageSpan(spans.get(span.id), span));
+      for (const store of [this.localStore, this.agentHostStore]) {
+        for (const span of store.spans) {
+          if (span.start >= cutoff) {
+            spans.set(span.id, mergeUsageSpan(spans.get(span.id), span));
+          }
         }
       }
-      this.spans = digestSpans(spans.values());
+      // Calls only the Agent Host recorded cannot appear in the Local metric
+      // feed, so they are metered apart from the metrics/traces reconciliation.
+      const local = new Set([...this.fileSpans.keys(), ...this.localStore.spans.map((span) => span.id)]);
+      const harnessOnly = new Set(this.agentHostStore.spans.map((span) => span.id).filter((id) => !local.has(id)));
+      this.spans = digestSpans(spans.values(), [...this.localStore.ancestors, ...this.agentHostStore.ancestors]);
       this.spans.sinceMs = cutoff;
-      this.emitSpanDelta(spans.values());
+      this.emitSpanDelta(spans.values(), harnessOnly);
       this.emitDelta();
       this._onDidScan.fire();
     } finally {
@@ -519,21 +578,23 @@ export class OtelWatcher implements vscode.Disposable {
   /**
    * Rebuilds the span digest from scratch on every pass.
    *
-   * The store is capped at 7 days and 100 sessions, so the row count stays
+   * Each store is capped at 7 days and 100 sessions, so the row count stays
    * small, and re-reading avoids having to track deletions from its own
    * retention sweep.
    */
   private readSpans(): void {
-    const file = this.dbPath;
+    this.localStore = this.readStore(this.dbPath, 'agent-traces.db', false, this.localStore);
+    this.agentHostStore = this.readStore(this.agentHostPath, 'agent-host-traces.db', true, this.agentHostStore);
+  }
+
+  private readStore(file: string | undefined, label: string, copilotRuntimeOnly: boolean, previous: StoreSpans): StoreSpans {
     if (!file) {
-      this.dbSpans = [];
-      return;
+      return NO_SPANS;
     }
     const sqlite = loadSqlite();
     if (!sqlite) {
       this.note('node:sqlite is unavailable in this VS Code build, so span timings are off.');
-      this.dbSpans = [];
-      return;
+      return NO_SPANS;
     }
 
     let db: SqliteDatabase | undefined;
@@ -544,16 +605,21 @@ export class OtelWatcher implements vscode.Disposable {
       const columns = new Set(
         db.prepare('PRAGMA table_info(spans)').all().map((row) => String((row as Record<string, unknown>).name))
       );
+      if (copilotRuntimeOnly && !columns.has('trace_id')) {
+        this.note(`${label} has no trace_id column, so Copilot runtime traces cannot be told apart; it was skipped.`);
+        return NO_SPANS;
+      }
       const optional = (name: string) => (columns.has(name) ? name : `NULL AS ${name}`);
+      const runtime = copilotRuntimeOnly ? ` AND ${COPILOT_RUNTIME_TRACES}` : '';
       const rows = db
         .prepare(
           `SELECT span_id, operation_name, tool_name, start_time_ms, end_time_ms, ${optional('ttft_ms')}, ` +
             `${optional('conversation_id')}, ${optional('chat_session_id')}, request_model, response_model, ` +
             'input_tokens, output_tokens, cached_tokens, reasoning_tokens, ' +
             `${optional('agent_name')}, ${optional('status_code')}, ${optional('trace_id')}, ${optional('parent_span_id')} ` +
-            'FROM spans WHERE start_time_ms >= ?'
+            `FROM spans WHERE start_time_ms >= ?${runtime}`
         )
-        .all(since);
+        .all(...(copilotRuntimeOnly ? [since, since] : [since]));
       const attributes = new Map<string, Record<string, unknown>>();
       const keys = [...NUMERIC_SPAN_KEYS, ...TEXT_SPAN_KEYS];
       for (const raw of db.prepare(
@@ -574,8 +640,14 @@ export class OtelWatcher implements vscode.Disposable {
       }
       this.readReasoningEfforts(db, since, attributes);
       const completed: UsageSpan[] = [];
+      const ancestors: SpanAncestor[] = [];
       for (const raw of rows) {
         const r = raw as Record<string, unknown>;
+        const links = {
+          traceId: typeof r.trace_id === 'string' ? r.trace_id : undefined,
+          parentSpanId: typeof r.parent_span_id === 'string' ? r.parent_span_id : undefined,
+          parentKnown: columns.has('parent_span_id') && (r.parent_span_id == null || typeof r.parent_span_id === 'string')
+        };
         const span = usageSpan(r.span_id, {
           'gen_ai.operation.name': r.operation_name,
           'gen_ai.tool.name': r.tool_name,
@@ -590,20 +662,22 @@ export class OtelWatcher implements vscode.Disposable {
           'copilot_chat.time_to_first_token': r.ttft_ms,
           'gen_ai.agent.name': r.agent_name,
           ...attributes.get(String(r.span_id))
-        }, numeric(r.start_time_ms), numeric(r.end_time_ms), r.status_code ?? undefined, {
-          traceId: typeof r.trace_id === 'string' ? r.trace_id : undefined,
-          parentSpanId: typeof r.parent_span_id === 'string' ? r.parent_span_id : undefined,
-          parentKnown: columns.has('parent_span_id') && (r.parent_span_id == null || typeof r.parent_span_id === 'string')
-        });
+        }, numeric(r.start_time_ms), numeric(r.end_time_ms), r.status_code ?? undefined, links);
         if (span) {
           completed.push(span);
+        } else if (links.parentKnown && (r.operation_name == null || r.operation_name === '')) {
+          const ancestor = spanAncestor(r.span_id, links);
+          if (ancestor) {
+            ancestors.push(ancestor);
+          }
         }
       }
-      this.dbSpans = completed;
+      return { spans: completed, ancestors };
     } catch (err) {
       // A locked or mid-recovery WAL database is normal and transient; keep the
       // previous digest rather than flapping the dashboard to empty.
-      this.note(`could not read agent-traces.db (${err instanceof Error ? err.message : String(err)})`);
+      this.note(`could not read ${label} (${err instanceof Error ? err.message : String(err)})`);
+      return previous;
     } finally {
       try {
         db?.close();
@@ -641,8 +715,10 @@ export class OtelWatcher implements vscode.Disposable {
     }
   }
 
-  private emitSpanDelta(spans: Iterable<UsageSpan>): void {
-    const delta: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces' };
+  private emitSpanDelta(spans: Iterable<UsageSpan>, harnessOnly: ReadonlySet<string> = new Set()): void {
+    const traces: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces' };
+    const harness: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'harness' };
+    const moved: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces', fromHarness: true };
     const seen = this.traceAccounting.seen;
     const cutoff = Date.now() - SPAN_WINDOW_MS;
     for (const [id, previous] of Object.entries(seen)) {
@@ -651,6 +727,9 @@ export class OtelWatcher implements vscode.Disposable {
       }
     }
     let size = Object.keys(seen).length;
+    // Applied only if the meter accepts the matching delta.
+    const charged: string[] = [];
+    const pendingMoves = new Map<string, TraceAccounting['seen'][string]>();
     for (const span of spans) {
       if (span.operation !== 'chat' || span.start < this.traceAccounting.since ||
           span.start < cutoff || (span.input === undefined && span.output === undefined)) {
@@ -661,6 +740,17 @@ export class OtelWatcher implements vscode.Disposable {
         this.note('The trace accounting limit (50,000 calls) was reached; new calls are not metered.');
         continue;
       }
+      // A call charged as harness-only that a Local source now also records
+      // overlaps the Local metric feed: its charge moves to the traces ledger.
+      const moving = previous?.harness === true && !harnessOnly.has(span.id);
+      if (moving) {
+        moved.input += previous.input;
+        moved.output += previous.output;
+        moved.requests++;
+        pendingMoves.set(span.id, previous);
+      }
+      const isHarness = harnessOnly.has(span.id) && (!previous || previous.harness === true);
+      const delta = isHarness ? harness : traces;
       const input = Math.max(previous?.input ?? 0, span.input ?? 0);
       const output = Math.max(previous?.output ?? 0, span.output ?? 0);
       delta.input += input - (previous?.input ?? 0);
@@ -669,10 +759,30 @@ export class OtelWatcher implements vscode.Disposable {
         size++;
         delta.requests++;
       }
-      seen[span.id] = { input, output, at: span.start };
+      seen[span.id] = previous?.harness ? { input, output, at: span.start, harness: true } : { input, output, at: span.start };
+      if (isHarness && !previous) {
+        charged.push(span.id);
+      }
     }
-    if (delta.input || delta.output || delta.requests) {
-      this.onUsage(delta);
+    let changed = false;
+    const emit = (delta: OtelUsageDelta): boolean => {
+      if (!delta.input && !delta.output && !delta.requests) {
+        return false;
+      }
+      changed = true;
+      return this.onUsage(delta) !== false;
+    };
+    if (emit(moved)) {
+      for (const id of pendingMoves.keys()) delete seen[id].harness;
+    } else {
+      // Rejected: keep the charged amounts so a later scan retries the same move.
+      for (const [id, previous] of pendingMoves) seen[id] = previous;
+    }
+    emit(traces);
+    if (emit(harness)) {
+      for (const id of charged) seen[id].harness = true;
+    }
+    if (changed) {
       this.persist();
     }
   }
@@ -746,15 +856,20 @@ export class OtelWatcher implements vscode.Disposable {
   health(): FeedHealth {
     const feedPath = this.feedPath ?? this.resolveFeedPath();
     const dbPath = this.dbPath ?? this.resolveDbPath();
+    const agentHostPath = this.agentHostPath ?? this.resolveAgentHostDbPath();
+    const agentHostStoreOn = this.agentHostConfig.get<boolean>(AGENT_HOST_DB_KEY, false) === true;
     const copilotEnabled = this.copilotConfig.get<boolean>('enabled', false) ||
       this.copilotConfig.get<boolean>('dbSpanExporter.enabled', false) ||
       this.copilotConfig.get<boolean>('dbSpanExporter', false) ||
+      this.agentHostConfig.get<boolean>('enabled', false) || agentHostStoreOn ||
       process.env.COPILOT_OTEL_ENABLED === 'true' || !!process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
     const endpoint = (this.copilotConfig.get<string>('otlpEndpoint', '') || '').trim();
     const exporterType = (this.copilotConfig.get<string>('exporterType', '') || '').trim();
     // Copilot gives the environment variable precedence over the user setting.
     const identityCapture = identityCaptureOverride() ??
       this.copilotConfig.get<boolean>('captureIdentity', false) === true;
+    // Only VS Code builds with the Copilot harness register this setting.
+    const agentHostAvailable = this.agentHostConfig.inspect?.(AGENT_HOST_DB_KEY)?.defaultValue !== undefined;
 
     const notes = [...this.notes];
     if (!copilotEnabled) {
@@ -765,6 +880,15 @@ export class OtelWatcher implements vscode.Disposable {
     }
     if (!dbPath) {
       notes.push('No agent-traces.db found — exact timings require serialized file spans or the trace store.');
+    }
+    if (!agentHostPath && agentHostAvailable) {
+      notes.push(
+        agentHostStoreOn
+          ? 'The Agent Host trace store is on but has not written yet. It starts after the Agent Host restarts; ' +
+            'Copilot-harness chats are counted from then.'
+          : `No agent-host-traces.db found — Copilot-harness chats are read only when ${AGENT_HOST_SECTION}.${AGENT_HOST_DB_KEY} ` +
+            'is on. Connect can turn it on.'
+      );
     }
     if (endpoint && exporterType !== 'file' && !feedPath) {
       notes.push(
@@ -778,7 +902,9 @@ export class OtelWatcher implements vscode.Disposable {
       jsonlPath: feedPath,
       jsonlActive: !!feedPath && this.rollup.stats.metrics + this.rollup.stats.logs + this.fileSpans.size > 0,
       sqlitePath: dbPath,
-      sqliteActive: this.dbSpans.length > 0,
+      sqliteActive: this.localStore.spans.length > 0 || this.agentHostStore.spans.length > 0,
+      agentHostPath,
+      agentHostActive: this.agentHostStore.spans.length > 0,
       // Redacted before it leaves this method: `FeedHealth` is posted to the
       // webview and written to diagnostics, and an OTLP URL can carry a token
       // in its userinfo or query string.

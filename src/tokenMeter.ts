@@ -41,6 +41,8 @@ interface Ledger {
 interface StoredUsage {
   metrics: Ledger;
   traces: Ledger;
+  /** Copilot-harness (Agent Host) model calls seen in no Local-harness source. */
+  harness: Ledger;
   manual: Ledger;
   credits: number;
   legacyTokens: number;
@@ -51,7 +53,11 @@ function ledger(value?: Partial<Ledger>): Ledger {
   return { input: sane(value?.input), output: sane(value?.output), requests: sane(value?.requests) };
 }
 
-/** Metrics and spans describe overlapping calls. Never add them or rebase on idle. */
+/**
+ * Metrics and Local-harness spans describe overlapping calls: never add them or
+ * rebase on idle. Copilot-harness calls never reach the Local metric feed, so
+ * their ledger is added to the reconciled Local figure rather than hidden by it.
+ */
 export class TokenMeter implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<UsageSnapshot>();
   readonly onDidChange = this._onDidChange.event;
@@ -76,7 +82,8 @@ export class TokenMeter implements vscode.Disposable {
         sane(old.manual?.input) + sane(old.manual?.output)
       : 0;
     this.state = {
-      metrics: ledger(stored?.metrics), traces: ledger(stored?.traces), manual: ledger(stored?.manual),
+      metrics: ledger(stored?.metrics), traces: ledger(stored?.traces), harness: ledger(stored?.harness),
+      manual: ledger(stored?.manual),
       credits: stored?.credits ?? 0,
       legacyTokens: stored?.legacyTokens ?? legacyTokens,
       since: stored?.since ?? Date.now()
@@ -102,7 +109,8 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get source(): UsageSource {
-    return this.state.metrics.input + this.state.metrics.output + this.state.traces.input + this.state.traces.output > 0
+    const { metrics, traces, harness } = this.state;
+    return metrics.input + metrics.output + traces.input + traces.output + harness.input + harness.output > 0
       ? 'otel' : 'none';
   }
 
@@ -133,13 +141,13 @@ export class TokenMeter implements vscode.Disposable {
   }
 
   get countedTotal(): number {
-    const { metrics, traces, manual } = this.state;
-    return (this.config.get<boolean>('countInputTokens', true) ? Math.max(metrics.input, traces.input) + manual.input : 0) +
-      (this.config.get<boolean>('countOutputTokens', true) ? Math.max(metrics.output, traces.output) + manual.output : 0);
+    const { metrics, traces, harness, manual } = this.state;
+    return (this.config.get<boolean>('countInputTokens', true) ? Math.max(metrics.input, traces.input) + harness.input + manual.input : 0) +
+      (this.config.get<boolean>('countOutputTokens', true) ? Math.max(metrics.output, traces.output) + harness.output + manual.output : 0);
   }
 
   snapshot(): UsageSnapshot {
-    const { metrics, traces, manual } = this.state;
+    const { metrics, traces, harness, manual } = this.state;
     const context = this.liveContext;
     const account = this.liveAccount;
     const total = this.countedTotal;
@@ -148,10 +156,10 @@ export class TokenMeter implements vscode.Disposable {
       : account ? clamp(account.percentRemaining / 100, 0, 1)
         : budget > 0 ? clamp(1 - total / budget, 0, 1) : 1;
     return {
-      input: Math.max(metrics.input, traces.input) + manual.input,
-      output: Math.max(metrics.output, traces.output) + manual.output,
+      input: Math.max(metrics.input, traces.input) + harness.input + manual.input,
+      output: Math.max(metrics.output, traces.output) + harness.output + manual.output,
       total, budget, health,
-      requests: traces.requests + manual.requests,
+      requests: traces.requests + harness.requests + manual.requests,
       credits: this.state.credits,
       manualTokens: manual.input + manual.output,
       legacyTokens: this.state.legacyTokens,
@@ -199,16 +207,43 @@ export class TokenMeter implements vscode.Disposable {
     }
   }
 
-  observe(from: 'otel' | 'traces', input: number, output: number, requests: boolean | number = true): void {
-    if (!this.config.get<boolean>('otel.enabled', true) || !this.config.get<boolean>('otel.authoritative', true)) {
-      return;
+  /** Returns whether the usage was accepted; display-only or disabled telemetry rejects it. */
+  observe(from: 'otel' | 'traces' | 'harness', input: number, output: number, requests: boolean | number = true): boolean {
+    if (!this.accepting) {
+      return false;
     }
-    const target = from === 'traces' ? this.state.traces : this.state.metrics;
+    const target = from === 'traces' ? this.state.traces : from === 'harness' ? this.state.harness : this.state.metrics;
     target.input += sane(input);
     target.output += sane(output);
     target.requests += sane(typeof requests === 'boolean' ? Number(requests) : requests);
     this.persist();
     this.publish();
+    return true;
+  }
+
+  private get accepting(): boolean {
+    return this.config.get<boolean>('otel.enabled', true) && this.config.get<boolean>('otel.authoritative', true);
+  }
+
+  /**
+   * Moves usage first charged to the harness ledger to `traces`, once a Local
+   * source has also recorded those calls, so the metrics/traces `max()`
+   * reconciles them instead of counting them twice. Returns whether it was
+   * applied, so a rejected move can be retried.
+   */
+  moveHarnessToTraces(input: number, output: number, requests: number): boolean {
+    if (!this.accepting) {
+      return false;
+    }
+    const { harness, traces } = this.state;
+    for (const [key, amount] of [['input', input], ['output', output], ['requests', requests]] as const) {
+      const value = sane(amount);
+      harness[key] = Math.max(0, harness[key] - value);
+      traces[key] += value;
+    }
+    this.persist();
+    this.publish();
+    return true;
   }
 
   /** Refreshes context expiry and publishes when the gauge basis changes. */

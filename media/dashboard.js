@@ -980,7 +980,11 @@
 
   function renderProvenance(feed) {
     const parts = [];
-    parts.push(feed.sqliteActive ? 'spans: local trace store / file feed' : 'spans: file feed when serialized');
+    parts.push(
+      feed.agentHostActive
+        ? 'spans: local trace stores, including the Copilot harness / file feed'
+        : feed.sqliteActive ? 'spans: local trace store / file feed' : 'spans: file feed when serialized'
+    );
     parts.push(feed.jsonlActive ? 'metrics + events: file feed' : 'metrics + events: unavailable');
     parts.push('last record ' + ago(feed.lastRecordAtMs));
     parts.push(

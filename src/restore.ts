@@ -1,5 +1,6 @@
 import * as path from 'path';
 import type * as vscode from 'vscode';
+import { AGENT_HOST_DB_KEY, AGENT_HOST_SECTION } from './agentHost';
 
 /**
  * Undoing what Bear in Mind changed: the Copilot Chat telemetry settings the
@@ -9,8 +10,23 @@ import type * as vscode from 'vscode';
 
 export const BACKUP_KEY = 'iceberg.copilotSettingsBackup.v1';
 
+export const COPILOT_OTEL_SECTION = 'github.copilot.chat.otel';
+
 /** Copilot Chat OTel keys the connect command may write, relative to `github.copilot.chat.otel`. */
 export const CONNECT_KEYS = ['enabled', 'dbSpanExporter.enabled', 'dbSpanExporter', 'outfile', 'exporterType', 'captureIdentity'] as const;
+
+/** Backup keys for VS Code Agent Host (Copilot harness) settings carry this prefix. */
+export const AGENT_HOST_BACKUP_PREFIX = 'agentHost:';
+
+/** Agent Host OTel keys the connect command may write, as recorded in the backup. */
+export const AGENT_HOST_CONNECT_KEYS = [`${AGENT_HOST_BACKUP_PREFIX}${AGENT_HOST_DB_KEY}`] as const;
+
+/** The configuration section and key a backup entry refers to. */
+export function settingLocation(key: string): { section: string; key: string } {
+  return key.startsWith(AGENT_HOST_BACKUP_PREFIX)
+    ? { section: AGENT_HOST_SECTION, key: key.slice(AGENT_HOST_BACKUP_PREFIX.length) }
+    : { section: COPILOT_OTEL_SECTION, key };
+}
 
 /** The user-scope value a Copilot setting held before Bear in Mind first wrote it. */
 export interface BackupEntry {
@@ -45,7 +61,7 @@ export type RestoreAction =
   | { key: string; kind: 'keep'; reason: string };
 
 export interface CopilotRestoreInput {
-  /** Current user-scope values, keyed like `CONNECT_KEYS`; `undefined` means not set. */
+  /** Current user-scope values, keyed like `CONNECT_KEYS` and `AGENT_HOST_CONNECT_KEYS`; `undefined` means not set. */
   current: Record<string, unknown>;
   backup: SettingsBackup | undefined;
   /** Feed files Bear in Mind points Copilot at: its default path and any `iceberg.otel.feedPath`. */
@@ -154,7 +170,8 @@ export function contributedSettings(packageJSON: unknown): string[] {
 }
 
 export function describeAction(section: string, action: RestoreAction): string {
-  const name = `${section}.${action.key}`;
+  const where = settingLocation(action.key);
+  const name = action.key.startsWith(AGENT_HOST_BACKUP_PREFIX) ? `${where.section}.${where.key}` : `${section}.${action.key}`;
   switch (action.kind) {
     case 'restore':
       return `${name} → ${JSON.stringify(action.value)} (your previous value)`;
