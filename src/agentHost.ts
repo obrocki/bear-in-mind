@@ -12,12 +12,15 @@ export const AGENT_HOST_DB_KEY = 'dbSpanExporter.enabled';
 
 /**
  * `<userData>/agent-host/otel/agent-host-traces.db`. Extension global storage is
- * `<userData>/User/globalStorage/<extension>`, so this follows portable and
- * custom `--user-data-dir` installs without guessing a product folder.
+ * `<userData>/User/globalStorage/<extension>`, or
+ * `<userData>/User/profiles/<id>/globalStorage/<extension>` in a named profile,
+ * so this follows portable and custom `--user-data-dir` installs without
+ * guessing a product folder. The Agent Host store is shared by all profiles.
  */
 export function agentHostTracesDbPath(globalStorageFsPath: string): string {
-  const userData = path.dirname(path.dirname(path.dirname(globalStorageFsPath)));
-  return path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db');
+  const profile = path.dirname(path.dirname(globalStorageFsPath));
+  const user = path.basename(path.dirname(profile)) === 'profiles' ? path.dirname(path.dirname(profile)) : profile;
+  return path.join(path.dirname(user), 'agent-host', 'otel', 'agent-host-traces.db');
 }
 
 export interface AgentHostExporter {

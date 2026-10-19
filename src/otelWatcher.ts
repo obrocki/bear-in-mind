@@ -67,11 +67,16 @@ export interface OtelUsageDelta {
   requests: number;
   /** `harness`: Copilot-harness calls seen only in the Agent Host store. */
   source?: 'traces' | 'harness';
+  /**
+   * Usage already charged to the harness ledger whose call a Local source has
+   * since recorded: move it to `traces` rather than adding it again.
+   */
+  fromHarness?: true;
 }
 
 interface TraceAccounting {
   since: number;
-  /** `harness` is fixed when a call is first charged, so later growth stays in the same ledger. */
+  /** `harness` marks calls charged to the harness ledger while no Local source had them. */
   seen: Record<string, { input: number; output: number; at: number; harness?: true }>;
 }
 
@@ -707,6 +712,7 @@ export class OtelWatcher implements vscode.Disposable {
   private emitSpanDelta(spans: Iterable<UsageSpan>, harnessOnly: ReadonlySet<string> = new Set()): void {
     const traces: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces' };
     const harness: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'harness' };
+    const moved: OtelUsageDelta = { input: 0, output: 0, requests: 0, source: 'traces', fromHarness: true };
     const seen = this.traceAccounting.seen;
     const cutoff = Date.now() - SPAN_WINDOW_MS;
     for (const [id, previous] of Object.entries(seen)) {
@@ -725,7 +731,14 @@ export class OtelWatcher implements vscode.Disposable {
         this.note('The trace accounting limit (50,000 calls) was reached; new calls are not metered.');
         continue;
       }
-      const isHarness = previous ? previous.harness === true : harnessOnly.has(span.id);
+      // A call charged as harness-only that a Local source now also records
+      // overlaps the Local metric feed: its charge moves to the traces ledger.
+      if (previous?.harness && !harnessOnly.has(span.id)) {
+        moved.input += previous.input;
+        moved.output += previous.output;
+        moved.requests++;
+      }
+      const isHarness = harnessOnly.has(span.id) && (!previous || previous.harness === true);
       const delta = isHarness ? harness : traces;
       const input = Math.max(previous?.input ?? 0, span.input ?? 0);
       const output = Math.max(previous?.output ?? 0, span.output ?? 0);
@@ -738,7 +751,7 @@ export class OtelWatcher implements vscode.Disposable {
       seen[span.id] = isHarness ? { input, output, at: span.start, harness: true } : { input, output, at: span.start };
     }
     let changed = false;
-    for (const delta of [traces, harness]) {
+    for (const delta of [moved, traces, harness]) {
       if (delta.input || delta.output || delta.requests) {
         this.onUsage(delta);
         changed = true;

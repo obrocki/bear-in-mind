@@ -89,7 +89,8 @@ dependencies; reload extensions in the app after editing. Its tests run with
   non-GenAI ancestors (the host's session anchor) pass through when classifying
   SDK invocation roots. Calls found only there never reach the Local metric
   feed: meter them in a separate ledger added after the metrics/traces `max()`,
-  and keep them out of drift. Read its semantic-convention aliases
+  and keep them out of drift. When a Local copy of such a call appears on a
+  later scan, move its charge from that ledger to `traces`. Read its semantic-convention aliases
   (`gen_ai.usage.cache_write.input_tokens`, reasoning as an attribute) by
   selection, never addition. Never turn on its DB mode where protobuf or gRPC
   traces would stop reaching a collector.

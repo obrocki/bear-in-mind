@@ -7,9 +7,12 @@ const { agentHostDbKeepsExporter, agentHostTracesDbPath } = require(path.join(pr
 
 it('locates the Agent Host trace store under VS Code user data, from extension global storage', () => {
   const userData = path.resolve('/portable/user-data');
+  const expected = path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db');
+  assert.equal(agentHostTracesDbPath(path.join(userData, 'User', 'globalStorage', 'obrocki.bear-in-mind')), expected);
   assert.equal(
-    agentHostTracesDbPath(path.join(userData, 'User', 'globalStorage', 'obrocki.bear-in-mind')),
-    path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db')
+    agentHostTracesDbPath(path.join(userData, 'User', 'profiles', '-6f2a1c', 'globalStorage', 'obrocki.bear-in-mind')),
+    expected,
+    'a named profile shares the user-data Agent Host store'
   );
 });
 

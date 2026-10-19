@@ -518,3 +518,57 @@ it('reads Copilot-harness spans from the Agent Host trace store, excluding other
   assert.equal(watcher.health().copilotOtelEnabled, true);
   assert.doesNotMatch(watcher.health().notes.join(' '), /agent-host-traces\.db/);
 });
+
+for (const order of ['agent host first', 'local first']) {
+  it(`meters a call recorded by both stores once when they arrive on separate scans (${order})`, (t) => {
+    let now = Date.UTC(2026, 9, 19, 12);
+    t.mock.method(Date, 'now', () => now);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-overlap-'));
+    const userData = path.join(dir, 'Code');
+    const store = new Map();
+    const context = {
+      globalStorageUri: { fsPath: path.join(userData, 'User', 'globalStorage', 'obrocki.bear-in-mind') },
+      globalState: { get: (key) => store.get(key), update: async (key, value) => store.set(key, structuredClone(value)) }
+    };
+    const localFile = path.join(dir, 'agent-traces.db');
+    globalThis.__BEAR_SETTINGS__ = { 'iceberg.otel.tracesDbPath': localFile };
+    const deltas = [];
+    const watcher = new OtelWatcher(context, (delta) => deltas.push(delta));
+    t.after(() => {
+      watcher.dispose();
+      fs.rmSync(dir, { recursive: true, force: true });
+      delete globalThis.__BEAR_SETTINGS__;
+    });
+    now += 2000;
+    const at = now - 1000;
+    const write = (file, input, output) => {
+      const { db, span } = agentHostStore(file);
+      span.run('root', 't1', null, 'invoke_agent', at, now, 0, 'invoke_agent', 'harness-1', null, null, null, null, null);
+      span.run('call', 't1', 'root', 'chat', at + 10, at + 500, 0, 'chat', 'harness-1', 'opus', input, output, 0, null);
+      if (file !== localFile) {
+        db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)').run('call', 'github.copilot.nano_aiu', '1000000000');
+      }
+      db.close();
+    };
+    const agentHostFile = path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db');
+    const [first, second] = order === 'local first' ? [localFile, agentHostFile] : [agentHostFile, localFile];
+
+    write(first, 100, 10);
+    watcher.scan();
+    now += 31_000; // past the path refresh interval
+    write(second, 100, 10);
+    watcher.scan();
+    watcher.scan();
+
+    if (order === 'local first') {
+      assert.deepEqual(deltas, [{ input: 100, output: 10, requests: 1, source: 'traces' }],
+        'a Local call stays in the reconciled ledger when the Agent Host copy appears');
+    } else {
+      assert.deepEqual(deltas, [
+        { input: 100, output: 10, requests: 1, source: 'harness' },
+        { input: 100, output: 10, requests: 1, source: 'traces', fromHarness: true }
+      ], 'the harness charge moves to traces once a Local source records the call');
+    }
+    assert.equal(watcher.spanDigest.chatCalls, 1);
+  });
+}

@@ -219,6 +219,25 @@ export class TokenMeter implements vscode.Disposable {
     this.publish();
   }
 
+  /**
+   * Moves usage first charged to the harness ledger to `traces`, once a Local
+   * source has also recorded those calls, so the metrics/traces `max()`
+   * reconciles them instead of counting them twice.
+   */
+  moveHarnessToTraces(input: number, output: number, requests: number): void {
+    if (!this.config.get<boolean>('otel.enabled', true) || !this.config.get<boolean>('otel.authoritative', true)) {
+      return;
+    }
+    const { harness, traces } = this.state;
+    for (const [key, amount] of [['input', input], ['output', output], ['requests', requests]] as const) {
+      const value = sane(amount);
+      harness[key] = Math.max(0, harness[key] - value);
+      traces[key] += value;
+    }
+    this.persist();
+    this.publish();
+  }
+
   /** Refreshes context expiry and publishes when the gauge basis changes. */
   refreshBasis(): void {
     if (this.lastBasis !== this.basis) {

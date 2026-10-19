@@ -69,7 +69,9 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
 
   const otel = new OtelWatcher(
     storage,
-    (delta) => meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests),
+    (delta) => delta.fromHarness
+      ? meter.moveHarnessToTraces(delta.input, delta.output, delta.requests)
+      : meter.observe(delta.source ?? 'otel', delta.input, delta.output, delta.requests),
     log
   );
   context.subscriptions.push(otel);
