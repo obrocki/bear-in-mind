@@ -183,7 +183,7 @@ reconnect.
 
 ### Attributing usage to a user
 
-Copilot Chat can add your identity to its telemetry
+The Local chat harness can add your identity to its telemetry
 (`github.copilot.chat.otel.captureIdentity`, VS Code 1.140+). It is off by
 default, so after you pick a source, Connect asks separately whether to turn it
 on. When on, agent invocation spans carry `user.name` (your GitHub account) and
@@ -205,10 +205,12 @@ Identity capture also reaches an OTLP collector that stays connected, and the
 prompt says so. If replacing a collector fails, Connect leaves identity capture
 off. `COPILOT_OTEL_CAPTURE_IDENTITY` outranks the setting, so when it is set
 Connect does not offer the choice. An organisation policy
-(`CopilotOtelCaptureIdentity`) overrides both, and identity currently covers
-only the Local chat harness, not the Copilot harness. **Iceberg: Telemetry
-Diagnostics** shows whether capture is requested and how many retained calls
-are attributed to a user.
+(`CopilotOtelCaptureIdentity`) overrides both for the Local harness. Copilot
+harness sessions use the separate Agent Host telemetry pipeline; their identity
+is captured only through managed `telemetry.capture.identity`. This extension
+does not yet read Agent Host telemetry. **Iceberg: Telemetry Diagnostics** shows
+whether Local-harness capture is requested and how many retained calls are
+attributed to a user.
 
 ### Disconnecting and restoring defaults
 

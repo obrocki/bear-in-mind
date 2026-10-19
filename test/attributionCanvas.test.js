@@ -82,10 +82,17 @@ it('ROI model separates locally measured work links from return and baseline', (
 it('research opens with the agreed executive summary and removes the requested scope paragraph', () => {
   const research = fs.readFileSync(path.join(extensionDir, '..', '..', '..', 'docs', 'research', 'ai-telemetry-attribution.md'), 'utf8');
   assert.match(research, /## Executive summary/);
+  assert.match(research, /Last updated 19 October 2026/);
   assert.match(research, /Decision: proceed with source-aware usage and attribution measurement/);
   assert.match(research, /What remains before ROI/);
   assert.doesNotMatch(research, /^Scope: VS Code/m);
   assert.doesNotMatch(research, /Earlier work reviewed: Bear in Mind/);
+});
+
+it('README explains managed Copilot-harness identity and Agent Host read limitation', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', 'README.md'), 'utf8');
+  assert.match(readme, /identity\s+is captured only through managed `telemetry\.capture\.identity`/);
+  assert.match(readme, /does not yet read Agent Host telemetry/);
 });
 
 it('model distinguishes organisation aggregates, self-reported completion and billing scope', () => {
@@ -107,6 +114,22 @@ it('model distinguishes organisation aggregates, self-reported completion and bi
   assert.deepEqual([...new Set(actor.fieldProvenance.map((p) => p.kind))].sort(), ['configured', 'derived', 'enriched', 'native']);
   assert.equal(actor.fieldProvenance.find((p) => p.field === 'actor_key').kind, 'derived');
   assert.match(actor.fieldProvenance.find((p) => p.kind === 'configured').conditions, /not automatically emitted/);
+});
+
+it('refreshed model records preview cloud usage, harness identity and usage-metric gaps', () => {
+  const concepts = Object.fromEntries(model.concepts.map((c) => [c.id, c]));
+  assert.equal(model.updated, '2026-10-19');
+  assert.equal(concepts.credits.surfaces.cloud.availability, 'native');
+  assert.match(concepts.credits.surfaces.cloud.field, /sessions\[\]\.usage\.type and amount/);
+  assert.match(concepts.credits.surfaces.cloud.note, /public preview/i);
+  assert.match(concepts.tokens.otel, /gen_ai\.client\.inference\.usage/);
+  assert.match(concepts.tokens.surfaces.vscode.field, /cache_creation\.input_tokens/);
+  assert.match(concepts.tokens.surfaces.vscode.note, /subsets/);
+  assert.match(concepts.actor.surfaces.vscode.note, /telemetry\.capture\.identity/);
+  assert.match(concepts.actor.surfaces.vscode.note, /does not read Agent Host telemetry/);
+  assert.ok(model.gaps.some((gap) => gap.id === 'usage-metrics-agent-undercount'));
+  assert.ok(model.verification.some((v) => v.claim === 'Agent Tasks REST per-session cloud-agent usage'));
+  assert.ok(model.verification.some((v) => v.claim === 'GenAI inference token metric breakdown'));
 });
 
 it('intersection includes only verified availability across every surface', async () => {
