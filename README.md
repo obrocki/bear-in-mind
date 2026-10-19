@@ -19,15 +19,13 @@ change your bill**, including on unlimited plans.
 
 ### VS Code Marketplace
 
-Once the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=obrocki.bear-in-mind)
-is available, search for **Bear in Mind — Copilot Token Meter** by **obrocki** in
-VS Code's Extensions view, or run:
+Install from the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=obrocki.bear-in-mind):
+search for **Bear in Mind — Copilot Token Meter** by **obrocki** in VS Code's
+Extensions view, or run:
 
 ```bash
 code --install-extension obrocki.bear-in-mind
 ```
-
-If the listing is not available yet, install the VSIX below.
 
 ### VSIX
 
@@ -35,7 +33,7 @@ Download a `.vsix` from [Releases](https://github.com/obrocki/bear-in-mind/relea
 then run:
 
 ```bash
-code --install-extension bear-in-mind-0.6.5.vsix
+code --install-extension bear-in-mind-0.7.0.vsix
 ```
 
 Use the downloaded filename if it differs. Open the Iceberg activity-bar icon.

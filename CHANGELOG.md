@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0
+
 - Refreshed the attribution research and canvas model to 19 October 2026:
   per-session cloud agent AI credits (Agent Tasks REST, preview), VS Code's
   Copilot-harness Agent Host telemetry, managed OTel identity capture, the
@@ -9,7 +11,8 @@
   changes. Local measurements were re-run, and the research preamble is now a
   last-updated date.
 - README: Copilot-harness sessions get identity only through managed
-  `telemetry.capture.identity`.
+  `telemetry.capture.identity`. The Marketplace listing is live, so the install
+  section no longer treats it as pending.
 - Copilot-harness chats (VS Code 1.141+) are now metered. Bear in Mind reads
   the Agent Host trace store (`agent-host-traces.db`), using only Copilot runtime
   traces, merged by span ID. Calls only the Agent Host recorded go to their own
