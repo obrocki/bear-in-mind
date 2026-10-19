@@ -828,3 +828,75 @@ it('canvas does not link a different native chat through a shared conversation o
   assert.equal(result.totals.cacheWriteTokens, 0);
   assert.equal(result.tokenCoverage.cacheWriteTokens.reportedCalls, 1);
 });
+
+it('Copilot harness: reads only Copilot runtime traces from agent-host-traces.db, with per-turn credits', async (t) => {
+  const { DatabaseSync } = require('node:sqlite');
+  const { computeCoverage, findAgentHostTracesDb, vscodeUserDataDirs } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const now = Date.UTC(2026, 9, 19, 12);
+  const stable = path.join(dir, 'Code');
+  const insiders = path.join(dir, 'Code - Insiders');
+  const file = path.join(insiders, 'agent-host', 'otel', 'agent-host-traces.db');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE spans (span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_span_id TEXT, start_time_ms INTEGER,
+      operation_name TEXT, conversation_id TEXT, response_model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+      cached_tokens INTEGER, tool_name TEXT, status_code INTEGER);
+    CREATE TABLE span_attributes (span_id TEXT, key TEXT, value TEXT);
+  `);
+  const span = db.prepare('INSERT INTO spans VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  span.run('root', 't1', null, now - 2000, 'invoke_agent', 'harness-1', null, null, null, null, null, 0);
+  attr.run('root', 'github.copilot.nano_aiu', '5000000000');
+  attr.run('root', 'github.copilot.git.repository', 'o/harness');
+  span.run('c1', 't1', 'root', now - 1900, 'chat', 'harness-1', 'opus', 100, 10, 50, null, 0);
+  attr.run('c1', 'github.copilot.nano_aiu', '2000000000');
+  attr.run('c1', 'gen_ai.usage.cache_write.input_tokens', '7');
+  attr.run('c1', 'gen_ai.usage.reasoning.output_tokens', '5');
+  attr.run('c1', 'gen_ai.request.reasoning.level', 'Medium');
+  span.run('c2', 't1', 'root', now - 1800, 'chat', 'harness-1', 'opus', 200, 20, 150, null, 0);
+  attr.run('c2', 'github.copilot.nano_aiu', '3000000000');
+  span.run('tool', 't1', 'root', now - 1700, 'execute_tool', 'harness-1', null, null, null, null, 'view', 1);
+  span.run('claude', 't2', null, now - 1500, 'chat', 'claude-1', 'sonnet', 900, 90, 0, null, 0);
+  span.run('claude-tool', 't2', null, now - 1400, 'execute_tool', 'claude-1', null, null, null, null, 'Bash', 2);
+  db.close();
+
+  assert.equal(findAgentHostTracesDb(vscodeUserDataDirs({ platform: 'linux', env: { XDG_CONFIG_HOME: dir }, home: dir })), file);
+  assert.equal(findAgentHostTracesDb([stable]), undefined);
+
+  const coverage = await computeCoverage({
+    windowDays: 7,
+    now,
+    sessionStorePath: path.join(dir, 'none.db'),
+    tracesDbPath: path.join(dir, 'none.db'),
+    agentHostTracesDbPath: file,
+  });
+  const harness = coverage.sources.find((s) => s.id === 'agentHost');
+  assert.equal(harness.status, 'ok');
+  assert.deepEqual(harness.surfaces, ['vscode']);
+  assert.equal(harness.totals.calls, 2, 'the Claude harness call is excluded');
+  assert.equal(harness.totals.credits, 5, 'per-turn chat credits, without adding the root invocation total');
+  assert.equal(harness.metrics.creditCoverage, 1);
+  assert.equal(harness.metrics.creditsToRepoShare, 1);
+  assert.equal(harness.totals.cacheWriteTokens, 7, 'semconv cache_write name');
+  assert.equal(harness.totals.reasoningTokens, 5, 'reasoning from the attribute when the column is empty');
+  assert.equal(harness.tokenCoverage.reasoningTokens.reportedCalls, 1);
+  assert.deepEqual(harness.breakdowns.reasoningEffort.map((r) => [r.key, r.calls]), [['(none)', 1], ['medium', 1]]);
+  assert.deepEqual(harness.tools, [{ key: 'view', calls: 1, statusCalls: 1, failed: 0 }]);
+  assert.match(harness.notes.join(' '), /Claude and Codex Agent Host sessions are excluded/);
+  assert.match(harness.notes.join(' '), /telemetry\.capture\.identity/);
+
+  const absent = await computeCoverage({
+    windowDays: 7,
+    now,
+    sessionStorePath: path.join(dir, 'none.db'),
+    tracesDbPath: path.join(dir, 'none.db'),
+    platform: 'linux',
+    env: { XDG_CONFIG_HOME: path.join(dir, 'empty') },
+    home: dir,
+  });
+  const missing = absent.sources.find((s) => s.id === 'agentHost');
+  assert.equal(missing.status, 'missing');
+  assert.match(missing.reason, /chat\.agentHost\.otel\.dbSpanExporter\.enabled/);
+});

@@ -412,3 +412,109 @@ it('reads SDK ancestry, analytics identity, cache creation and first-chunk timin
   assert.equal(digest.byEffort[0].key, 'high');
   assert.deepEqual(deltas, [{ input: 100, output: 10, requests: 1, source: 'traces' }], 'only the model call is metered');
 });
+
+function agentHostStore(file) {
+  const { DatabaseSync } = require('node:sqlite');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  // The platform OTelSqliteStore schema, shared by agent-traces.db and agent-host-traces.db.
+  db.exec(`
+    CREATE TABLE spans (
+      span_id TEXT PRIMARY KEY, trace_id TEXT NOT NULL, parent_span_id TEXT, name TEXT NOT NULL,
+      start_time_ms INTEGER NOT NULL, end_time_ms INTEGER NOT NULL, status_code INTEGER NOT NULL DEFAULT 0,
+      status_message TEXT, operation_name TEXT, provider_name TEXT, agent_name TEXT, conversation_id TEXT,
+      request_model TEXT, response_model TEXT, input_tokens INTEGER, output_tokens INTEGER, cached_tokens INTEGER,
+      reasoning_tokens INTEGER, tool_name TEXT, tool_call_id TEXT, tool_type TEXT, chat_session_id TEXT,
+      turn_index INTEGER, ttft_ms REAL
+    );
+    CREATE TABLE span_attributes (span_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY (span_id, key));
+  `);
+  const span = db.prepare(`INSERT INTO spans (span_id, trace_id, parent_span_id, name, start_time_ms, end_time_ms,
+    status_code, operation_name, conversation_id, response_model, input_tokens, output_tokens, cached_tokens, tool_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const attr = db.prepare('INSERT INTO span_attributes VALUES (?, ?, ?)');
+  return { db, span, attr };
+}
+
+it('reads Copilot-harness spans from the Agent Host trace store, excluding other harnesses and duplicates', (t) => {
+  let now = Date.UTC(2026, 9, 19, 12);
+  t.mock.method(Date, 'now', () => now);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-agent-host-'));
+  const userData = path.join(dir, 'Code');
+  const store = new Map();
+  const context = {
+    globalStorageUri: { fsPath: path.join(userData, 'User', 'globalStorage', 'obrocki.bear-in-mind') },
+    globalState: { get: (key) => store.get(key), update: async (key, value) => store.set(key, structuredClone(value)) }
+  };
+  globalThis.__BEAR_SETTINGS__ = { 'chat.agentHost.otel.dbSpanExporter.enabled:default': false };
+  const deltas = [];
+  const watcher = new OtelWatcher(context, (delta) => deltas.push(delta));
+  t.after(() => {
+    watcher.dispose();
+    fs.rmSync(dir, { recursive: true, force: true });
+    delete globalThis.__BEAR_SETTINGS__;
+  });
+
+  watcher.scan();
+  assert.equal(watcher.health().agentHostPath, undefined);
+  assert.match(watcher.health().notes.join(' '), /chat\.agentHost\.otel\.dbSpanExporter\.enabled is on\. Connect can turn it on/);
+
+  now += 2000;
+  const file = path.join(userData, 'agent-host', 'otel', 'agent-host-traces.db');
+  const { db, span, attr } = agentHostStore(file);
+  const at = now - 1000;
+  // The host's session anchor carries no GenAI operation; the runtime's invocation root sits under it.
+  span.run('anchor', 't1', null, 'vscode.agent_host.session', at, at, 0, null, null, null, null, null, null, null);
+  span.run('root', 't1', 'anchor', 'invoke_agent', at, now, 0, 'invoke_agent', 'harness-1', null, null, null, null, null);
+  attr.run('root', 'github.copilot.nano_aiu', '3000000000');
+  attr.run('root', 'enduser.pseudo.id', 'pseudo');
+  span.run('call', 't1', 'root', 'chat', at + 10, at + 500, 0, 'chat', 'harness-1', 'opus', 400, 40, 100, null);
+  attr.run('call', 'github.copilot.nano_aiu', '3000000000');
+  attr.run('call', 'github.copilot.cost', '1');
+  span.run('tool', 't1', 'root', 'execute_tool', at + 600, at + 700, 1, 'execute_tool', 'harness-1', null, null, null, null, 'view');
+  // Recorded only by the Agent Host, with the semantic-convention cache-write and reasoning names it emits.
+  span.run('call-2', 't1', 'root', 'chat', at + 800, at + 900, 0, 'chat', 'harness-1', 'opus', 600, 60, 500, null);
+  attr.run('call-2', 'github.copilot.nano_aiu', '1000000000');
+  attr.run('call-2', 'gen_ai.usage.cache_write.input_tokens', '0');
+  attr.run('call-2', 'gen_ai.usage.reasoning.output_tokens', '12');
+  // A Claude harness session in the same store: no github.copilot.* anywhere in its trace.
+  span.run('claude-root', 't2', null, 'invoke_agent', at, now, 0, 'invoke_agent', 'claude-1', null, null, null, null, null);
+  span.run('claude-call', 't2', 'claude-root', 'chat', at + 10, at + 500, 0, 'chat', 'claude-1', 'sonnet', 999, 99, 0, null);
+  span.run('claude-tool', 't2', 'claude-root', 'execute_tool', at + 600, at + 700, 2, 'execute_tool', 'claude-1', null, null, null, null, 'Bash');
+  db.close();
+
+  // The same model call also reached the Local store: it counts once.
+  const local = agentHostStore(path.join(dir, 'agent-traces.db'));
+  local.span.run('call', 't1', 'root', 'chat', at + 10, at + 500, 0, 'chat', 'harness-1', 'opus', 400, 40, 100, null);
+  local.db.close();
+  globalThis.__BEAR_SETTINGS__['iceberg.otel.tracesDbPath'] = path.join(dir, 'agent-traces.db');
+  now += 31_000; // past the path refresh interval
+  watcher.scan();
+
+  const digest = watcher.spanDigest;
+  assert.equal(digest.chatCalls, 2, 'the Claude call and the duplicate are excluded');
+  assert.equal(digest.inputTokens, 1000);
+  assert.equal(digest.tokenCoverage.cacheWriteTokens.reportedCalls, 1, 'a reported zero under the semconv name counts');
+  assert.equal(digest.reasoningTokens, 12);
+  assert.equal(digest.sessions.length, 1);
+  assert.equal(digest.sessions[0].sessionId, 'harness-1');
+  assert.equal(digest.sdkCredits.invocations, 1, 'the host anchor does not hide the invocation root');
+  assert.equal(digest.sdkCredits.unclassifiedInvocations, 0);
+  assert.equal(digest.sdkCredits.credits, 3);
+  assert.equal(digest.credits, 0, 'runtime nano_aiu is not promoted to VS Code per-call credits');
+  assert.equal(digest.byActorId[0].key, 'pseudo');
+  assert.equal(digest.toolStatusCalls, 1);
+  assert.equal(digest.toolFailures, 0);
+  assert.deepEqual(deltas, [
+    { input: 400, output: 40, requests: 1, source: 'traces' },
+    { input: 600, output: 60, requests: 1, source: 'harness' }
+  ], 'a call the Local store also recorded reconciles with it; an Agent Host-only call is metered apart');
+
+  const health = watcher.health();
+  assert.equal(health.agentHostPath, file);
+  assert.equal(health.agentHostActive, true);
+  assert.equal(health.sqliteActive, true);
+  globalThis.__BEAR_SETTINGS__['chat.agentHost.otel.dbSpanExporter.enabled'] = true;
+  assert.equal(watcher.health().copilotOtelEnabled, true);
+  assert.doesNotMatch(watcher.health().notes.join(' '), /agent-host-traces\.db/);
+});

@@ -18,6 +18,7 @@ then press `F5` for an Extension Development Host.
 | `src/api.ts`, `src/extension.ts` | Public contract, shared reporting adapter, activation and commands. |
 | `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
+| `src/agentHost.ts` | VS Code Agent Host (Copilot harness) store location and the connect decision for its DB mode. |
 | `src/accountUsage.ts`, `src/sqlite.ts` | Authenticated GitHub quota lookup and shared runtime read-only SQLite support. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
 | `.github/extensions/ai-attribution/lib/tokenCoverage.cjs` / `.d.cts` | Shared token reporting/paired-count logic, bundled into the typed extension and used directly by the build-free canvas. |
@@ -82,6 +83,16 @@ dependencies; reload extensions in the app after editing. Its tests run with
   `process.user.name` or `host.name`, which are a device, not an account. Leave
   unlinked calls as *no user identity* rather than guessing.
   Select optional `agent-traces.db` columns defensively; older stores lack them.
+- `agent-host-traces.db` (VS Code Agent Host, Copilot harness) shares the trace
+  store schema but also holds Claude and Codex traces. Read only traces with a
+  `github.copilot.*` attribute, merge by span ID with the other sources, and let
+  non-GenAI ancestors (the host's session anchor) pass through when classifying
+  SDK invocation roots. Calls found only there never reach the Local metric
+  feed: meter them in a separate ledger added after the metrics/traces `max()`,
+  and keep them out of drift. Read its semantic-convention aliases
+  (`gen_ai.usage.cache_write.input_tokens`, reasoning as an attribute) by
+  selection, never addition. Never turn on its DB mode where protobuf or gRPC
+  traces would stop reaching a collector.
 - Repository and actor correlation use time-appropriate session, conversation,
   parent-session or trace context; conflicting native chat IDs cannot inherit
   through a shared weak key. Trace-only links never create sessions.

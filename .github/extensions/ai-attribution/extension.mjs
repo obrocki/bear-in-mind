@@ -19,7 +19,12 @@ const instances = new Map();
 const coverageCache = new Map();
 
 function coverageKey(options) {
-  return JSON.stringify([options.windowDays, options.sessionStorePath ?? '', options.tracesDbPath ?? '']);
+  return JSON.stringify([
+    options.windowDays,
+    options.sessionStorePath ?? '',
+    options.tracesDbPath ?? '',
+    options.agentHostTracesDbPath ?? '',
+  ]);
 }
 
 async function coverageFor(options, { refresh = false } = {}) {
@@ -55,6 +60,8 @@ function summarize(coverage) {
   };
 }
 
+const SOURCE_NAMES = { sessionStore: 'CLI/app', traces: 'VS Code', agentHost: 'VS Code Copilot harness' };
+
 function statusLine(coverage) {
   const window = coverage.window.days ? `${coverage.window.days}-day window` : 'All history';
   const pct = (share) => Math.round(share * 100);
@@ -62,7 +69,7 @@ function statusLine(coverage) {
     .filter((s) => s.status === 'ok' && s.metrics.creditsToRepoShare !== null)
     .map(
       (s) =>
-        `${s.id === 'traces' ? 'VS Code' : 'CLI/app'} ${pct(s.metrics.creditsToRepoShare)}% repo` +
+        `${SOURCE_NAMES[s.id] ?? s.label} ${pct(s.metrics.creditsToRepoShare)}% repo` +
         (s.metrics.creditsToActorShare != null ? `, ${pct(s.metrics.creditsToActorShare)}% user` : ''),
     );
   return [window, ...parts].join(' · ');
@@ -110,6 +117,7 @@ async function openInstance(ctx) {
   if (input.windowDays !== undefined) options.windowDays = clampWindow(input.windowDays);
   if (input.sessionStorePath !== undefined) options.sessionStorePath = input.sessionStorePath || undefined;
   if (input.tracesDbPath !== undefined) options.tracesDbPath = input.tracesDbPath || undefined;
+  if (input.agentHostTracesDbPath !== undefined) options.agentHostTracesDbPath = input.agentHostTracesDbPath || undefined;
   instance.options = options;
 
   // Every open recomputes, so a reopened panel never shows a stale snapshot;
@@ -145,6 +153,10 @@ await joinSession({
           },
           sessionStorePath: { type: 'string', description: 'Override for the Copilot CLI / app session-store.db.' },
           tracesDbPath: { type: 'string', description: "Override for VS Code's agent-traces.db." },
+          agentHostTracesDbPath: {
+            type: 'string',
+            description: "Override for VS Code's Copilot-harness agent-host-traces.db.",
+          },
         },
       },
       actions: [

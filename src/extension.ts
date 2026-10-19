@@ -7,11 +7,15 @@ import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
+import { AGENT_HOST_DB_KEY, AGENT_HOST_SECTION, agentHostDbKeepsExporter } from './agentHost';
 import { identityCaptureOverride, OtelWatcher } from './otelWatcher';
 import { buildSnapshot, redactUrl, selectedSession, sessionComparisons, sessionLabel, type DashboardSnapshot, type SessionComparison } from './otelSummary';
 import {
+  AGENT_HOST_BACKUP_PREFIX,
+  AGENT_HOST_CONNECT_KEYS,
   BACKUP_KEY,
   CONNECT_KEYS,
+  COPILOT_OTEL_SECTION,
   RESET_KEY,
   SealableMemento,
   contributedSettings,
@@ -20,13 +24,14 @@ import {
   planCopilotRestore,
   planSettingsReset,
   recordBackup,
+  settingLocation,
   type SettingsBackup
 } from './restore';
 import { TokenMeter, type UsageSnapshot } from './tokenMeter';
 
 export type { IcebergApi, UsageReport, UsageSnapshot } from './api';
 
-const OTEL_SECTION = 'github.copilot.chat.otel';
+const OTEL_SECTION = COPILOT_OTEL_SECTION;
 
 export function activate(context: vscode.ExtensionContext): IcebergApi {
   const conflict = findConflictingInstall(context.extension);
@@ -99,7 +104,7 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       ) {
         watcher.reconfigure();
       }
-      if (e.affectsConfiguration('iceberg.otel') || e.affectsConfiguration(OTEL_SECTION)) {
+      if (e.affectsConfiguration('iceberg.otel') || e.affectsConfiguration(OTEL_SECTION) || e.affectsConfiguration(AGENT_HOST_SECTION)) {
         otel.reconfigure();
       }
       if (e.affectsConfiguration('iceberg.accountUsage')) {
@@ -315,7 +320,7 @@ async function connectTelemetry(
 
   const traceStore = {
     label: 'Local trace store',
-    detail: 'Cost and speed, with exact session timings. Runs alongside any collector you already use.',
+    detail: 'Cost and speed, with exact session timings, for Local and Copilot-harness chats. Runs alongside any collector you already use.',
     id: 'sqlite' as const
   };
   const fileFeed = {
@@ -512,6 +517,41 @@ async function connectTelemetry(
       output.appendLine(`[iceberg] could not set ${OTEL_SECTION}.${key}: ${String(err)}`);
     }
   }
+
+  // The Copilot harness (VS Code 1.141+) runs in the Agent Host, whose own
+  // pipeline never reaches agent-traces.db. Its trace store is additive too,
+  // except that protobuf and gRPC traces would stop reaching a collector.
+  let harness: 'on' | 'already' | 'collector' | undefined;
+  if (picked.id === 'sqlite' || picked.id === 'both') {
+    const agentHost = vscode.workspace.getConfiguration(AGENT_HOST_SECTION);
+    const known = agentHost.inspect(AGENT_HOST_DB_KEY);
+    const setting = `${AGENT_HOST_SECTION}.${AGENT_HOST_DB_KEY}`;
+    if (known?.defaultValue === undefined) {
+      output.appendLine(`[iceberg] ${setting} is not a setting in this VS Code build; Copilot-harness chats are not recorded.`);
+    } else if (agentHost.get<boolean>(AGENT_HOST_DB_KEY) === true) {
+      harness = 'already';
+    } else if (!agentHostDbKeepsExporter({
+      endpoint: agentHost.get<string>('otlpEndpoint') || process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+      exporterType: agentHost.get<string>('exporterType'),
+      protocol: agentHost.get<string>('otlpProtocol') || process.env.OTEL_EXPORTER_OTLP_PROTOCOL || process.env.COPILOT_OTEL_PROTOCOL
+    })) {
+      harness = 'collector';
+      output.appendLine(
+        `[iceberg] ${setting} was not turned on: the Agent Host exports traces over protobuf or gRPC, ` +
+          'and its trace store would keep them from your collector.'
+      );
+    } else {
+      try {
+        await agentHost.update(AGENT_HOST_DB_KEY, true, vscode.ConfigurationTarget.Global);
+        applied.push(setting);
+        backup = recordBackup(backup, `${AGENT_HOST_BACKUP_PREFIX}${AGENT_HOST_DB_KEY}`, known.globalValue, true);
+        harness = 'on';
+      } catch (err) {
+        failed.push(setting);
+        output.appendLine(`[iceberg] could not set ${setting}: ${String(err)}`);
+      }
+    }
+  }
   if (backup) {
     await globalState.update(BACKUP_KEY, backup);
   }
@@ -536,9 +576,17 @@ async function connectTelemetry(
     failed.length > 0
       ? ` (${failed.join(', ')} could not be set — see the Iceberg output channel)`
       : '';
+  // The Agent Host reads its settings only when it starts, and outlives window reloads.
+  const harnessNote =
+    harness === 'on'
+      ? ' Copilot-harness chats are recorded once the Agent Host restarts: quit and reopen VS Code, or run ' +
+        'Developer: Restart Local Agent Host, which interrupts running Copilot-harness chats.'
+      : harness === 'collector'
+        ? ' Copilot-harness chats are not recorded: their trace store would stop protobuf or gRPC traces reaching your collector.'
+        : '';
   const choice = await vscode.window.showInformationMessage(
     `Copilot telemetry connected${note}. Reload so Copilot Chat picks up the change, then send a chat ` +
-      'request to populate the dashboard.',
+      `request to populate the dashboard.${harnessNote}`,
     reload
   );
   if (choice === reload) {
@@ -569,7 +617,6 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
     return;
   }
 
-  const copilot = vscode.workspace.getConfiguration(OTEL_SECTION);
   const root = vscode.workspace.getConfiguration();
   const plan = () => {
     // Configuration objects are snapshots, so fetch fresh ones on every call.
@@ -578,6 +625,10 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
     const current: Record<string, unknown> = {};
     for (const key of CONNECT_KEYS) {
       current[key] = copilotNow.inspect(key)?.globalValue;
+    }
+    for (const key of AGENT_HOST_CONNECT_KEYS) {
+      const where = settingLocation(key);
+      current[key] = vscode.workspace.getConfiguration(where.section).inspect(where.key)?.globalValue;
     }
     const feedOverride = (vscode.workspace.getConfiguration('iceberg').get<string>('otel.feedPath', '') || '').trim();
     const copilotPlan = planCopilotRestore({
@@ -600,7 +651,7 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
   const { copilotChanges, copilotKept, userSettings, workspaceSettings } = confirmed;
 
   const detail = [
-    'Copilot Chat telemetry settings:',
+    'Copilot telemetry settings:',
     ...(copilotChanges.length > 0
       ? copilotChanges.map((action) => `  • ${describeAction(OTEL_SECTION, action)}`)
       : ['  • nothing to undo']),
@@ -612,7 +663,8 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
       'A custom iceberg.otel.feedPath file is kept. Other open windows stop saving and start fresh when reloaded.',
     'Account usage is disconnected until you explicitly refresh it again. VS Code\'s GitHub sign-in is kept.',
     '',
-    "Copilot's own trace store and transcripts are not touched. Reload the window afterwards so Copilot Chat applies the restored settings."
+    "Copilot's own trace stores and transcripts are not touched. Reload the window afterwards so Copilot Chat applies the restored settings; " +
+      'the Agent Host applies them when it next restarts.'
   ].join('\n');
 
   const confirm = 'Restore and Disconnect';
@@ -650,12 +702,14 @@ async function restoreDefaults({ context, otel, watcher, account, globalState, w
 
   const failed: string[] = [];
   for (const action of copilotChanges) {
+    const where = settingLocation(action.key);
     try {
-      await copilot.update(action.key, action.kind === 'restore' ? action.value : undefined, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration(where.section)
+        .update(where.key, action.kind === 'restore' ? action.value : undefined, vscode.ConfigurationTarget.Global);
       output.appendLine(`  ${describeAction(OTEL_SECTION, action)}`);
     } catch (err) {
-      failed.push(`${OTEL_SECTION}.${action.key}`);
-      output.appendLine(`  could not change ${OTEL_SECTION}.${action.key}: ${String(err)}`);
+      failed.push(`${where.section}.${where.key}`);
+      output.appendLine(`  could not change ${where.section}.${where.key}: ${String(err)}`);
     }
   }
   if (failed.length > 0) {
@@ -754,6 +808,10 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  copilot otel        ${feed.copilotOtelEnabled ? 'enabled' : 'disabled'}`);
   output.appendLine(`  file feed           ${feed.jsonlPath ?? '(not configured)'}`);
   output.appendLine(`  trace store         ${feed.sqlitePath ?? '(not found)'}`);
+  output.appendLine(
+    `  copilot harness     ${feed.agentHostPath ?? '(no agent-host-traces.db)'}` +
+      (feed.agentHostPath && !feed.agentHostActive ? ' · no Copilot runtime spans in the last 7 days' : '')
+  );
   // Already redacted by `health()`, which is the single place that touches the
   // raw value.
   output.appendLine(`  otlp endpoint       ${feed.otlpEndpoint ?? '(none)'}`);

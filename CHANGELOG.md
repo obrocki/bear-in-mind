@@ -9,8 +9,21 @@
   changes. Local measurements were re-run, and the research preamble is now a
   last-updated date.
 - README: Copilot-harness sessions get identity only through managed
-  `telemetry.capture.identity`, and this extension does not yet read their
-  Agent Host telemetry.
+  `telemetry.capture.identity`.
+- Copilot-harness chats (VS Code 1.141+) are now metered. Bear in Mind reads
+  the Agent Host trace store (`agent-host-traces.db`), using only Copilot runtime
+  traces, merged by span ID. Calls only the Agent Host recorded go to their own
+  meter ledger, added to the reconciled Local figure and kept out of drift.
+  Their root credits show as SDK root-invocation credits. Cache-write and
+  reasoning subtotals are also read under the semantic-convention names that
+  store uses.
+- **Connect** also turns on the Agent Host trace store
+  (`chat.agentHost.otel.dbSpanExporter.enabled`) with the local trace store,
+  unless a protobuf or gRPC collector would stop receiving its traces.
+  **Restore Defaults** puts it back. Diagnostics show the store's path and
+  activity.
+- The AI attribution canvas adds a VS Code Copilot harness source with
+  per-turn credits.
 
 ## 0.6.5
 

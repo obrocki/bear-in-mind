@@ -5,6 +5,7 @@ const path = require('node:path');
 const { it } = require('node:test');
 const build = process.env.BEAR_TEST_BUILD;
 const {
+  AGENT_HOST_CONNECT_KEYS,
   BACKUP_KEY,
   CONNECT_KEYS,
   RESET_KEY,
@@ -14,10 +15,38 @@ const {
   legacyActions,
   planCopilotRestore,
   planSettingsReset,
-  recordBackup
+  recordBackup,
+  settingLocation
 } = require(path.join(build, 'restore.js'));
 
 const FEED = path.resolve('/tmp/bear/copilot-otel.jsonl');
+
+it('restores the Agent Host trace store setting in its own section, unless the user changed it', () => {
+  const [key] = AGENT_HOST_CONNECT_KEYS;
+  assert.deepEqual(settingLocation(key), { section: 'chat.agentHost.otel', key: 'dbSpanExporter.enabled' });
+  assert.deepEqual(settingLocation('enabled'), { section: 'github.copilot.chat.otel', key: 'enabled' });
+
+  const backup = recordBackup(undefined, key, undefined, true);
+  const ours = planCopilotRestore({ current: { [key]: true }, backup, feedPaths: [FEED], collectorConfigured: false });
+  assert.deepEqual(ours, [{ key, kind: 'remove' }]);
+  assert.equal(describeAction('github.copilot.chat.otel', ours[0]), 'chat.agentHost.otel.dbSpanExporter.enabled → default');
+
+  const previous = recordBackup(undefined, key, false, true);
+  assert.deepEqual(
+    planCopilotRestore({ current: { [key]: true }, backup: previous, feedPaths: [FEED], collectorConfigured: false }),
+    [{ key, kind: 'restore', value: false }]
+  );
+  assert.equal(
+    planCopilotRestore({ current: { [key]: false }, backup, feedPaths: [FEED], collectorConfigured: false })[0].kind,
+    'keep',
+    'a value changed after connecting is left alone'
+  );
+  assert.deepEqual(
+    planCopilotRestore({ current: { [key]: true }, backup: undefined, feedPaths: [FEED], collectorConfigured: false }),
+    [],
+    'without a backup entry the Agent Host setting predates Bear in Mind'
+  );
+});
 
 function memory(initial = {}) {
   const values = new Map(Object.entries(initial));

@@ -28,6 +28,13 @@ const workspace = {
         const settings = current();
         const full = section ? `${section}.${key}` : key;
         return Object.prototype.hasOwnProperty.call(settings, full) ? settings[full] : fallback;
+      },
+      // A setting is registered when a `<key>:default` entry gives its default.
+      inspect(key) {
+        const settings = current();
+        const full = section ? `${section}.${key}` : key;
+        const registered = Object.prototype.hasOwnProperty.call(settings, `${full}:default`);
+        return registered ? { key: full, defaultValue: settings[`${full}:default`], globalValue: settings[full] } : undefined;
       }
     };
   },

@@ -37,6 +37,12 @@ synthetic session and trace stores, so they never read live Copilot databases.
 | --- | --- |
 | Copilot CLI / app session store | `$COPILOT_HOME/session-store.db` (default `~/.copilot/`) |
 | VS Code span store | `globalStorage/github.copilot-chat/agent-traces.db` for Code and Code - Insiders |
+| VS Code Copilot harness span store | `<userData>/agent-host/otel/agent-host-traces.db`, written only while `chat.agentHost.otel.dbSpanExporter.enabled` is on (VS Code 1.141+) |
+
+The Copilot harness store also holds Claude and Codex Agent Host traces; only
+Copilot runtime traces (spans stamped with `github.copilot.*`) are counted. Its
+credits are the per-turn `github.copilot.nano_aiu` on chat spans, never added to
+the root invocation total.
 
 Stores are opened read-only. If the file is locked, a temporary copy is read and
 then deleted. Only aggregates are produced (counts, token and credit sums, and
@@ -124,7 +130,7 @@ open_canvas({ canvasId: "ai-attribution", instanceId: "attribution", input: { vi
 | `get_coverage` | — | Full coverage object |
 | `get_model` | `{ section? }` | Model spec or one section |
 
-Open input also accepts `sessionStorePath` and `tracesDbPath` overrides.
+Open input also accepts `sessionStorePath`, `tracesDbPath` and `agentHostTracesDbPath` overrides.
 
 ## Layout
 

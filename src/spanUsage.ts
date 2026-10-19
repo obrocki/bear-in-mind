@@ -75,6 +75,27 @@ export interface SpanLinks {
   parentKnown?: boolean;
 }
 
+/**
+ * Parent links for a span with no GenAI operation, such as the Agent Host's
+ * session anchor above a Copilot runtime invocation. Used only to classify
+ * SDK invocation roots; never counted as usage.
+ */
+export type SpanAncestor = Pick<UsageSpan, 'id' | 'operation' | 'traceId' | 'parentSpanId' | 'parentKnown'>;
+
+export function spanAncestor(id: unknown, links: SpanLinks): SpanAncestor | undefined {
+  const key = text(id);
+  if (!key) {
+    return undefined;
+  }
+  return {
+    id: key,
+    operation: '',
+    traceId: text(links.traceId),
+    parentSpanId: text(links.parentSpanId),
+    parentKnown: links.parentKnown === true && (links.parentSpanId === undefined || text(links.parentSpanId) !== undefined)
+  };
+}
+
 function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 && value.length <= 512 ? value : undefined;
 }
@@ -177,7 +198,9 @@ export function usageSpan(
     input: tokenCount(attributes['gen_ai.usage.input_tokens']),
     output: tokenCount(attributes['gen_ai.usage.output_tokens']),
     cached: tokenCount(attributes['gen_ai.usage.cache_read.input_tokens']),
-    cacheWrite: tokenCount(attributes['gen_ai.usage.cache_creation.input_tokens']),
+    // Aliases for one reported subtotal: select the first, never add them.
+    cacheWrite: tokenCount(attributes['gen_ai.usage.cache_creation.input_tokens']) ??
+      tokenCount(attributes['gen_ai.usage.cache_write.input_tokens']),
     reasoning: tokenCount(attributes['gen_ai.usage.reasoning.output_tokens']) ??
       tokenCount(attributes['gen_ai.usage.reasoning_tokens']),
     credits: nano === undefined ? undefined : nano / 1_000_000_000,
@@ -326,7 +349,7 @@ function distinctActorUsers(entries: ActorIdentity[]): string[] {
   return users;
 }
 
-function sdkRoot(span: UsageSpan, spans: Map<string, UsageSpan>): 'root' | 'nested' | 'unknown' {
+function sdkRoot(span: UsageSpan, spans: Map<string, SpanAncestor>): 'root' | 'nested' | 'unknown' {
   if (!span.parentKnown) return 'unknown';
   const seen = new Set([span.id]);
   let nested = false;
@@ -353,7 +376,7 @@ function sessionActorLabel(users: string[]): string | undefined {
   return `${users.slice(0, 3).join(', ')}, +${users.length - 3} more`;
 }
 
-export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
+export function digestSpans(spans: Iterable<UsageSpan>, ancestors: Iterable<SpanAncestor> = []): SpanDigest {
   const digest = emptySpanDigest();
   const sessions = new Map<string, SpanSession>();
   const latestCalls = new Map<string, UsageSpan>();
@@ -369,7 +392,13 @@ export function digestSpans(spans: Iterable<UsageSpan>): SpanDigest {
   // Agent spans carry the git context; the model calls under them do not.
   const work = indexes<WorkContext>();
   const actors = indexes<ActorIdentity>();
-  const byId = new Map(unique.map((span) => [span.id, span]));
+  const byId = new Map<string, SpanAncestor>();
+  for (const ancestor of ancestors) {
+    byId.set(ancestor.id, ancestor);
+  }
+  for (const span of unique) {
+    byId.set(span.id, span);
+  }
   const tokens = new TokenTally();
   for (const span of unique) {
     if (span.operation === 'invoke_agent' && (span.repository || span.branch)) {

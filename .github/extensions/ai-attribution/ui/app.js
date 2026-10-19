@@ -25,7 +25,7 @@ const AVAILABILITY_TEXT = {
   'needs-org-api': 'Needs org API',
   'needs-baseline': 'Needs value & baseline',
 };
-const SOURCE_SHORT = { sessionStore: 'CLI / app', traces: 'VS Code' };
+const SOURCE_SHORT = { sessionStore: 'CLI / app', traces: 'VS Code', agentHost: 'VS Code Copilot harness' };
 
 const state = { view: 'outcomes', model: null, coverage: null, research: null, group: 'all', busy: false };
 const main = document.getElementById('view');
