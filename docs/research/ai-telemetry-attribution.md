@@ -23,9 +23,11 @@ later session state to earlier calls.
 
 The **Intersection** view is the verified common denominator across all five
 surfaces: nine concepts are available at least conditionally, but only
-repository and code change are marked native everywhere. Different grains,
-opt-in identity, panel-only values and daily aggregates remain visible. Shared
-availability is not permission to join or compare unlike values.
+repository, code change and credits are marked native everywhere. Cloud session
+usage is in public preview and distinguishes AI credits from legacy premium
+requests; neither is an invoice. Different grains, opt-in identity, panel-only
+values and daily aggregates remain visible. Shared availability is not
+permission to join or compare unlike values.
 
 **Actor identity is partly readable, not wholly automatic.** VS Code can emit
 opt-in `user.name`; SDK/CLI telemetry can emit an opaque `enduser.pseudo.id`.
@@ -92,12 +94,14 @@ includes opt-in, aggregate, panel-only and otherwise partial availability.
 Neither label guarantees an identical value, grain or join key.
 
 The current intersection is time, surface/client, actor, agent, model, tokens,
-credits, repository and code change. Only repository and code change are marked
-native across all. Organisation time is daily, token totals cover CLI/app only,
-local actor identifiers can be pseudonymous, and cloud tokens are panel-only.
-Session IDs, branch/commit, request IDs, reasoning effort, latency, tool calls
-and verified quality are not universal. Always retain each source's scope and
-conditions rather than treating the intersection as a cross-surface inner join.
+credits, repository and code change. Repository, code change and credits are
+marked native across all. Cloud session usage is in public preview and
+distinguishes AI credits from legacy premium requests; usage is not an invoice.
+Organisation time is daily, token totals cover CLI/app only, local actor
+identifiers can be pseudonymous, and cloud tokens are panel-only. Session IDs,
+branch/commit, request IDs, reasoning effort, latency, tool calls and verified
+quality are not universal. Always retain each source's scope and conditions
+rather than treating the intersection as a cross-surface inner join.
 
 ## 1. Headline findings
 
