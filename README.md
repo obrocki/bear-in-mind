@@ -162,6 +162,39 @@ false`. No local transcripts or telemetry are sent, credentials and account
 quota data are not persisted, and local metering works without the connection.
 See the [ROI research](docs/research/ai-telemetry-attribution.md) for telemetry details.
 
+### Model climate
+
+The weather around the bear shows the **pace of the model in use**, while the
+ice keeps showing how much allowance is left. The same 75% allowance can sit
+under snow or a thaw:
+
+![The same 75% plan allowance under a light, a mid and a heavy model](docs/media/climate-models.png)
+
+| Light model · snowy | Mid model · mild | Heavy model · thawing |
+| --- | --- | --- |
+| ![Habitat under clouds and heavy snow with a pinprick sun](docs/media/panel-climate-small.png) | ![Habitat under a clear sky with light snow and a small sun](docs/media/panel-climate-medium.png) | ![Habitat under a big low sun with a warm sky and shimmer](docs/media/panel-climate-large.png) |
+| Slow clouds, heavy snow, fresh snow on the ledges, a pinprick sun | Today's sky, light snow, a small sun | A big, low sun, a warm sky, heat shimmer, meltwater and drips |
+
+- **Model size is measured, not looked up.** It is the model's average reported
+  AI credits per call across retained trace-store calls; calls without credits
+  are excluded, not counted as zero. A fixed scale from 0.05 to 25 credits per
+  call gives a model the same weather every time. Per-call credits also grow
+  with prompt size, so this is the model's pace as you use it, not a price list.
+- **Thinking effort** adds sun rays (4 to 12) and spins them faster. The
+  **prompt limit** (`max_prompt_tokens`) widens the sun's halo, the cloud cover
+  and the horizon haze.
+- With **All sessions**, the latest call in any chat session sets the weather.
+  A pinned chat uses only its own latest call. Title, progress and subagent
+  helper calls are ignored.
+- The scene stays **neutral**, exactly as before, without trace-store spans, with
+  fewer than three credit-reporting calls for that model, 30 minutes after the
+  latest call, during the demo, or with `iceberg.climate.enabled` off.
+
+The HUD line names the band, the model and its average; its tooltip adds the
+sample size, effort and prompt limit. The figures in these screenshots are
+illustrative. Like the ice, the weather is a usage metaphor, not energy,
+emissions or a bill.
+
 ## Connecting the telemetry
 
 Run **Iceberg: Connect Copilot Telemetry…**, choose a source, reload the window,
@@ -285,10 +318,10 @@ The equivalent command is `vscode.commands.executeCommand('iceberg.report', { in
 | Member | Contract |
 | --- | --- |
 | `reportUsage(usage)` | Adds a report; missing fields are zero. Non-positive/non-finite values are ignored; positive values are rounded. |
-| `getUsage()` | Current totals, optional budget (`0` = none), animation `health` (0–1), source (`otel` or `none`), basis, context, manual/legacy counts and metric/span drift. Only display a percentage for a measured/custom basis, never `unavailable`. |
+| `getUsage()` | Current totals, optional budget (`0` = none), animation `health` (0–1), source (`otel` or `none`), basis, context, model climate (absent when neutral), manual/legacy counts and metric/span drift. Only display a percentage for a measured/custom basis, never `unavailable`. |
 | `onDidChangeUsage(listener)` | Usage snapshots; returns a disposable subscription. |
 
-Types: [`IcebergApi`, `UsageReport`, `UsageSnapshot`](src/api.ts).
+Types: [`IcebergApi`, `UsageReport`, `UsageSnapshot`, `Climate`](src/api.ts).
 The meltdown demo never changes usage. `@iceberg` is counted only by automatic telemetry.
 
 ## Commands and settings
@@ -307,6 +340,7 @@ Common settings:
 | `iceberg.otel.authoritative` | `true` | Include new telemetry usage in the meter; off makes it display-only. |
 | `iceberg.otel.feedPath` | `""` | Override the feed path; otherwise follow Copilot's configuration. |
 | `iceberg.otel.tracesDbPath` | `""` | Override trace-store discovery. |
+| `iceberg.climate.enabled` | `true` | Let the weather show the pace of the model in use; off keeps the neutral scene. |
 
 Use **Settings → Iceberg** for polling, input/output counting, animation, pixel
 scale, status bar and bear name. Turning telemetry off does not erase counted usage.
@@ -322,6 +356,10 @@ scale, status bar and bear name. Turning telemetry off does not erase counted us
 - **No user breakdown:** turn on `github.copilot.chat.otel.captureIdentity`
   (or reconnect and accept the identity prompt), reload, and send a request from
   the Local harness. A policy can deny capture; diagnostics show what was observed.
+- **Weather stays neutral:** the model climate needs trace-store spans, a chat
+  call in the last 30 minutes, and at least three calls of that model that
+  reported credits. Check **Iceberg: Telemetry Diagnostics** for trace-store
+  activity and the dashboard's credits by model for reported credits.
 - **Collector stopped:** clear `github.copilot.chat.otel.outfile` to restore OTLP,
   or run **Iceberg: Restore Defaults and Disconnect…**; use the local trace store
   alongside it.

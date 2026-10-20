@@ -5,6 +5,7 @@ import { AccountUsageWatcher } from './accountUsage';
 import { createIcebergApi, type IcebergApi } from './api';
 import { pickBearName } from './bearNames';
 import { ChatUsageWatcher } from './chatWatcher';
+import { climateFor } from './climate';
 import { DashboardViewProvider, openDashboardPanel } from './dashboardView';
 import { IcebergViewProvider, openHabitatPanel } from './habitatView';
 import { AGENT_HOST_DB_KEY, AGENT_HOST_SECTION, agentHostDbKeepsExporter } from './agentHost';
@@ -78,9 +79,12 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
   otel.start();
 
   const updateContext = () => {
-    const session = selectedSession({ transcripts: watcher.sessions, spans: otel.spanDigest, selectedSessionId });
+    const spans = otel.spanDigest;
+    const session = selectedSession({ transcripts: watcher.sessions, spans, selectedSessionId });
     meter.setSessionSelected(selectedSessionId !== undefined);
     meter.setContext(session?.trace?.context);
+    // A pinned chat uses only its own latest call; it never borrows another chat's model.
+    meter.setClimate(climateFor(session ? session.trace?.latestCall : spans.latestCall, spans.byModel));
     meter.refreshBasis();
   };
   context.subscriptions.push(

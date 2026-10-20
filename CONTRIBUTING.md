@@ -20,7 +20,7 @@ then press `F5` for an Extension Development Host.
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
 | `src/agentHost.ts` | VS Code Agent Host (Copilot harness) store location and the connect decision for its DB mode. |
 | `src/accountUsage.ts`, `src/sqlite.ts` | Authenticated GitHub quota lookup and shared runtime read-only SQLite support. |
-| `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts` | Pure metric/span parsing, aggregation, session comparison and dashboard snapshots. |
+| `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts`, `src/climate.ts` | Pure metric/span parsing, aggregation, session comparison, dashboard snapshots and the habitat's model climate. |
 | `.github/extensions/ai-attribution/lib/tokenCoverage.cjs` / `.d.cts` | Shared token reporting/paired-count logic, bundled into the typed extension and used directly by the build-free canvas. |
 | `src/*View.ts`, `media/` | Webview messaging and rendering. |
 | `.github/extensions/ai-attribution/` | GitHub Copilot app canvas for the attribution research; not packaged. |
@@ -126,6 +126,13 @@ dependencies; reload extensions in the app after editing. Its tests run with
   A pinned chat uses its own reported prompt allowance, never another chat's
   context. Without a usable denominator or explicit personal target, render
   unscaled ice and no percentage. Never imply measured emissions or actual ice loss.
+- Model climate (`src/climate.ts`) is weather only and never changes health. It
+  weights the latest sessioned, non-auxiliary chat call's model by that model's
+  average reported credits per credit-reporting call, on fixed log anchors.
+  Missing credits, too few samples, stale calls, the demo or the setting being
+  off give no climate, which renders the neutral scene pixel-for-pixel, never a
+  "light" model. A pinned chat uses only its own latest call. Describe it as
+  credit pace, never as energy, emissions or price.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.
@@ -134,7 +141,8 @@ See [SECURITY.md](SECURITY.md) for the data-handling contract.
 ## UI changes
 
 Keep rendering at pixel-art resolution and respect disabled animation. Preserve
-the seeded iceberg shape and slope-based shading.
+the seeded iceberg shape and slope-based shading. The neutral (no-climate) path
+must not consume extra `Math.random()` calls or change any pixel.
 
 The dashboard uses VS Code semantic tokens and high-contrast borders; its SVG
 paints reference CSS variables so live theme changes need no new snapshot.

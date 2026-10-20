@@ -256,6 +256,11 @@
           "type": "string",
           "default": "Nanuq",
           "markdownDescription": "Your bear's name. Run **Iceberg: Name the Bear…** for suggestions or enter your own."
+        },
+        "iceberg.climate.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Let the habitat weather show the pace of the model in use: its average reported AI credits per call in retained telemetry, plus reasoning effort and prompt limit. Snow for light models, thaw for heavy ones. Never changes the ice level. Without enough reported credits the scene stays neutral. A usage metaphor, not energy or emissions."
         }
       }
     }
