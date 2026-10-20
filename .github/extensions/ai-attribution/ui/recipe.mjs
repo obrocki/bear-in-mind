@@ -1,7 +1,7 @@
 // Recipe tab: one AI-assisted delivery cycle from work item to merged PR.
 // Rendering only; lib/recipe.mjs decides steps, evidence and counts.
 
-import { h, s } from './dom.js';
+import { h, s, disclosure } from './dom.js';
 
 export const STEP_NAMES = {
   workItem: 'Work item',
@@ -221,9 +221,9 @@ function recipeStrip(view, model) {
       }),
     ),
     h('figcaption', { class: 'legend' },
-      h('span', {}, h('i', { class: 'swatch ribbon' }), 'Followed the recipe in order'),
-      h('span', {}, h('i', { class: 'swatch ribbon-any' }), 'Has this step (any order)'),
-      h('span', {}, h('i', { class: 'swatch pending' }), 'Unknown until verified'),
+      h('span', {}, h('i', { class: 'swatch ribbon' }), 'In order'),
+      h('span', {}, h('i', { class: 'swatch ribbon-any' }), 'Any order'),
+      h('span', {}, h('i', { class: 'swatch pending' }), 'Unknown'),
       EVIDENCE_ORDER.map((e) => h('span', { title: model.recipe.evidence.find((x) => x.id === e)?.description }, h('i', { class: `swatch ev-${e}` }), model.recipe.evidence.find((x) => x.id === e)?.label ?? e)),
       h('span', {}, h('i', { class: 'swatch drop' }), 'Stopped here'),
     ),
@@ -235,20 +235,23 @@ function recipeStrip(view, model) {
 function kpiCards(view) {
   const k = view.kpis;
   const verified = Boolean(view.verification);
-  const pending = (value) => (verified ? value : h('span', { class: 'muted' }, 'verify'));
-  return h('div', { class: 'grid kpis recipe-kpis' }, [
-    ['Cycles (repository branches)', fmtInt.format(view.totals.cycles), `${view.totals.github} on github.com`],
-    ['Verified with GitHub', `${k.verifiedCycles} / ${view.totals.github}`, verified ? `at ${when(view.verification.at)}` : 'Not verified yet'],
-    ['PR opened', fmtInt.format(k.prOpened), verified ? 'Verified or recorded' : 'Recorded references only'],
-    ['Reviewed', pending(fmtInt.format(k.reviewed)), 'At least one submitted review'],
-    ['Merged', pending(fmtInt.format(k.merged)), 'PR state MERGED'],
-    ['Merged & work item closed', pending(fmtInt.format(k.closed)), 'The whole recipe served'],
-    ['Median pickup → done', pending(formatHours(k.medianPickupToDoneHours)), 'First AI work or activation → merge and closure'],
-    ['Median PR open → merge', pending(formatHours(k.medianOpenToMergeHours)), 'Verified PRs'],
-    ['Median PR open → first review', pending(formatHours(k.medianOpenToFirstReviewHours)), 'Verified PRs'],
-  ].map(([label, value, note]) =>
-    h('div', { class: 'card kpi' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), h('div', { class: 'who' }, note)),
-  ));
+  const pending = (value) => (verified ? value : h('span', { class: 'muted' }, '—'));
+  return h('section', { class: 'recipe-results' },
+    h('div', { class: 'grid kpis recipe-kpis' }, [
+      ['PRs opened', fmtInt.format(k.prOpened), 'Verified or recorded references'],
+      ['Reviewed', pending(fmtInt.format(k.reviewed)), 'At least one submitted review'],
+      ['Merged', pending(fmtInt.format(k.merged)), 'PR state MERGED'],
+      ['Merged & closed', pending(fmtInt.format(k.closed)), 'Merged and linked work items closed; no linked item requires only a merge'],
+    ].map(([label, value, note]) =>
+      h('div', { class: 'card kpi', title: note }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value)),
+    )),
+    h('div', { class: 'timing-row small', 'aria-label': 'Median cycle times' }, [
+      ['Pickup → done', k.medianPickupToDoneHours, 'First AI work or activation to merge and closure'],
+      ['PR → merge', k.medianOpenToMergeHours, 'PR opened to merged'],
+      ['PR → review', k.medianOpenToFirstReviewHours, 'PR opened to first review'],
+    ].map(([label, value, title]) => h('span', { title }, label, ' ', h('strong', {}, pending(formatHours(value))))),
+    h('span', { class: 'muted' }, 'Median times')),
+  );
 }
 
 // ------------------------------------------------------------ adherence ---
@@ -275,10 +278,10 @@ function adherenceCard(view, model) {
   const conforming = a.azureBoards + a.github;
   const share = a.cycles ? Math.round((100 * conforming) / a.cycles) : null;
   const segments = [
-    { cls: 'seg-ab', label: 'prefix/AB123-slug (Azure Boards)', value: a.azureBoards },
-    { cls: 'seg-gh', label: 'prefix/123-slug (GitHub issue)', value: a.github },
-    { cls: 'seg-non', label: 'Other branch names', value: a.nonConforming },
-    { cls: 'seg-none', label: 'No branch recorded', value: a.noBranch },
+    { cls: 'seg-ab', label: 'AB123 → Boards', value: a.azureBoards },
+    { cls: 'seg-gh', label: '123 → GitHub issue', value: a.github },
+    { cls: 'seg-non', label: 'Other names', value: a.nonConforming },
+    { cls: 'seg-none', label: 'No branch', value: a.noBranch },
   ];
   const credits = (list) => (list.length ? cycleCredits(list) : h('span', { class: 'muted' }, '—'));
   return h('section', { class: 'card adherence' },
@@ -289,13 +292,12 @@ function adherenceCard(view, model) {
     ),
     h('table', { class: 'compact' },
       h('tbody', {},
-        h('tr', {}, h('td', {}, 'Credits on conforming branches'), h('td', {}, credits(a.credits.conforming))),
-        h('tr', {}, h('td', {}, 'Credits elsewhere'), h('td', {}, credits(a.credits.nonConforming))),
+        h('tr', {}, h('td', {}, 'Convention'), h('td', {}, credits(a.credits.conforming))),
+        h('tr', {}, h('td', {}, 'Other branches'), h('td', {}, credits(a.credits.nonConforming))),
       ),
     ),
-    h('p', { class: 'muted small' }, model.recipe.convention.branch),
-    h('details', { class: 'hook' },
-      h('summary', {}, 'Add the work item to every commit (opt-in hook)'),
+    disclosure('recipe-convention', 'Convention & commit hook',
+      h('p', { class: 'small' }, model.recipe.convention.branch),
       h('p', { class: 'small' }, model.recipe.convention.hook),
       h('pre', {}, h('code', {}, 'git config core.hooksPath .github/extensions/ai-attribution/hooks')),
       h('p', { class: 'muted small' }, 'Or copy hooks/commit-msg into another repository\u2019s .git/hooks/. Requires Node on PATH. Set AI_ATTRIBUTION_HOOK=off to skip once.'),
@@ -308,7 +310,7 @@ function adherenceCard(view, model) {
 function ingredientsCard(view) {
   const max = Math.max(1, ...view.ingredients.map((i) => i.cycles));
   return h('section', { class: 'card pantry' },
-    h('h3', {}, 'Ingredients · what the AI work went into'),
+    h('h3', {}, 'Ingredients'),
     view.ingredients.length
       ? h('div', { class: 'pantry-grid' }, view.ingredients.map((i) =>
           h('div', { class: `jar jar-${i.provider ?? 'none'}` },
@@ -318,7 +320,7 @@ function ingredientsCard(view) {
           ),
         ))
       : h('p', { class: 'muted' }, 'No cycles in this window.'),
-    h('p', { class: 'muted small' }, 'Types come from GitHub issue types and Azure Boards work item types after verification. Credits are reported consumption per source, never summed across sources.'),
+    h('p', { class: 'muted small' }, 'Types appear after verification. Credits stay per source.'),
   );
 }
 
@@ -429,8 +431,7 @@ function lanes(view, model, ui) {
   return h('section', { class: 'lanes' },
     h('div', { class: 'lane-legend small muted' },
       LEGEND.map(([kind, label]) => h('span', {}, s('svg', { viewBox: '-8 -8 16 16', width: 14, height: 14 }, marker(kind, 0, 'verified', label, 0)), ' ', label)),
-      h('span', {}, h('i', { class: 'swatch bar' }), 'credits per source (side by side, not summed)'),
-      h('span', {}, 'Hollow = recorded or observed, filled = verified'),
+      h('span', {}, h('i', { class: 'swatch bar' }), 'credits / source'),
     ),
     list.map((cycle) => {
       const open = ui.expanded.has(cycle.key);
@@ -510,8 +511,8 @@ function toolbar(view, ui) {
       value: ui.org ?? '',
       oninput: (e) => ui.setOrg(e.target.value),
     }),
-    h('button', { class: 'primary', 'data-focus-key': 'recipe-verify', onclick: () => ui.verify(), 'aria-disabled': ui.verifying ? 'true' : undefined },
-      ui.verifying ? 'Verifying…' : v ? 'Verify again' : 'Verify with GitHub & Azure Boards'),
+    h('button', { class: 'primary', title: 'Verify with GitHub & Azure Boards', 'aria-label': 'Verify with GitHub & Azure Boards', 'data-focus-key': 'recipe-verify', onclick: () => ui.verify(), 'aria-disabled': ui.verifying ? 'true' : undefined },
+      ui.verifying ? 'Verifying…' : v ? 'Verify again' : 'Verify'),
     statusChip('GitHub', v?.github),
     statusChip('Azure Boards', v?.azureBoards),
   );
@@ -528,20 +529,27 @@ export function renderRecipe(view, model, ui) {
     view.verification?.truncated ? `Verification covered the most recent cycles only; ${view.verification.truncated} github.com cycles were not checked.` : null,
   ].filter(Boolean);
   return [
-    h('p', { class: 'lede' }, model.recipe.summary),
+    h('p', { class: 'lede' }, 'Work item → AI work → reviewed change. One cycle per branch.'),
     toolbar(view, ui),
+    h('p', { class: 'muted small' }, `${view.totals.cycles} cycles · ${view.kpis.verifiedCycles}/${view.totals.github} GitHub cycles verified. Credits are separate, not a bill.`),
     view.verification
       ? null
-      : h('div', { class: 'callout' }, h('strong', {}, 'Local evidence only. '), 'Review, merge and work-item closure are not recorded on this machine. Verify asks GitHub (gh CLI) and Azure Boards (az CLI) about the branches and numbers already found here; titles, descriptions and commit messages are never requested.'),
+      : h('div', { class: 'callout' }, h('strong', {}, 'Local evidence only. '), 'Verify with GitHub / Boards to check review, merge and closure.'),
     recipeStrip(view, model),
     kpiCards(view),
     h('div', { class: 'grid two recipe-pair' }, adherenceCard(view, model), ingredientsCard(view)),
-    h('h2', {}, `Cycles · ${view.cycles.length ? 'one lane per repository branch' : 'none in this window'}`),
+    h('h2', {}, 'Cycles'),
     view.cycles.length ? lanes(view, model, ui) : h('p', { class: 'muted' }, 'No model calls with a repository in this window.'),
-    h('h2', {}, 'Which surface records each step'),
-    surfaceMatrix(model),
-    h('h2', {}, 'Guardrails'),
-    h('ul', { class: 'small' }, model.recipe.guardrails.map((g) => h('li', {}, g))),
+    disclosure('recipe-surfaces', 'Step × surface', surfaceMatrix(model)),
+    disclosure('recipe-guide', 'Reading the flow',
+      h('p', {}, model.recipe.summary),
+      h('p', {}, 'Solid core: steps followed in order. Light band: step recorded in any order. Hatching: not verified. Tails: cycles leaving the in-order path.'),
+      h('p', {}, 'Timeline: hollow markers are local or referenced; filled markers are verified. Bars show credits per source, never summed.'),
+      h('ul', {}, model.recipe.evidence.map((e) => h('li', {}, h('strong', {}, `${e.label}: `), e.description))),
+    ),
+    disclosure('recipe-privacy', 'Network & limits',
+      h('ul', { class: 'small' }, model.recipe.guardrails.map((g) => h('li', {}, g))),
+    ),
     notes.length ? h('ul', { class: 'small muted' }, notes.map((n) => h('li', {}, n))) : null,
   ];
 }

@@ -14,6 +14,11 @@
   Azure Boards work item 123 or GitHub issue 123, and an opt-in `commit-msg`
   hook adds the matching `Refs:` trailer. Canvas screenshots now read only
   sandboxed synthetic stores.
+- **Tighter attribution tabs:** shorter summaries, compact coverage bars,
+  an entity diagram and expandable evidence across all eight views.
+  Recipe keeps its full lifecycle with fewer KPI cards; Research becomes a
+  section index. Keyboard controls, narrow layouts and visible-copy budgets
+  are checked by the synthetic screenshot harness.
 
 ## 0.7.1
 

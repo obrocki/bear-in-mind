@@ -110,6 +110,9 @@ a {
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   padding: 16px 20px 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 16px;
 }
 
 .eyebrow {
@@ -159,6 +162,8 @@ h5 {
   display: flex;
   gap: 4px;
   overflow-x: auto;
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 .tabs button {
   appearance: none;
@@ -211,6 +216,7 @@ main {
   border-radius: var(--radius);
   background: var(--surface);
   padding: 12px 14px;
+  min-width: 0;
 }
 .card h3 {
   margin-top: 0;
@@ -407,7 +413,7 @@ th.num {
 }
 .funnel .row {
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) 3fr minmax(150px, auto);
+  grid-template-columns: minmax(95px, 1fr) 2fr auto;
   gap: 10px;
   align-items: center;
 }
@@ -416,6 +422,10 @@ th.num {
   border-radius: 4px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   overflow: hidden;
+}
+.funnel .bar.unknown {
+  border: 1px dashed var(--muted);
+  background: none;
 }
 .funnel .fill {
   height: 100%;
@@ -426,9 +436,7 @@ th.num {
   background: var(--red);
 }
 .funnel .row.not-emitted .label::after {
-  content: ' · not emitted';
-  color: var(--red);
-  font-size: 11px;
+  content: none;
 }
 .funnel .stats {
   font-size: 12px;
@@ -747,7 +755,7 @@ th.num {
 }
 
 .recipe-kpis {
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-bottom: 12px;
 }
 .recipe-kpis .kpi .value {
@@ -1132,4 +1140,268 @@ table.compact td {
   border-radius: 6px;
   padding: 4px 10px;
   cursor: pointer;
+}
+
+/* Compact summaries keep the full evidence one disclosure away. */
+.disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+  min-width: 0;
+}
+.disclosure > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.disclosure[open] > summary {
+  margin-bottom: 10px;
+}
+.disclosure p,
+.disclosure li {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.disclosure table {
+  display: block;
+  overflow-x: auto;
+}
+.disclosure .mono {
+  overflow-wrap: anywhere;
+}
+.disclosure pre {
+  overflow-x: auto;
+}
+.matrix .disclosure {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.matrix .disclosure > summary {
+  font-weight: normal;
+  white-space: nowrap;
+}
+.matrix .disclosure[open] {
+  min-width: 180px;
+  max-width: 300px;
+}
+.matrix .concept .badge {
+  margin-top: 3px;
+}
+.grid.cards > .disclosure {
+  margin: 0;
+  background: var(--surface);
+}
+.disclosure .head {
+  display: inline;
+}
+.disclosure .head h3 {
+  display: inline;
+  margin: 0 8px 0 0;
+}
+.metric-list,
+.breakdown-bars {
+  display: grid;
+  gap: 12px;
+}
+.metric-label,
+.split-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.metric-label > :first-child {
+  overflow-wrap: anywhere;
+}
+.ratio-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+}
+.ratio-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+}
+.ratio-bar.unknown {
+  border: 1px dashed var(--muted);
+  background: none;
+}
+.split-labels {
+  margin: 8px 0;
+}
+.outcome-kpis .disclosure {
+  margin-bottom: 0;
+  padding: 5px 0 0;
+  border: 0;
+}
+.outcome-kpis h3 {
+  margin-bottom: 12px;
+}
+.mini-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 12px 0;
+}
+.mini-stats .card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.mini-stats strong {
+  font-size: 24px;
+}
+.stat-native,
+.stat-low {
+  border-left: 3px solid var(--green);
+}
+.stat-partial,
+.stat-medium {
+  border-left: 3px solid var(--yellow);
+}
+.stat-missing,
+.stat-high {
+  border-left: 3px solid var(--red);
+}
+.flow-strip {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.flow-strip > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.flow-number {
+  color: var(--orange);
+  font-weight: 700;
+}
+.model-graph {
+  margin: 0;
+  overflow-x: auto;
+}
+.model-graph svg {
+  display: block;
+  width: 100%;
+  min-width: 650px;
+}
+.model-graph .edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+#model-arrow path {
+  fill: var(--muted);
+}
+.model-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+.node-ai_session rect,
+.node-model_call rect,
+.node-tool_call rect {
+  stroke: var(--orange);
+}
+.node-attribution rect,
+.node-work_item rect {
+  stroke: var(--purple);
+}
+.node-outcome rect {
+  stroke: var(--green);
+}
+.node-label {
+  fill: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+}
+.node-caption {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.tier-cards {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+.coverage-sources {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  align-items: start;
+}
+.source-card h2 {
+  margin-top: 0;
+}
+.source-card .grid.kpis {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  margin: 14px 0;
+}
+.source-card .grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+}
+.timing-row {
+  display: flex;
+  gap: 10px 24px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+.timing-row strong {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.recipe-toolbar .status-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.research-index {
+  max-width: none;
+}
+@media (max-width: 800px) {
+  .lane {
+    grid-template-columns: 1fr auto;
+  }
+  .lane-track {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .grid.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recipe-strip {
+    overflow-x: auto;
+  }
+  .recipe-strip > svg {
+    min-width: 850px;
+  }
+}
+@media (max-width: 480px) {
+  .top {
+    padding: 10px 12px 0;
+  }
+  main {
+    padding: 12px;
+  }
+  .mini-stats .card {
+    display: grid;
+    gap: 2px;
+  }
+  .recipe-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lane-side {
+    grid-row: 3;
+    text-align: left;
+    justify-items: start;
+  }
 }

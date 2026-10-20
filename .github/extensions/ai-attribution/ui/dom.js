@@ -1,6 +1,7 @@
 // Tiny DOM builder. Strings become text nodes, so content is never parsed as HTML.
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+const expanded = new Set();
 
 function build(el, attrs, children) {
   for (const [key, value] of Object.entries(attrs)) {
@@ -23,4 +24,18 @@ export function h(tag, attrs = {}, ...children) {
 /** The same builder for SVG elements. */
 export function s(tag, attrs = {}, ...children) {
   return build(document.createElementNS(SVG_NS, tag), attrs, children);
+}
+
+export function disclosure(id, label, ...children) {
+  return h('details', {
+    class: 'disclosure',
+    'data-detail': id,
+    open: expanded.has(id),
+    ontoggle: (event) => {
+      const element = event.currentTarget;
+      if (!element.isConnected) return;
+      if (element.open) expanded.add(id);
+      else expanded.delete(id);
+    },
+  }, h('summary', { 'data-focus-key': `detail-${id}` }, label), ...children);
 }

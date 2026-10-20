@@ -22,15 +22,15 @@ const SHOTS = [
     w: 1280,
     h: 980,
     dsf: 1,
-    ready: "document.body.innerText.includes('reported credits and PR references') && !document.body.innerText.includes('No local store')",
+    ready: "document.querySelector('.outcome-kpis .ratio-bar') && document.body.innerText.includes('Credits with a PR reference')",
   },
   {
     file: 'canvas-coverage.png',
     view: 'coverage',
     w: 1280,
-    h: 2300,
+    h: 1100,
     dsf: 1,
-    ready: "document.body.innerText.includes('Copilot CLI / app session store') && document.body.innerText.includes('VS Code agent-traces.db') && document.body.innerText.includes('Tool calls')",
+    ready: "document.querySelectorAll('.source-card').length === 2",
   },
   {
     file: 'canvas-surfaces.png',
@@ -46,7 +46,7 @@ const SHOTS = [
     w: 1440,
     h: 1080,
     dsf: 1,
-    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+    ready: "document.querySelector('.mini-stats') && document.querySelector('table.matrix')",
   },
   {
     file: 'canvas-intersection-dark.png',
@@ -55,21 +55,21 @@ const SHOTS = [
     w: 1440,
     h: 1080,
     dsf: 1,
-    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+    ready: "document.querySelector('.mini-stats') && document.querySelector('table.matrix')",
   },
   {
     file: 'canvas-model.png',
     view: 'model',
     w: 1280,
-    h: 1450,
+    h: 1000,
     dsf: 1,
-    ready: "document.body.innerText.includes('Canonical entities') && document.body.innerText.includes('Attribution tiers')",
+    ready: "document.querySelector('.model-graph svg') && document.querySelector('.tier-cards')",
   },
   {
     file: 'canvas-recipe.png',
     view: 'recipe',
     w: 1440,
-    h: 2050,
+    h: 1750,
     dsf: 1,
     ready: "document.querySelector('.recipe-strip svg') && document.querySelectorAll('.lane').length >= 6 && document.body.innerText.includes('Azure Boards: connected')",
     prepare: "document.querySelector('.lane-meta').click()",
@@ -82,6 +82,22 @@ const SHOTS = [
     h: 1180,
     dsf: 1,
     ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Local evidence only')",
+  },
+  {
+    file: 'canvas-gaps.png',
+    view: 'gaps',
+    w: 1280,
+    h: 900,
+    dsf: 1,
+    ready: "document.querySelector('[data-detail=\"verification-status\"]')",
+  },
+  {
+    file: 'canvas-research.png',
+    view: 'research',
+    w: 1280,
+    h: 900,
+    dsf: 1,
+    ready: "document.querySelector('.research-index .disclosure')",
   },
 ];
 
@@ -560,6 +576,68 @@ async function waitForRender(ws, sessionId, ready) {
   throw new Error(`canvas did not finish rendering; saw: ${text}`);
 }
 
+const WORD_BUDGETS = { outcomes: 200, recipe: 600, surfaces: 300, intersection: 180, model: 130, gaps: 180, coverage: 280, research: 130 };
+
+async function verifyCompactView(ws, sessionId, view) {
+  const words = await evaluate(ws, sessionId, "document.getElementById('view').innerText.trim().split(/\\s+/).length");
+  assert.ok(words <= WORD_BUDGETS[view], `${view}: ${words} visible words exceeds ${WORD_BUDGETS[view]}`);
+  console.log(`${view}: ${words}/${WORD_BUDGETS[view]} visible words`);
+  const detail = {
+    outcomes: ['roi-contract', 'incremental cost'],
+    recipe: ['recipe-privacy', 'Titles'],
+    surfaces: ['cell-time-vscode', 'span start_time'],
+    intersection: ['matrix-guide', 'Missing and unverified'],
+    model: ['accounting-rules', 'Count each model call once'],
+    gaps: ['verification-status', 'verified'],
+    coverage: ['tokens-sessionStore', 'Reported subtotals'],
+    research: ['research-0', 'Decision: proceed'],
+  }[view];
+  if (detail) {
+    const selector = `[data-detail="${detail[0]}"]`;
+    await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(`${selector} > summary`)}).focus()`);
+    await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 }, sessionId);
+    await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, sessionId);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    const expanded = await evaluate(ws, sessionId, `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      return { open: el.open, text: el.innerText };
+    })()`);
+    assert.ok(expanded.open, `${view}: Enter opens the detail`);
+    assert.ok(expanded.text.includes(detail[1]), `${view}: full evidence is still accessible`);
+    if (view === 'surfaces') {
+      await evaluate(ws, sessionId, "document.querySelector('[data-focus-key=\"group-all\"]').click()");
+      await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+      assert.ok(await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(selector)}).open`), 'disclosures survive re-rendering');
+      assert.equal(await evaluate(ws, sessionId, 'document.activeElement.dataset.focusKey'), 'detail-cell-time-vscode', 'detail focus survives re-rendering');
+    }
+    await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(selector)}).open = false`);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+  }
+  if (view === 'model') {
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-node').length"), 8);
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-graph .edge').length"), 8);
+  }
+  if (view === 'outcomes') {
+    assert.ok(await evaluate(ws, sessionId, "document.querySelector('.ratio-bar.unknown[aria-label=\"Not measured\"]') !== null"), 'missing is not a zero bar');
+  }
+  if (view === 'coverage') {
+    assert.ok(await evaluate(ws, sessionId, "document.querySelector('.not-emitted .bar.unknown') !== null"), 'unavailable stages have a dashed empty bar');
+    assert.ok(await evaluate(ws, sessionId, "document.getElementById('view').innerText.includes('No agent-host-traces.db')"), 'source failures stay visible');
+  }
+}
+
+async function verifyNarrowView(ws, sessionId, view) {
+  await send(ws, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false }, sessionId);
+  for (const expanded of [false, true]) {
+    await evaluate(ws, sessionId, `document.querySelectorAll('#view details').forEach((el) => { el.open = ${expanded}; })`);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    const width = await evaluate(ws, sessionId, 'document.documentElement.scrollWidth');
+    assert.ok(width <= 391, `${view}: ${expanded ? 'expanded' : 'compact'} page overflows a 390px viewport (${width}px)`);
+  }
+  await evaluate(ws, sessionId, "document.querySelectorAll('#view details').forEach((el) => { el.open = false; })");
+  await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+}
+
 async function verifyThemes(ws, sessionId) {
   const colors = async () => evaluate(ws, sessionId, `(() => {
     const style = getComputedStyle(document.body);
@@ -740,6 +818,7 @@ async function setServerView(serverUrl, view) {
       );
       await send(ws, 'Page.navigate', { url: server.url }, sessionId);
       await waitForRender(ws, sessionId, shot.ready);
+      await verifyCompactView(ws, sessionId, shot.view);
       if (!themesVerified) {
         await verifyThemes(ws, sessionId);
         themesVerified = true;
@@ -753,22 +832,21 @@ async function setServerView(serverUrl, view) {
         assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('table.matrix .badge.missing, table.matrix .badge.unverified').length"), 0);
       }
       if (shot.prepare) await evaluate(ws, sessionId, shot.prepare);
-      await evaluate(ws, sessionId, 'window.scrollTo(0, 0)');
+      await evaluate(ws, sessionId, 'document.activeElement.blur(); window.scrollTo(0, 0)');
       const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       const buf = Buffer.from(data, 'base64');
       const out = path.join(OUT, shot.file);
       fs.writeFileSync(out, buf);
       console.log(`${rel(out)}  ${shot.w * shot.dsf}x${shot.h * shot.dsf}  ${(buf.length / 1024).toFixed(1)} kB`);
+      await verifyNarrowView(ws, sessionId, shot.view);
     }
-    for (const [view, ready] of [
-      ['gaps', "document.body.innerText.includes('Verification status')"],
-      ['research', "document.querySelector('.md') && document.body.innerText.includes('Billing reconciliation contract')"],
-    ]) {
-      await setServerView(server.url, view);
-      await send(ws, 'Page.navigate', { url: server.url }, sessionId);
-      await waitForRender(ws, sessionId, ready);
+    await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').focus()");
+    for (const [key, expected] of [['Home', 'outcomes'], ['ArrowRight', 'recipe'], ['End', 'research']]) {
+      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key }, sessionId);
+      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }, sessionId);
+      assert.equal(await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').dataset.view"), expected);
     }
-    console.log('Gaps and Research views rendered without schema or loading errors.');
+    console.log('Compact views passed: word budgets, keyboard disclosures and tabs, retained evidence, narrow layouts.');
   } finally {
     if (ws) {
       await send(ws, 'Browser.close').catch(() => {});
