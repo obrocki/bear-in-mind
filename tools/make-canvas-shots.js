@@ -22,15 +22,15 @@ const SHOTS = [
     w: 1280,
     h: 980,
     dsf: 1,
-    ready: "document.body.innerText.includes('reported credits and PR references') && !document.body.innerText.includes('No local store')",
+    ready: "document.querySelector('.outcome-kpis .ratio-bar') && document.body.innerText.includes('Credits with a PR reference')",
   },
   {
     file: 'canvas-coverage.png',
     view: 'coverage',
     w: 1280,
-    h: 2300,
+    h: 1100,
     dsf: 1,
-    ready: "document.body.innerText.includes('Copilot CLI / app session store') && document.body.innerText.includes('VS Code agent-traces.db') && document.body.innerText.includes('Tool calls')",
+    ready: "document.querySelectorAll('.source-card').length === 2",
   },
   {
     file: 'canvas-surfaces.png',
@@ -46,7 +46,7 @@ const SHOTS = [
     w: 1440,
     h: 1080,
     dsf: 1,
-    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+    ready: "document.querySelector('.mini-stats') && document.querySelector('table.matrix')",
   },
   {
     file: 'canvas-intersection-dark.png',
@@ -55,15 +55,49 @@ const SHOTS = [
     w: 1440,
     h: 1080,
     dsf: 1,
-    ready: "document.body.innerText.includes('Intersection across all five surfaces') && document.querySelector('table.matrix')",
+    ready: "document.querySelector('.mini-stats') && document.querySelector('table.matrix')",
   },
   {
     file: 'canvas-model.png',
     view: 'model',
     w: 1280,
-    h: 1450,
+    h: 1000,
     dsf: 1,
-    ready: "document.body.innerText.includes('Canonical entities') && document.body.innerText.includes('Attribution tiers')",
+    ready: "document.querySelector('.model-graph svg') && document.querySelector('.tier-cards')",
+  },
+  {
+    file: 'canvas-recipe.png',
+    view: 'recipe',
+    w: 1440,
+    h: 1750,
+    dsf: 1,
+    ready: "document.querySelector('.recipe-strip svg') && document.querySelectorAll('.lane').length >= 6 && document.body.innerText.includes('Azure Boards: connected')",
+    prepare: "document.querySelector('.lane-meta').click()",
+  },
+  {
+    file: 'canvas-recipe-local.png',
+    view: 'recipe',
+    verified: false,
+    w: 1440,
+    h: 1180,
+    dsf: 1,
+    ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Local evidence only')",
+  },
+  {
+    file: 'canvas-gaps.png',
+    view: 'gaps',
+    w: 1280,
+    h: 900,
+    dsf: 1,
+    ready: "document.querySelector('[data-detail=\"verification-status\"]')",
+  },
+  {
+    file: 'canvas-research.png',
+    view: 'research',
+    w: 1280,
+    h: 900,
+    dsf: 1,
+    ready: "document.querySelector('.research-index .disclosure')",
   },
 ];
 
@@ -128,11 +162,13 @@ function createSessionStore(file, now) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   [
-    ['cli-web-pr', 'https://github.com/contoso/web-app.git', 'feature/checkout', 'Checkout flow PR'],
-    ['app-api-pr', 'contoso/api', 'fix/token-refresh', 'API auth fix'],
+    ['cli-web-pr', 'https://github.com/contoso/web-app.git', 'mona/AB1234-checkout-flow', 'Checkout flow PR'],
+    ['app-api-pr', 'contoso/api', 'mona/52-token-refresh', 'API auth fix'],
     ['cli-tools-issue', 'https://github.com/fabrikam/tools.git', 'main', 'Tooling issue triage'],
     ['cloud-web-repo', 'contoso/web-app', 'experiment/pricing', 'Repository-only exploration'],
     ['cli-unlinked', null, null, 'General coding Q&A'],
+    ['app-web-docs', 'contoso/web-app', 'mona/AB1250-docs-refresh', 'Docs refresh'],
+    ['cli-api-limits', 'contoso/api', 'mona/61-rate-limits', 'Rate limits'],
   ].forEach(([id, repo, branch, summary], i) => {
     session.run(id, '', repo, 'worktree', branch, summary, iso(now, 18 - i, 9), iso(now, 2 + i, 16));
   });
@@ -166,6 +202,10 @@ function createSessionStore(file, now) {
     ['cloud-web-repo', 2, 'sub-docs', 'gpt-5-mini', 2200, 280, 450, 40, 70, 0.7, 'sub-agent', 'medium', 4, 12],
     ['cli-unlinked', 1, null, 'gpt-5-mini', 1800, 240, 0, 0, 30, 0.5, 'user', null, 3, 10],
     [null, 1, null, 'claude-sonnet-4.5', 1400, 180, 0, 0, 0, 0.4, 'user', 'medium', 2, 18],
+    ['app-web-docs', 1, null, 'gpt-5', 5200, 640, 1500, 120, 300, 3.1, 'user', 'medium', 4, 10],
+    ['app-web-docs', 2, null, 'gpt-5-mini', 2100, 260, 500, 40, 60, 0.6, 'agent', 'low', 3, 15],
+    ['cli-api-limits', 1, null, 'claude-sonnet-4.5', 6400, 720, 1800, 150, 460, 4.4, 'user', 'high', 6, 11],
+    ['cli-api-limits', 2, 'sub-tests', 'gpt-5-mini', 2400, 300, 600, 50, 80, 0.9, 'sub-agent', 'low', 5, 14],
   ].forEach((row) => {
     const [sessionId, turn, agent, model, input, output, cacheRead, cacheWrite, reasoning, credits, initiator, effort, day, hour] = row;
     usage.run(sessionId, turn, agent, model, input, output, cacheRead, cacheWrite, reasoning, nano(credits), initiator, effort, iso(now, day, hour));
@@ -248,10 +288,16 @@ function createTracesStore(file, now) {
     addSpan(id, trace, 'execute_tool', at, { duration: 80, tool, status });
   }
 
-  addAgent('agent-web', 'trace-web', ms(now, 6, 9), 'https://github.com/contoso/web-app.git', 'feature/checkout', {
+  addAgent('agent-web', 'trace-web', ms(now, 6, 9), 'https://github.com/contoso/web-app.git', 'mona/AB1250-docs-refresh', {
     conversation: 'conv-web',
     chatSession: 'chat-web',
     user: 'octocat',
+    commit: '5e1f0aa',
+  });
+  addAgent('agent-web-2', 'trace-web-2', ms(now, 5, 14), 'https://github.com/contoso/web-app.git', 'mona/AB1250-docs-refresh', {
+    chatSession: 'chat-web',
+    user: 'octocat',
+    commit: '7c2d9e1',
   });
   addChat('chat-web-1', 'trace-web', ms(now, 6, 9, 5), {
     agent: 'panel/editAgent',
@@ -277,7 +323,7 @@ function createTracesStore(file, now) {
     parentSession: 'chat-web',
   });
 
-  addAgent('agent-api', 'trace-api', ms(now, 4, 10), 'contoso/api', 'fix/token-refresh', {
+  addAgent('agent-api', 'trace-api', ms(now, 4, 10), 'contoso/api', 'mona/61-rate-limits', {
     conversation: 'conv-api',
     user: 'octocat',
   });
@@ -361,6 +407,118 @@ function createFixtures(runDir, now) {
   return { sessionStorePath, tracesDbPath };
 }
 
+/**
+ * Canned GitHub and Azure Boards answers for the synthetic cycles, served
+ * through verify.mjs's injectable runner and fetch, so the Recipe screenshot
+ * exercises the real verification code without any network request.
+ */
+function syntheticForges(now) {
+  const at = (daysAgo, hour = 10) => iso(now, daysAgo, hour);
+  const sha = (seed) => seed.repeat(40).slice(0, 40);
+  const pr = (number, branch, { state, created, merged = null, reviews = [], commits = [], closing = [] }) => ({
+    number,
+    state,
+    isDraft: false,
+    createdAt: at(created, 15),
+    mergedAt: merged === null ? null : at(merged, 11),
+    closedAt: merged === null ? null : at(merged, 11),
+    headRefName: branch,
+    baseRefName: 'main',
+    reviewDecision: reviews.at(-1)?.[0] ?? null,
+    reviews: { totalCount: reviews.length, nodes: reviews.map(([s, d]) => ({ state: s, submittedAt: at(d, 16) })) },
+    commits: { totalCount: commits.length, nodes: commits.map(([seed, d], i) => ({ commit: { oid: sha(seed), committedDate: at(d, 9 + i) } })) },
+    closingIssuesReferences: { nodes: closing },
+  });
+  const issue = (number, state, type, created, closed = null) => ({
+    __typename: 'Issue',
+    number,
+    state,
+    stateReason: state === 'CLOSED' ? 'COMPLETED' : null,
+    createdAt: at(created, 9),
+    closedAt: closed === null ? null : at(closed, 12),
+    issueType: { name: type },
+  });
+  const github = {
+    'contoso/web-app': {
+      'branch:mona/AB1234-checkout-flow': { totalCount: 1, nodes: [
+        pr(128, 'mona/AB1234-checkout-flow', {
+          state: 'MERGED', created: 22, merged: 16,
+          reviews: [['CHANGES_REQUESTED', 21], ['APPROVED', 18]],
+          commits: [['a1', 26], ['b2', 24], ['c3', 23], ['d4', 21], ['e5', 19]],
+        }),
+      ] },
+      'pr:128': null,
+      'issue:44': issue(44, 'CLOSED', 'Bug', 30, 16),
+      'branch:experiment/pricing': { totalCount: 0, nodes: [] },
+      'branch:mona/AB1250-docs-refresh': { totalCount: 1, nodes: [
+        pr(131, 'mona/AB1250-docs-refresh', {
+          state: 'OPEN', created: 3,
+          reviews: [['CHANGES_REQUESTED', 2]],
+          commits: [['f6', 5], ['a7', 4], ['b8', 3], ['c9', 2]],
+        }),
+      ] },
+    },
+    'contoso/api': {
+      'branch:mona/52-token-refresh': { totalCount: 1, nodes: [
+        pr(87, 'mona/52-token-refresh', {
+          state: 'MERGED', created: 15, merged: 9,
+          reviews: [['APPROVED', 11]],
+          commits: [['d0', 17], ['e1', 16], ['f2', 15], ['a3', 11]],
+          closing: [{ number: 52, state: 'CLOSED', stateReason: 'COMPLETED', createdAt: at(19, 9), closedAt: at(9, 11), repository: { nameWithOwner: 'contoso/api' }, issueType: { name: 'Bug' } }],
+        }),
+      ] },
+      'pr:87': null,
+      'issue:52': issue(52, 'CLOSED', 'Bug', 19, 9),
+      'branch:mona/61-rate-limits': { totalCount: 1, nodes: [
+        pr(90, 'mona/61-rate-limits', { state: 'OPEN', created: 2, commits: [['b4', 5], ['c5', 3]] }),
+      ] },
+      'issue:61': issue(61, 'OPEN', 'Feature', 8),
+    },
+    'fabrikam/tools': {
+      'branch:main': { totalCount: 0, nodes: [] },
+      'issue:19': issue(19, 'OPEN', 'Task', 14),
+    },
+  };
+  github['contoso/web-app']['pr:128'] = github['contoso/web-app']['branch:mona/AB1234-checkout-flow'].nodes[0];
+  github['contoso/api']['pr:87'] = github['contoso/api']['branch:mona/52-token-refresh'].nodes[0];
+
+  const run = async (command, args) => {
+    assert.equal(command, 'gh', 'only gh is called when a PAT is set');
+    const value = (flag, name) => {
+      const i = args.findIndex((a, j) => args[j - 1] === flag && a.startsWith(`${name}=`));
+      return i < 0 ? null : args[i].slice(name.length + 1);
+    };
+    const repo = github[`${value('-f', 'owner')}/${value('-f', 'name')}`] ?? {};
+    const data = {};
+    args.forEach((arg, i) => {
+      const match = /^([pbi])(\d+)=(.*)$/.exec(arg);
+      if (!match || !['-f', '-F'].includes(args[i - 1])) return;
+      const kind = { p: 'pr', b: 'branch', i: 'issue' }[match[1]];
+      data[`${match[1]}${match[2]}`] = repo[`${kind}:${match[3]}`] ?? (kind === 'branch' ? { totalCount: 0, nodes: [] } : null);
+    });
+    return { code: 0, missing: false, stdout: JSON.stringify({ data: { repository: data } }), stderr: '' };
+  };
+
+  const workItems = {
+    1234: { 'System.WorkItemType': 'User Story', 'System.State': 'Closed', 'System.TeamProject': 'Web', 'System.CreatedDate': at(35), 'Microsoft.VSTS.Common.ActivatedDate': at(27, 8), 'Microsoft.VSTS.Common.ClosedDate': at(15, 13) },
+    1250: { 'System.WorkItemType': 'Task', 'System.State': 'Active', 'System.TeamProject': 'Web', 'System.CreatedDate': at(9), 'Microsoft.VSTS.Common.ActivatedDate': at(6, 8) },
+  };
+  const states = [
+    { name: 'New', category: 'Proposed' },
+    { name: 'Active', category: 'InProgress' },
+    { name: 'Resolved', category: 'Resolved' },
+    { name: 'Closed', category: 'Completed' },
+  ];
+  const fetchImpl = async (url) => {
+    const u = new URL(url);
+    const body = u.pathname.endsWith('/_apis/wit/workitems')
+      ? { value: u.searchParams.get('ids').split(',').map((id) => (workItems[id] ? { id: Number(id), fields: workItems[id] } : null)) }
+      : { value: states };
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  return { run, fetch: fetchImpl, organization: 'contoso', env: { AZURE_DEVOPS_EXT_PAT: 'synthetic' } };
+}
+
 let nextId = 1;
 const pending = new Map();
 
@@ -418,6 +576,68 @@ async function waitForRender(ws, sessionId, ready) {
   throw new Error(`canvas did not finish rendering; saw: ${text}`);
 }
 
+const WORD_BUDGETS = { outcomes: 200, recipe: 600, surfaces: 300, intersection: 180, model: 130, gaps: 180, coverage: 280, research: 130 };
+
+async function verifyCompactView(ws, sessionId, view) {
+  const words = await evaluate(ws, sessionId, "document.getElementById('view').innerText.trim().split(/\\s+/).length");
+  assert.ok(words <= WORD_BUDGETS[view], `${view}: ${words} visible words exceeds ${WORD_BUDGETS[view]}`);
+  console.log(`${view}: ${words}/${WORD_BUDGETS[view]} visible words`);
+  const detail = {
+    outcomes: ['roi-contract', 'incremental cost'],
+    recipe: ['recipe-privacy', 'Titles'],
+    surfaces: ['cell-time-vscode', 'span start_time'],
+    intersection: ['matrix-guide', 'Missing and unverified'],
+    model: ['accounting-rules', 'Count each model call once'],
+    gaps: ['verification-status', 'verified'],
+    coverage: ['tokens-sessionStore', 'Reported subtotals'],
+    research: ['research-0', 'Decision: proceed'],
+  }[view];
+  if (detail) {
+    const selector = `[data-detail="${detail[0]}"]`;
+    await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(`${selector} > summary`)}).focus()`);
+    await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', text: '\r', windowsVirtualKeyCode: 13 }, sessionId);
+    await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, sessionId);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    const expanded = await evaluate(ws, sessionId, `(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      return { open: el.open, text: el.innerText };
+    })()`);
+    assert.ok(expanded.open, `${view}: Enter opens the detail`);
+    assert.ok(expanded.text.includes(detail[1]), `${view}: full evidence is still accessible`);
+    if (view === 'surfaces') {
+      await evaluate(ws, sessionId, "document.querySelector('[data-focus-key=\"group-all\"]').click()");
+      await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+      assert.ok(await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(selector)}).open`), 'disclosures survive re-rendering');
+      assert.equal(await evaluate(ws, sessionId, 'document.activeElement.dataset.focusKey'), 'detail-cell-time-vscode', 'detail focus survives re-rendering');
+    }
+    await evaluate(ws, sessionId, `document.querySelector(${JSON.stringify(selector)}).open = false`);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+  }
+  if (view === 'model') {
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-node').length"), 8);
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-graph .edge').length"), 8);
+  }
+  if (view === 'outcomes') {
+    assert.ok(await evaluate(ws, sessionId, "document.querySelector('.ratio-bar.unknown[aria-label=\"Not measured\"]') !== null"), 'missing is not a zero bar');
+  }
+  if (view === 'coverage') {
+    assert.ok(await evaluate(ws, sessionId, "document.querySelector('.not-emitted .bar.unknown') !== null"), 'unavailable stages have a dashed empty bar');
+    assert.ok(await evaluate(ws, sessionId, "document.getElementById('view').innerText.includes('No agent-host-traces.db')"), 'source failures stay visible');
+  }
+}
+
+async function verifyNarrowView(ws, sessionId, view) {
+  await send(ws, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false }, sessionId);
+  for (const expanded of [false, true]) {
+    await evaluate(ws, sessionId, `document.querySelectorAll('#view details').forEach((el) => { el.open = ${expanded}; })`);
+    await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    const width = await evaluate(ws, sessionId, 'document.documentElement.scrollWidth');
+    assert.ok(width <= 391, `${view}: ${expanded ? 'expanded' : 'compact'} page overflows a 390px viewport (${width}px)`);
+  }
+  await evaluate(ws, sessionId, "document.querySelectorAll('#view details').forEach((el) => { el.open = false; })");
+  await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+}
+
 async function verifyThemes(ws, sessionId) {
   const colors = async () => evaluate(ws, sessionId, `(() => {
     const style = getComputedStyle(document.body);
@@ -471,37 +691,56 @@ async function verifyThemes(ws, sessionId) {
   console.log('Theme checks passed: system changes, body-injected host tokens, explicit overrides and text contrast >= 4.5:1.');
 }
 
-async function startServer(paths, now) {
-  const [{ startCanvasServer }, { computeCoverage }, { loadModel, loadResearch }] = await Promise.all([
+async function startServer(paths, now, display = { verified: true }) {
+  const [{ startCanvasServer }, { computeCoverage, withoutRecipe }, { loadModel, loadResearch }, { recipeView }, { verifyRecipe }] = await Promise.all([
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'server.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'coverage.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'model.mjs')).href),
+    import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'recipe.mjs')).href),
+    import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'verify.mjs')).href),
   ]);
   let view = 'outcomes';
   let windowDays = 30;
   let cachedCoverage;
+  let verification = null;
   const displayCoverage = (coverage) => ({
-    ...coverage,
+    ...withoutRecipe(coverage),
     sources: coverage.sources.map((source) => ({
       ...source,
-      path: source.id === 'sessionStore' ? 'synthetic\\session-store.db' : 'synthetic\\agent-traces.db',
+      path: source.path ? `synthetic\\${path.basename(source.path)}` : null,
     })),
   });
-  const options = () => ({ windowDays, now, ...paths });
+  // Discovery is pointed at an empty sandbox, so no real local store can reach a screenshot.
+  const sandbox = path.dirname(paths.sessionStorePath);
+  const options = () => ({ windowDays, now, ...paths, env: {}, home: sandbox, platform: 'linux' });
+  const coverage = async () => {
+    if (!cachedCoverage) {
+      cachedCoverage = await computeCoverage(options());
+      for (const source of cachedCoverage.sources) {
+        assert.ok(!source.path || path.resolve(source.path).startsWith(sandbox), `${source.id} must read only synthetic fixtures`);
+        assert.ok(source.status !== 'ok' || source.path, `${source.id} must come from a synthetic fixture`);
+      }
+    }
+    return cachedCoverage;
+  };
+  const verify = async () => {
+    verification = await verifyRecipe((await coverage()).recipe, { ...syntheticForges(now), now, home: sandbox, platform: 'linux' });
+    return recipeView((await coverage()).recipe, verification);
+  };
+  await verify();
   return startCanvasServer({
     uiDir: path.join(EXTENSION_DIR, 'ui'),
     api: {
       model: () => loadModel(),
       research: () => loadResearch(),
-      coverage: async () => {
-        cachedCoverage ??= await computeCoverage(options());
-        return displayCoverage(cachedCoverage);
-      },
+      coverage: async () => displayCoverage(await coverage()),
       refresh: async (days) => {
         windowDays = Number.isFinite(Number(days)) ? Math.max(0, Math.min(365, Math.floor(Number(days)))) : windowDays;
-        cachedCoverage = await computeCoverage(options());
-        return displayCoverage(cachedCoverage);
+        cachedCoverage = null;
+        return displayCoverage(await coverage());
       },
+      recipe: async () => recipeView((await coverage()).recipe, display.verified ? verification : null),
+      verify,
       getView: () => view,
       setView: (next) => {
         if (SHOTS.some((shot) => shot.view === next) || ['gaps', 'research'].includes(next)) view = next;
@@ -532,7 +771,8 @@ async function setServerView(serverUrl, view) {
   let server;
   try {
     const fixtures = createFixtures(runDir, now);
-    server = await startServer(fixtures, now);
+    const display = { verified: true };
+    server = await startServer(fixtures, now, display);
     browser = spawn(
       findBrowser(),
       [
@@ -568,6 +808,7 @@ async function setServerView(serverUrl, view) {
 
     let themesVerified = false;
     for (const shot of shots) {
+      display.verified = shot.verified !== false;
       await setServerView(server.url, shot.view);
       await send(
         ws,
@@ -577,6 +818,7 @@ async function setServerView(serverUrl, view) {
       );
       await send(ws, 'Page.navigate', { url: server.url }, sessionId);
       await waitForRender(ws, sessionId, shot.ready);
+      await verifyCompactView(ws, sessionId, shot.view);
       if (!themesVerified) {
         await verifyThemes(ws, sessionId);
         themesVerified = true;
@@ -589,22 +831,22 @@ async function setServerView(serverUrl, view) {
       if (shot.view === 'intersection') {
         assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('table.matrix .badge.missing, table.matrix .badge.unverified').length"), 0);
       }
-      await evaluate(ws, sessionId, 'window.scrollTo(0, 0)');
+      if (shot.prepare) await evaluate(ws, sessionId, shot.prepare);
+      await evaluate(ws, sessionId, 'document.activeElement.blur(); window.scrollTo(0, 0)');
       const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       const buf = Buffer.from(data, 'base64');
       const out = path.join(OUT, shot.file);
       fs.writeFileSync(out, buf);
       console.log(`${rel(out)}  ${shot.w * shot.dsf}x${shot.h * shot.dsf}  ${(buf.length / 1024).toFixed(1)} kB`);
+      await verifyNarrowView(ws, sessionId, shot.view);
     }
-    for (const [view, ready] of [
-      ['gaps', "document.body.innerText.includes('Verification status')"],
-      ['research', "document.querySelector('.md') && document.body.innerText.includes('Billing reconciliation contract')"],
-    ]) {
-      await setServerView(server.url, view);
-      await send(ws, 'Page.navigate', { url: server.url }, sessionId);
-      await waitForRender(ws, sessionId, ready);
+    await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').focus()");
+    for (const [key, expected] of [['Home', 'outcomes'], ['ArrowRight', 'recipe'], ['End', 'research']]) {
+      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key }, sessionId);
+      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }, sessionId);
+      assert.equal(await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').dataset.view"), expected);
     }
-    console.log('Gaps and Research views rendered without schema or loading errors.');
+    console.log('Compact views passed: word budgets, keyboard disclosures and tabs, retained evidence, narrow layouts.');
   } finally {
     if (ws) {
       await send(ws, 'Browser.close').catch(() => {});

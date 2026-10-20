@@ -110,6 +110,9 @@ a {
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   padding: 16px 20px 0;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 16px;
 }
 
 .eyebrow {
@@ -159,6 +162,8 @@ h5 {
   display: flex;
   gap: 4px;
   overflow-x: auto;
+  grid-column: 1 / -1;
+  min-width: 0;
 }
 .tabs button {
   appearance: none;
@@ -211,6 +216,7 @@ main {
   border-radius: var(--radius);
   background: var(--surface);
   padding: 12px 14px;
+  min-width: 0;
 }
 .card h3 {
   margin-top: 0;
@@ -407,7 +413,7 @@ th.num {
 }
 .funnel .row {
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) 3fr minmax(150px, auto);
+  grid-template-columns: minmax(95px, 1fr) 2fr auto;
   gap: 10px;
   align-items: center;
 }
@@ -416,6 +422,10 @@ th.num {
   border-radius: 4px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   overflow: hidden;
+}
+.funnel .bar.unknown {
+  border: 1px dashed var(--muted);
+  background: none;
 }
 .funnel .fill {
   height: 100%;
@@ -426,9 +436,7 @@ th.num {
   background: var(--red);
 }
 .funnel .row.not-emitted .label::after {
-  content: ' · not emitted';
-  color: var(--red);
-  font-size: 11px;
+  content: none;
 }
 .funnel .stats {
   font-size: 12px;
@@ -536,4 +544,864 @@ th.num {
   min-width: 3px;
   background: color-mix(in srgb, var(--orange) 70%, transparent);
   border-radius: 2px 2px 0 0;
+}
+
+/* ---------------------------------------------------------------- recipe */
+
+.recipe-toolbar .org {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  min-width: 220px;
+}
+.recipe-toolbar button.primary {
+  border-color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 14%, var(--bg));
+  font-weight: var(--font-weight-semibold, 600);
+}
+.status-chip {
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 10px;
+  max-width: 520px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-chip.ok {
+  border-color: var(--green);
+  color: var(--green);
+}
+.status-chip.partial,
+.status-chip.not-configured,
+.status-chip.skipped {
+  border-color: var(--yellow);
+}
+.status-chip.error,
+.status-chip.unavailable {
+  border-color: var(--red);
+}
+.status-chip.pending {
+  color: var(--muted);
+}
+
+.recipe-strip {
+  margin: 12px 0;
+  padding: 8px 10px 4px;
+}
+.recipe-strip svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.recipe-strip .band rect {
+  fill: color-mix(in srgb, var(--fg) 3%, transparent);
+  stroke: var(--border);
+}
+.recipe-strip .band-ingredients rect {
+  fill: color-mix(in srgb, var(--purple) 6%, transparent);
+}
+.recipe-strip .band-method rect {
+  fill: color-mix(in srgb, var(--orange) 6%, transparent);
+}
+.recipe-strip .band-serve rect {
+  fill: color-mix(in srgb, var(--green) 6%, transparent);
+}
+.recipe-strip .band-label {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  fill: var(--fg);
+}
+.recipe-strip .band-detail {
+  font-size: 12px;
+  fill: var(--muted);
+}
+.recipe-strip .ribbon {
+  fill: color-mix(in srgb, var(--orange) 85%, var(--bg));
+}
+.recipe-strip .ribbon-any {
+  fill: color-mix(in srgb, var(--orange) 38%, var(--bg));
+}
+.recipe-strip .ribbon-pending {
+  fill: url(#recipe-hatch);
+  stroke: color-mix(in srgb, var(--orange) 50%, transparent);
+  stroke-dasharray: 4 3;
+}
+.recipe-strip .hatch-bg {
+  fill: color-mix(in srgb, var(--orange) 10%, transparent);
+}
+.recipe-strip .hatch-line {
+  stroke: color-mix(in srgb, var(--orange) 55%, transparent);
+  stroke-width: 2;
+}
+.recipe-strip .drop path {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+}
+.recipe-strip .drop text {
+  font-size: 12px;
+  fill: var(--muted);
+}
+.recipe-strip .drop circle {
+  fill: var(--muted);
+}
+.recipe-strip .station-name {
+  font-size: 14px;
+  font-weight: 600;
+  fill: var(--fg);
+}
+.recipe-strip .station-ring {
+  fill: var(--bg);
+  stroke: var(--fg);
+  stroke-width: 2;
+}
+.recipe-strip .station.referenced .station-ring {
+  stroke: var(--purple);
+}
+.recipe-strip .station.unknown .station-ring,
+.recipe-strip .station.empty .station-ring {
+  stroke: var(--muted);
+  stroke-dasharray: 4 3;
+}
+.recipe-strip .station-count {
+  font-size: 15px;
+  font-weight: 600;
+  fill: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.recipe-strip .station-any {
+  font-size: 11px;
+  fill: var(--muted);
+}
+.recipe-strip .ev-track {
+  fill: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.icon {
+  fill: none;
+  stroke: var(--fg);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.recipe-strip rect.ev-verified,
+.swatch.ev-verified {
+  fill: var(--green);
+  background: var(--green);
+}
+.recipe-strip rect.ev-recorded,
+.swatch.ev-recorded {
+  fill: var(--purple);
+  background: var(--purple);
+}
+.recipe-strip rect.ev-convention,
+.swatch.ev-convention {
+  fill: var(--blue);
+  background: var(--blue);
+}
+.recipe-strip rect.ev-observed,
+.swatch.ev-observed {
+  fill: var(--orange);
+  background: var(--orange);
+}
+.recipe-strip .legend {
+  margin: 4px 6px 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+.swatch.ribbon,
+.swatch.bar {
+  background: color-mix(in srgb, var(--orange) 72%, transparent);
+}
+.swatch.ribbon-any {
+  background: color-mix(in srgb, var(--orange) 38%, var(--bg));
+}
+.swatch.pending {
+  background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--orange) 55%, transparent) 0 2px, transparent 2px 5px);
+  border: 1px dashed color-mix(in srgb, var(--orange) 50%, transparent);
+}
+.swatch.drop {
+  border: 1px dashed var(--muted);
+}
+.badge.ev-verified {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+}
+.badge.ev-recorded {
+  color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 14%, transparent);
+}
+.badge.ev-convention {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 14%, transparent);
+}
+.badge.ev-observed {
+  color: var(--orange);
+  background: color-mix(in srgb, var(--orange) 14%, transparent);
+}
+
+.recipe-kpis {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+.recipe-kpis .kpi .value {
+  margin: 4px 0 2px;
+}
+
+.recipe-pair {
+  align-items: start;
+}
+.adherence-body {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.donut-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+}
+.donut {
+  width: 120px;
+  height: 120px;
+}
+.donut-track {
+  fill: none;
+  stroke: color-mix(in srgb, var(--fg) 8%, transparent);
+  stroke-width: 16;
+}
+.donut-seg {
+  fill: none;
+  stroke-width: 16;
+}
+.donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.donut-center strong {
+  font-size: 22px;
+  color: var(--fg);
+}
+.seg-ab,
+.swatch.seg-ab {
+  stroke: var(--purple);
+  background: var(--purple);
+}
+.seg-gh,
+.swatch.seg-gh {
+  stroke: var(--blue);
+  background: var(--blue);
+}
+.seg-non,
+.swatch.seg-non {
+  stroke: var(--orange);
+  background: var(--orange);
+}
+.seg-none,
+.swatch.seg-none {
+  stroke: var(--border);
+  background: var(--border);
+}
+.legend-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+table.compact td {
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.hook summary {
+  cursor: pointer;
+  font-size: 13px;
+  margin-top: 6px;
+}
+.hook pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  overflow-x: auto;
+}
+
+.source-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.src {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 18px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.src-sessionStore {
+  border-color: color-mix(in srgb, var(--orange) 60%, transparent);
+}
+.src-traces {
+  border-color: color-mix(in srgb, var(--blue) 60%, transparent);
+}
+.src-agentHost {
+  border-color: color-mix(in srgb, var(--purple) 60%, transparent);
+}
+
+.pantry-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+.jar {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--muted);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--bg);
+  display: grid;
+  gap: 6px;
+}
+.jar-azure-boards {
+  border-left-color: var(--purple);
+}
+.jar-github {
+  border-left-color: var(--blue);
+}
+.jar-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+.jar-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+  overflow: hidden;
+}
+.jar-bar div {
+  height: 100%;
+  background: color-mix(in srgb, var(--orange) 72%, transparent);
+}
+
+.lanes {
+  display: grid;
+  gap: 6px;
+}
+.lane-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.lane-legend svg {
+  vertical-align: -3px;
+}
+.lane {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.2fr) minmax(320px, 3fr) minmax(130px, 0.7fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  background: var(--surface);
+}
+.lane.open {
+  border-color: var(--orange);
+}
+.lane-meta {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  padding: 2px;
+  min-width: 0;
+}
+.lane-meta .branch {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 2px;
+}
+.chip {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 18px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.chip.wi-azure-boards {
+  border-color: var(--purple);
+}
+.chip.wi-github {
+  border-color: var(--blue);
+}
+.chip.pr-merged {
+  border-color: var(--purple);
+  background: color-mix(in srgb, var(--purple) 12%, transparent);
+}
+.chip.pr-open {
+  border-color: var(--green);
+}
+.chip.pr-closed {
+  border-color: var(--red);
+}
+.dots {
+  display: inline-flex;
+  gap: 3px;
+  margin-left: 4px;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+}
+.dot.yes {
+  background: var(--orange);
+  border-color: var(--orange);
+}
+.dot.no {
+  border-color: var(--red);
+}
+.dot.unknown {
+  border-style: dashed;
+}
+.lane-track {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.lane-track .axis {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+.lane-track .axis.faint {
+  stroke-dasharray: 2 3;
+}
+.lane-track .bar.src-sessionStore {
+  fill: color-mix(in srgb, var(--orange) 70%, transparent);
+}
+.lane-track .bar.src-traces {
+  fill: color-mix(in srgb, var(--blue) 65%, transparent);
+}
+.lane-track .bar.src-agentHost {
+  fill: color-mix(in srgb, var(--purple) 65%, transparent);
+}
+.mk path,
+.mk circle,
+.mk rect {
+  stroke-width: 1.8;
+  fill: var(--bg);
+}
+.mk-work path {
+  stroke: var(--purple);
+}
+.mk-branch circle {
+  stroke: var(--blue);
+}
+.mk-commit circle {
+  stroke: var(--green);
+}
+.mk-pr rect {
+  stroke: var(--blue);
+}
+.mk-review path {
+  stroke: var(--yellow);
+}
+.mk-merged circle {
+  stroke: var(--purple);
+}
+.mk-merged .tick {
+  fill: none;
+  stroke: var(--bg);
+}
+.mk-closed path,
+.mk-done path,
+.mk-earlier path {
+  fill: none;
+}
+.mk-closed path {
+  stroke: var(--red);
+}
+.mk-done path {
+  stroke: var(--green);
+  stroke-width: 2.6;
+}
+.mk-earlier path {
+  stroke: var(--purple);
+}
+.mk.ev-verified.mk-work path {
+  fill: var(--purple);
+}
+.mk.ev-verified.mk-commit circle {
+  fill: var(--green);
+}
+.mk.ev-verified.mk-pr rect {
+  fill: var(--blue);
+}
+.mk.ev-verified.mk-review path {
+  fill: var(--yellow);
+}
+.mk.ev-verified.mk-merged circle {
+  fill: var(--purple);
+}
+.mk.ev-observed.mk-branch circle {
+  fill: var(--blue);
+}
+.lane-side {
+  display: grid;
+  gap: 2px;
+  justify-items: end;
+  text-align: right;
+}
+.lane-side .lead {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.recipe-card {
+  grid-column: 1 / -1;
+  list-style: none;
+  margin: 4px 0 2px;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--border);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 8px 16px;
+}
+.rc-step {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 6px;
+  align-items: start;
+}
+.rc-step.no,
+.rc-step.unknown {
+  opacity: 0.8;
+}
+.rc-icon svg {
+  display: block;
+}
+.rc-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 2px 0;
+}
+.lanes .more {
+  justify-self: start;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+/* Compact summaries keep the full evidence one disclosure away. */
+.disclosure {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin: 10px 0;
+  min-width: 0;
+}
+.disclosure > summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.disclosure[open] > summary {
+  margin-bottom: 10px;
+}
+.disclosure p,
+.disclosure li {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.disclosure table {
+  display: block;
+  overflow-x: auto;
+}
+.disclosure .mono {
+  overflow-wrap: anywhere;
+}
+.disclosure pre {
+  overflow-x: auto;
+}
+.matrix .disclosure {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.matrix .disclosure > summary {
+  font-weight: normal;
+  white-space: nowrap;
+}
+.matrix .disclosure[open] {
+  min-width: 180px;
+  max-width: 300px;
+}
+.matrix .concept .badge {
+  margin-top: 3px;
+}
+.grid.cards > .disclosure {
+  margin: 0;
+  background: var(--surface);
+}
+.disclosure .head {
+  display: inline;
+}
+.disclosure .head h3 {
+  display: inline;
+  margin: 0 8px 0 0;
+}
+.metric-list,
+.breakdown-bars {
+  display: grid;
+  gap: 12px;
+}
+.metric-label,
+.split-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+.metric-label > :first-child {
+  overflow-wrap: anywhere;
+}
+.ratio-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+}
+.ratio-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+}
+.ratio-bar.unknown {
+  border: 1px dashed var(--muted);
+  background: none;
+}
+.split-labels {
+  margin: 8px 0;
+}
+.outcome-kpis .disclosure {
+  margin-bottom: 0;
+  padding: 5px 0 0;
+  border: 0;
+}
+.outcome-kpis h3 {
+  margin-bottom: 12px;
+}
+.mini-stats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 12px 0;
+}
+.mini-stats .card {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.mini-stats strong {
+  font-size: 24px;
+}
+.stat-native,
+.stat-low {
+  border-left: 3px solid var(--green);
+}
+.stat-partial,
+.stat-medium {
+  border-left: 3px solid var(--yellow);
+}
+.stat-missing,
+.stat-high {
+  border-left: 3px solid var(--red);
+}
+.flow-strip {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+  flex-wrap: wrap;
+}
+.flow-strip > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 180px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+.flow-number {
+  color: var(--orange);
+  font-weight: 700;
+}
+.model-graph {
+  margin: 0;
+  overflow-x: auto;
+}
+.model-graph svg {
+  display: block;
+  width: 100%;
+  min-width: 650px;
+}
+.model-graph .edge {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.5;
+}
+#model-arrow path {
+  fill: var(--muted);
+}
+.model-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+.node-ai_session rect,
+.node-model_call rect,
+.node-tool_call rect {
+  stroke: var(--orange);
+}
+.node-attribution rect,
+.node-work_item rect {
+  stroke: var(--purple);
+}
+.node-outcome rect {
+  stroke: var(--green);
+}
+.node-label {
+  fill: var(--fg);
+  font-size: 16px;
+  font-weight: 600;
+}
+.node-caption {
+  fill: var(--muted);
+  font-size: 11px;
+}
+.tier-cards {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+.coverage-sources {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr));
+  align-items: start;
+}
+.source-card h2 {
+  margin-top: 0;
+}
+.source-card .grid.kpis {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  margin: 14px 0;
+}
+.source-card .grid.two {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr));
+}
+.timing-row {
+  display: flex;
+  gap: 10px 24px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+.timing-row strong {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.recipe-toolbar .status-chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.research-index {
+  max-width: none;
+}
+@media (max-width: 800px) {
+  .lane {
+    grid-template-columns: 1fr auto;
+  }
+  .lane-track {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+  .grid.two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recipe-strip {
+    overflow-x: auto;
+  }
+  .recipe-strip > svg {
+    min-width: 850px;
+  }
+}
+@media (max-width: 480px) {
+  .top {
+    padding: 10px 12px 0;
+  }
+  main {
+    padding: 12px;
+  }
+  .mini-stats .card {
+    display: grid;
+    gap: 2px;
+  }
+  .recipe-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lane-side {
+    grid-row: 3;
+    text-align: left;
+    justify-items: start;
+  }
 }

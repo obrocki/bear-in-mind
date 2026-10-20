@@ -133,6 +133,14 @@ dependencies; reload extensions in the app after editing. Its tests run with
   off give no climate, which renders the neutral scene pixel-for-pixel, never a
   "light" model. A pinned chat uses only its own latest call. Describe it as
   credit pace, never as energy, emissions or price.
+- The canvas Recipe keys one cycle per repository branch and keeps credits per
+  source, never summed. Recorded references keep only numbers of the session's
+  own repository and commit IDs; summaries and free text are never read.
+  Unknown steps stay unknown until verified. Verification runs only on request,
+  sends only recorded identifiers, never selects titles, descriptions, commit
+  messages, comments or logins, passes GitHub values as GraphQL variables and
+  keeps Azure DevOps tokens in memory. `lib/convention.mjs` and the
+  self-contained `hooks/commit-msg` must parse branches identically.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.
@@ -152,6 +160,10 @@ light, dark and both high-contrast modes and check text contrast/live SVG paints
 Run `npm run media` after artwork changes. The HTML screenshot harness mirrors
 webview markup and must stay in sync. `tools/dashboard.html?waiting` previews a
 connected feed without quality signals. See [tools/README.md](tools/README.md).
+Committed screenshots use invented repositories, users and organizations only.
+`npm run media:canvas` points store discovery at an empty sandbox and fails if a
+source resolves outside its synthetic fixtures; Recipe verification there uses
+canned answers, never the network.
 
 ## Packaging and releases
 

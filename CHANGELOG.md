@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **AI attribution canvas: Recipe tab.** One AI-assisted delivery cycle per
+  repository branch, from work item to merged pull request: ingredients (GitHub
+  issue or Azure Boards work item, branch), method (AI sessions, credits,
+  commits) and serve (PR, review, merge and work-item closure). A recipe strip,
+  convention gauge, ingredient cards and per-cycle timelines show what local
+  stores record. **Verify with GitHub & Azure Boards** is an explicit step that
+  asks `gh` and Azure DevOps for PR state, reviews, merge and closure using only
+  recorded identifiers; titles, descriptions and commit messages are never
+  requested. Branches named `prefix/AB123-slug` or `prefix/123-slug` link to
+  Azure Boards work item 123 or GitHub issue 123, and an opt-in `commit-msg`
+  hook adds the matching `Refs:` trailer. Canvas screenshots now read only
+  sandboxed synthetic stores.
+- **Tighter attribution tabs:** shorter summaries, compact coverage bars,
+  an entity diagram and expandable evidence across all eight views.
+  Recipe keeps its full lifecycle with fewer KPI cards; Research becomes a
+  section index. Keyboard controls, narrow layouts and visible-copy budgets
+  are checked by the synthetic screenshot harness.
+
 ## 0.7.1
 
 - **Model climate:** the habitat's weather now shows the pace of the model in

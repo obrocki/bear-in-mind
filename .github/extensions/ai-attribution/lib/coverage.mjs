@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TokenTally } from './tokenCoverage.cjs';
+import { CycleCollector, buildRecipe } from './recipe.mjs';
 
 export const NANO_AIU_PER_CREDIT = 1_000_000_000;
 const DAY_MS = 86_400_000;
@@ -268,8 +269,8 @@ function withinWindow(value, sinceMs, sinceDay) {
   return t.dateOnly && t.day > sinceDay;
 }
 
-/** Coverage for the Copilot CLI / GitHub Copilot app session store. */
-export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) {
+/** Coverage for the Copilot CLI / GitHub Copilot app session store. `cycles` optionally collects Recipe evidence. */
+export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0, cycles = null } = {}) {
   const tables = tableNames(db);
   if (!tables.has('assistant_usage_events')) {
     return {
@@ -393,6 +394,14 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
 
     // Bucket by normalized UTC instant, not raw text; unreadable values are skipped.
     const t = timestampMs(row.created_at);
+    cycles?.addCall('sessionStore', {
+      repository: sessionId ? repository : null,
+      branch: session?.branch,
+      session: sessionId,
+      at: t.ms ?? (t.dateOnly ? Date.parse(`${t.day}T00:00:00Z`) : null),
+      nano,
+      credited: hasCredit,
+    });
     const iso = t.ms !== null ? new Date(t.ms).toISOString() : t.dateOnly ? `${t.day}T00:00:00.000Z` : null;
     if (iso) {
       const day = iso.slice(0, 10);
@@ -413,6 +422,24 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0 } = {}) 
     stage('workRef', '…and a work reference (PR, issue or commit)', stages.workRef, refsAvailable),
     stage('pullRequest', '…and a recorded PR reference', stages.pullRequest, refsAvailable),
   ];
+
+  // Recipe evidence: validated reference values only (numbers and commit IDs).
+  if (cycles && refsAvailable && refCols.has('ref_value')) {
+    const at = refCols.has('created_at') ? 'created_at' : 'NULL AS created_at';
+    for (const row of db
+      .prepare(`SELECT session_id, ref_type, ref_value, ${at} FROM session_refs WHERE ref_type IN ('pr', 'issue', 'commit')`)
+      .all()) {
+      const session = sessions.get(String(row.session_id));
+      if (!session) continue;
+      cycles.addRef({
+        repository: normalizeRepository(session.repository),
+        branch: session.branch,
+        type: String(row.ref_type),
+        value: row.ref_value,
+        at: timestampMs(row.created_at).ms,
+      });
+    }
+  }
 
   return {
     status: 'ok',
@@ -531,7 +558,7 @@ export function reasoningEffortFromOptions(raw) {
  * Agent Host's agent-host-traces.db: same schema, but only Copilot runtime
  * traces count and credits are the per-turn github.copilot.nano_aiu on chat spans.
  */
-export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false } = {}) {
+export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false, cycles = null, source = copilotRuntime ? 'agentHost' : 'traces' } = {}) {
   const tables = tableNames(db);
   if (!tables.has('spans')) {
     return { status: 'schema', reason: 'Table spans not found; the trace store schema may have changed.' };
@@ -711,6 +738,15 @@ export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false } = {})
     byLink.add(link, 1, nano);
     byUser.add(user, 1, nano);
     if (user) addTo(actor, stageKey, nano);
+    cycles?.addCall(source, {
+      repository: ctx?.repository,
+      branch: ctx?.branch,
+      commit: ctx?.commit,
+      session: stageKey,
+      at,
+      nano,
+      credited: hasCredit,
+    });
 
     const start = num(chat.start_time_ms);
     if (start > 0) {
@@ -874,10 +910,11 @@ export async function computeCoverage(options = {}) {
   const tracesPath = options.tracesDbPath || findTracesDb(vscodeGlobalStorageDirs({ env, platform, home }));
   const agentHostPath = options.agentHostTracesDbPath || findAgentHostTracesDb(vscodeUserDataDirs({ env, platform, home }));
 
-  const store = await readDatabase(storePath, (db) => sessionStoreCoverage(db, { sinceDay, sinceMs }));
-  const traces = await readDatabase(tracesPath, (db) => tracesCoverage(db, { sinceMs }));
+  const cycles = new CycleCollector();
+  const store = await readDatabase(storePath, (db) => sessionStoreCoverage(db, { sinceDay, sinceMs, cycles }));
+  const traces = await readDatabase(tracesPath, (db) => tracesCoverage(db, { sinceMs, cycles }));
   const agentHost = agentHostPath
-    ? await readDatabase(agentHostPath, (db) => tracesCoverage(db, { sinceMs, copilotRuntime: true }))
+    ? await readDatabase(agentHostPath, (db) => tracesCoverage(db, { sinceMs, copilotRuntime: true, cycles }))
     : {
         status: 'missing',
         reason: 'No agent-host-traces.db. VS Code 1.141+ stores Copilot-harness traces locally only while chat.agentHost.otel.dbSpanExporter.enabled is on.',
@@ -907,5 +944,12 @@ export async function computeCoverage(options = {}) {
       'Sources are shown side by side and never summed: VS Code-hosted Copilot CLI sessions can appear in more than one.',
       'Local observations, not a bill. Credits = nano-AIU / 1,000,000,000.',
     ],
+    recipe: buildRecipe(cycles, { generatedAt: new Date(now).toISOString(), window: { days, since: sinceDay } }),
   };
+}
+
+/** Coverage without the Recipe's per-hour evidence, for the coverage views and summaries. */
+export function withoutRecipe(coverage) {
+  const { recipe, ...rest } = coverage;
+  return rest;
 }

@@ -487,6 +487,47 @@
     ],
     "allocationPolicy": "User/day/model or work-item allocation is T3 estimation, not measured per-session billing. Preserve missing local/cloud usage and unallocated balances; never manufacture per-model usage from ai_credits_used."
   },
+  "recipe": {
+    "summary": "One AI-assisted delivery cycle as a recipe: ingredients (the work item that starts it), method (the AI-assisted work this canvas measures) and serve (the pull request that closes it). A cycle is one repository branch; local stores supply AI work, branches, commits and recorded references, and an explicit verification step asks GitHub and Azure Boards for review, merge and closure.",
+    "phases": [
+      { "id": "ingredients", "label": "Ingredients", "detail": "The work item that starts the cycle" },
+      { "id": "method", "label": "Method", "detail": "AI-assisted work measured locally" },
+      { "id": "serve", "label": "Serve", "detail": "The pull request that closes the cycle" }
+    ],
+    "steps": [
+      { "id": "workItem", "phase": "ingredients", "name": "Pick up a work item", "concepts": ["issue_task"], "local": "Branch convention prefix/AB123-slug or prefix/123-slug; CLI/app session_refs issue", "verified": "GitHub issue state, type and dates; Azure Boards type, state and created/activated/closed dates; GitHub PR closing references" },
+      { "id": "branch", "phase": "ingredients", "name": "Create a branch", "concepts": ["repository", "branch_commit"], "local": "CLI/app session branch; VS Code github.copilot.git.branch", "verified": "PR head branch" },
+      { "id": "aiWork", "phase": "method", "name": "AI-assisted sessions", "concepts": ["session", "model", "credits"], "local": "Sessions, model calls and reported credits per source", "verified": "Not applicable: AI work is only observed locally" },
+      { "id": "commits", "phase": "method", "name": "Commit, commit, commit", "concepts": ["branch_commit", "code_change"], "local": "CLI/app session_refs commit; distinct VS Code head commits on the branch", "verified": "PR commit IDs and dates" },
+      { "id": "pullRequest", "phase": "serve", "name": "Open a pull request", "concepts": ["pull_request"], "local": "CLI/app session_refs pr", "verified": "PR found by number or by head branch, with its created date" },
+      { "id": "review", "phase": "serve", "name": "Review", "concepts": ["acceptance"], "local": "Not recorded locally", "verified": "PR reviews (state and submitted date) and review decision" },
+      { "id": "close", "phase": "serve", "name": "Merge and close the work item", "concepts": ["delivery", "issue_task"], "local": "Not recorded locally", "verified": "PR merged date; GitHub issue closed date or Azure Boards Resolved/Completed state category" }
+    ],
+    "evidence": [
+      { "id": "verified", "label": "Verified", "tier": "T1", "description": "Confirmed by the GitHub or Azure Boards API during an explicit verification." },
+      { "id": "recorded", "label": "Recorded", "tier": "T0 reference", "description": "A PR, issue or commit the agent referenced (session_refs). A reference, not proof of ownership or delivery." },
+      { "id": "convention", "label": "Convention", "tier": "T2", "description": "Parsed from the branch name convention. Deterministic when the convention is enforced, but not verified." },
+      { "id": "observed", "label": "Observed", "tier": "Local", "description": "Seen in local telemetry: sessions, model calls, credits, branches and head commits." }
+    ],
+    "convention": {
+      "branch": "The work item is the first token after the last slash: prefix/AB123-slug is Azure Boards work item 123; prefix/123-slug is GitHub issue 123 in the same repository.",
+      "examples": [
+        { "branch": "alex/AB123-add-recipe-tab", "workItem": "Azure Boards AB#123" },
+        { "branch": "alex/123-add-recipe-tab", "workItem": "GitHub issue #123" },
+        { "branch": "123-add-recipe-tab", "workItem": "GitHub issue #123 (GitHub's own branch-from-issue naming)" },
+        { "branch": "alex/add-recipe-tab", "workItem": "None: not linked" }
+      ],
+      "hook": "Opt-in commit-msg hook that adds a Refs: AB#123 or Refs: #123 trailer from the branch name when the message does not already reference it, so Azure Boards and GitHub create their own links.",
+      "trailers": { "azure-boards": "Refs: AB#123", "github": "Refs: #123" }
+    },
+    "guardrails": [
+      "Verification runs only when requested and sends only identifiers already recorded locally: repository, branch and PR, issue or work-item numbers.",
+      "Queries select states, dates, types, review states and commit IDs. Titles, descriptions, commit messages, comments and logins are never requested.",
+      "GitHub uses the signed-in gh CLI; Azure Boards uses az account get-access-token or AZURE_DEVOPS_EXT_PAT. Tokens stay in memory and are never logged, returned or stored.",
+      "Credits stay per source. A cycle that spans the CLI/app store and VS Code shows both values, never a sum.",
+      "Reported credits per merged PR are consumption, not cost or value."
+    ]
+  },
   "outcomes": [
     { "id": "coverage", "name": "PR-reference coverage", "measure": "% of reported credits in sessions with a repository, branch and recorded PR reference; not verified delivery or value", "availability": "local", "liveMetric": "creditsToPrShare" },
     { "id": "repo_coverage", "name": "Work-context coverage", "measure": "% of reported credits on model calls with resolved repository context, including trace-only links; not verified work ownership", "availability": "local", "liveMetric": "creditsToRepoShare" },
