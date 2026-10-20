@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.1
+
 - **Model climate:** the habitat's weather now shows the pace of the model in
   use, while the ice still shows remaining allowance. Light models bring slow
   clouds, heavy snow and a pinprick sun; mid models keep today's sky; heavy
