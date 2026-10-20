@@ -17,6 +17,7 @@ const STATIC = new Map([
   ['/dom.js', 'dom.js'],
   ['/markdown.js', 'markdown.js'],
   ['/intersection.mjs', 'intersection.mjs'],
+  ['/recipe.mjs', 'recipe.mjs'],
   ['/format.mjs', 'format.mjs'],
   ['/theme.mjs', 'theme.mjs'],
   ['/style.css', 'style.css'],
@@ -50,6 +51,7 @@ async function readJson(req) {
  *   api: {
  *     model(): Promise<unknown>, research(): Promise<string>,
  *     coverage(): Promise<unknown>, refresh(windowDays?: number): Promise<unknown>,
+ *     recipe?(): Promise<unknown>, verify?(options: { azureDevOpsOrg?: string }): Promise<unknown>,
  *     getView(): string, setView(view: string): string, windowDays(): number,
  *   },
  * }} options
@@ -112,6 +114,16 @@ export async function startCanvasServer({ uiDir, api }) {
       }
       if (req.method === 'GET' && url.pathname === '/api/view') {
         send(res, 200, { view: api.getView() });
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/api/recipe' && api.recipe) {
+        send(res, 200, await api.recipe());
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/recipe/verify' && api.verify) {
+        const body = await readJson(req);
+        const org = typeof body.azureDevOpsOrg === 'string' ? body.azureDevOpsOrg.slice(0, 200) : undefined;
+        send(res, 200, await api.verify({ azureDevOpsOrg: org }));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/api/view') {

@@ -2,10 +2,12 @@ import { h } from './dom.js';
 import { renderMarkdown } from './markdown.js';
 import { intersectConcepts } from './intersection.mjs';
 import { coverageText, formatTokens } from './format.mjs';
+import { renderRecipe } from './recipe.mjs';
 import { initializeTheme } from './theme.mjs';
 
 const VIEWS = [
   { id: 'outcomes', label: 'Outcomes' },
+  { id: 'recipe', label: 'Recipe' },
   { id: 'surfaces', label: 'Surfaces' },
   { id: 'intersection', label: 'Intersection' },
   { id: 'model', label: 'Data model' },
@@ -27,7 +29,19 @@ const AVAILABILITY_TEXT = {
 };
 const SOURCE_SHORT = { sessionStore: 'CLI / app', traces: 'VS Code', agentHost: 'VS Code Copilot harness' };
 
-const state = { view: 'outcomes', model: null, coverage: null, research: null, group: 'all', busy: false };
+const state = {
+  view: 'outcomes',
+  model: null,
+  coverage: null,
+  research: null,
+  group: 'all',
+  busy: false,
+  recipe: null,
+  verifying: false,
+  org: '',
+  expanded: new Set(),
+  showAllCycles: false,
+};
 const main = document.getElementById('view');
 
 // ------------------------------------------------------------- helpers ---
@@ -631,15 +645,7 @@ function sourceCard(s) {
 
 function renderCoverage() {
   const c = state.coverage;
-  const select = h(
-    'select',
-    {
-      'aria-label': 'Window',
-      'data-focus-key': 'window',
-      onchange: (e) => refresh(Number(e.target.value)),
-    },
-    WINDOWS.map((w) => h('option', { value: w.days, selected: c?.window.days === w.days }, w.label)),
-  );
+  const select = windowSelect();
   return [
     h(
       'p',
@@ -670,6 +676,42 @@ function renderCoverage() {
   ];
 }
 
+function windowSelect() {
+  return h(
+    'select',
+    {
+      'aria-label': 'Window',
+      'data-focus-key': 'window',
+      onchange: (e) => refresh(Number(e.target.value)),
+    },
+    WINDOWS.map((w) => h('option', { value: w.days, selected: state.coverage?.window.days === w.days }, w.label)),
+  );
+}
+
+function renderRecipeView() {
+  return renderRecipe(state.recipe, state.model, {
+    windowSelect: windowSelect(),
+    busy: state.busy,
+    verifying: state.verifying,
+    org: state.org,
+    expanded: state.expanded,
+    showAll: state.showAllCycles,
+    refresh: () => refresh(),
+    verify: () => verify(),
+    setOrg: (value) => {
+      state.org = value;
+    },
+    toggle: (key) => {
+      if (!state.expanded.delete(key)) state.expanded.add(key);
+      render();
+    },
+    toggleAll: () => {
+      state.showAllCycles = !state.showAllCycles;
+      render();
+    },
+  });
+}
+
 function renderResearch() {
   if (!state.research) return h('p', { class: 'muted' }, 'Loading research…');
   return [
@@ -693,6 +735,7 @@ function renderResearch() {
 
 const RENDERERS = {
   outcomes: renderOutcomes,
+  recipe: renderRecipeView,
   surfaces: () => renderSurfaces(),
   intersection: () => renderSurfaces(true),
   model: renderModel,
@@ -771,11 +814,40 @@ async function selectView(view, fromUser) {
     state.research = (await api('/api/research')).markdown;
     render();
   }
+  if (view === 'recipe' && !state.recipe) await loadRecipe();
+}
+
+async function loadRecipe() {
+  try {
+    state.recipe = await api('/api/recipe');
+  } catch (err) {
+    state.recipe = null;
+    main.replaceChildren(h('p', {}, `Could not load the recipe: ${err.message}`));
+    return;
+  }
+  render();
+}
+
+async function verify() {
+  if (state.verifying) return;
+  state.verifying = true;
+  render();
+  try {
+    state.recipe = await api('/api/recipe/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.org.trim() ? { azureDevOpsOrg: state.org.trim() } : {}),
+    });
+  } finally {
+    state.verifying = false;
+    render();
+  }
 }
 
 async function loadCoverage() {
   state.coverage = await api('/api/coverage');
   render();
+  if (state.view === 'recipe' || state.recipe) await loadRecipe();
 }
 
 async function refresh(windowDays) {
@@ -792,6 +864,7 @@ async function refresh(windowDays) {
     state.busy = false;
     render();
   }
+  if (state.view === 'recipe' || state.recipe) await loadRecipe();
 }
 
 async function start() {
@@ -816,6 +889,7 @@ async function start() {
   const events = new EventSource('/events');
   events.addEventListener('view', (e) => selectView(JSON.parse(e.data).view, false));
   events.addEventListener('coverage', () => loadCoverage());
+  events.addEventListener('recipe', () => loadRecipe());
 }
 
 start().catch((err) => main.replaceChildren(h('p', {}, `Failed to load: ${err.message}`)));

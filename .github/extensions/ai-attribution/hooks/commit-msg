@@ -1,0 +1,82 @@
+#!/usr/bin/env node
+// commit-msg hook: adds the branch's work item to the commit message, so Azure
+// Boards (AB#123) and GitHub (#123) create their own links.
+//
+//   prefix/AB123-slug  → Refs: AB#123
+//   prefix/123-slug    → Refs: #123
+//
+// It never blocks a commit: it skips merges, detached HEADs, empty messages,
+// non-conforming branches and messages that already carry the reference, and
+// exits 0 on any error. Set AI_ATTRIBUTION_HOOK=off to bypass it once.
+// Install: see .github/extensions/ai-attribution/README.md (Recipe).
+// Self-contained copy of lib/convention.mjs; tests keep the two in step.
+'use strict';
+
+const { execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+
+const ID = '([1-9]\\d{0,8})';
+const AZURE_BOARDS = new RegExp(`^AB#?${ID}(?:[-_.]|$)`, 'i');
+const GITHUB_ISSUE = new RegExp(`^#?${ID}(?:[-_.]|$)`);
+
+function parseBranchWorkItem(value) {
+  if (typeof value !== 'string') return null;
+  const branch = value.trim();
+  if (!branch || branch.length > 255 || /[\u0000-\u001f\u007f\s~^:?*[\\]/.test(branch)) return null;
+  const leaf = branch.slice(branch.lastIndexOf('/') + 1);
+  let match = AZURE_BOARDS.exec(leaf);
+  if (match) return { provider: 'azure-boards', id: Number(match[1]), reference: `AB#${Number(match[1])}` };
+  match = GITHUB_ISSUE.exec(leaf);
+  if (match) return { provider: 'github', id: Number(match[1]), reference: `#${Number(match[1])}` };
+  return null;
+}
+
+function git(args) {
+  return execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+}
+
+function tryGit(args) {
+  try {
+    return git(args);
+  } catch {
+    return null;
+  }
+}
+
+/** Message text git keeps: no comment lines, nothing below the scissors line. */
+function keptText(message, commentChar) {
+  const kept = [];
+  for (const line of message.split(/\r?\n/)) {
+    if (line.startsWith(`${commentChar} `) && line.includes('>8')) break;
+    if (!line.startsWith(commentChar)) kept.push(line);
+  }
+  return kept.join('\n');
+}
+
+function referenced(text, item) {
+  const pattern =
+    item.provider === 'azure-boards'
+      ? new RegExp(`\\bAB#${item.id}(?!\\d)`, 'i')
+      : new RegExp(`(?:^|[^\\w&/])(?:[\\w.-]+/[\\w.-]+)?#${item.id}(?!\\d)|\\bGH-${item.id}(?!\\d)`, 'i');
+  return pattern.test(text);
+}
+
+function main() {
+  const file = process.argv[2];
+  if (!file || /^(off|0|false)$/i.test(process.env.AI_ATTRIBUTION_HOOK ?? '')) return;
+  if (tryGit(['rev-parse', '-q', '--verify', 'MERGE_HEAD'])) return;
+  const item = parseBranchWorkItem(tryGit(['symbolic-ref', '--quiet', '--short', 'HEAD']) ?? '');
+  if (!item) return;
+  const configured = tryGit(['config', '--get', 'core.commentChar']);
+  const commentChar = configured && configured !== 'auto' ? configured[0] : '#';
+  const text = keptText(fs.readFileSync(file, 'utf8'), commentChar);
+  if (!text.trim() || referenced(text, item)) return;
+  git(['interpret-trailers', '--in-place', '--if-exists', 'addIfDifferent', '--trailer', `Refs: ${item.reference}`, file]);
+}
+
+try {
+  main();
+} catch {
+  // A link helper must never block a commit.
+}
+process.exitCode = 0;

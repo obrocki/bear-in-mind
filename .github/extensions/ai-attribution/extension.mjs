@@ -5,11 +5,13 @@
 
 import path from 'node:path';
 import { joinSession, createCanvas, CanvasError } from '@github/copilot-sdk/extension';
-import { computeCoverage } from './lib/coverage.mjs';
+import { computeCoverage, withoutRecipe } from './lib/coverage.mjs';
 import { EXTENSION_DIR, MODEL_SECTIONS, loadModel, loadResearch } from './lib/model.mjs';
+import { recipeView } from './lib/recipe.mjs';
 import { startCanvasServer } from './lib/server.mjs';
+import { verifyRecipe } from './lib/verify.mjs';
 
-const VIEWS = ['outcomes', 'surfaces', 'intersection', 'model', 'gaps', 'coverage', 'research'];
+const VIEWS = ['outcomes', 'recipe', 'surfaces', 'intersection', 'model', 'gaps', 'coverage', 'research'];
 const DEFAULT_WINDOW_DAYS = 30;
 const UI_DIR = path.join(EXTENSION_DIR, 'ui');
 
@@ -81,6 +83,44 @@ function instanceFor(ctx) {
   return instance;
 }
 
+async function recipeFor(instance) {
+  return recipeView((await coverageFor(instance.options)).recipe, instance.verification);
+}
+
+/** Explicit network step: asks GitHub and Azure Boards about the cycles already found locally. */
+async function verifyInstance(instance, organization) {
+  if (organization !== undefined) instance.options = { ...instance.options, azureDevOpsOrg: organization || undefined };
+  instance.verifying ??= (async () => {
+    try {
+      const coverage = await coverageFor(instance.options);
+      instance.verification = await verifyRecipe(coverage.recipe, { organization: instance.options.azureDevOpsOrg });
+      instance.server.broadcast('recipe', { at: instance.verification.at });
+    } finally {
+      instance.verifying = null;
+    }
+  })();
+  await instance.verifying;
+  return recipeFor(instance);
+}
+
+function summarizeRecipe(view) {
+  return {
+    verification: view.verification,
+    totals: view.totals,
+    stations: view.stations.map(({ id, any, strict, unknown }) => ({ id, any, strict, unknown })),
+    kpis: view.kpis,
+    adherence: view.adherence,
+    cycles: view.cycles.slice(0, 10).map((c) => ({
+      repository: c.repository,
+      branch: c.branch,
+      workItems: c.workItems.map((w) => w.reference),
+      pullRequest: c.pullRequest?.number ?? null,
+      reached: c.reached,
+      steps: Object.fromEntries(Object.entries(c.steps).map(([id, s]) => [id, s.state])),
+    })),
+  };
+}
+
 async function openInstance(ctx) {
   const input = ctx.input ?? {};
   let instance = instances.get(ctx.instanceId);
@@ -88,19 +128,23 @@ async function openInstance(ctx) {
     instance = {
       view: 'outcomes',
       options: { windowDays: DEFAULT_WINDOW_DAYS },
+      verification: null,
+      verifying: null,
     };
     instance.server = await startCanvasServer({
       uiDir: UI_DIR,
       api: {
         model: () => loadModel(),
         research: () => loadResearch(),
-        coverage: () => coverageFor(instance.options),
+        coverage: async () => withoutRecipe(await coverageFor(instance.options)),
         refresh: async (days) => {
           instance.options = { ...instance.options, windowDays: clampWindow(days) };
           const coverage = await coverageFor(instance.options, { refresh: true });
           instance.server.broadcast('coverage', { generatedAt: coverage.generatedAt });
-          return coverage;
+          return withoutRecipe(coverage);
         },
+        recipe: () => recipeFor(instance),
+        verify: ({ azureDevOpsOrg } = {}) => verifyInstance(instance, azureDevOpsOrg),
         getView: () => instance.view,
         setView: (view) => {
           if (VIEWS.includes(view)) instance.view = view;
@@ -118,6 +162,7 @@ async function openInstance(ctx) {
   if (input.sessionStorePath !== undefined) options.sessionStorePath = input.sessionStorePath || undefined;
   if (input.tracesDbPath !== undefined) options.tracesDbPath = input.tracesDbPath || undefined;
   if (input.agentHostTracesDbPath !== undefined) options.agentHostTracesDbPath = input.agentHostTracesDbPath || undefined;
+  if (input.azureDevOpsOrg !== undefined) options.azureDevOpsOrg = input.azureDevOpsOrg || undefined;
   instance.options = options;
 
   // Every open recomputes, so a reopened panel never shows a stale snapshot;
@@ -157,12 +202,17 @@ await joinSession({
             type: 'string',
             description: "Override for VS Code's Copilot-harness agent-host-traces.db.",
           },
+          azureDevOpsOrg: {
+            type: 'string',
+            description:
+              'Azure DevOps organization for Recipe verification (name, https://dev.azure.com/<org> or https://<org>.visualstudio.com). Defaults to az devops configure.',
+          },
         },
       },
       actions: [
         {
           name: 'show_view',
-          description: 'Switch the canvas to outcomes, surfaces, intersection, model, gaps, coverage or research.',
+          description: 'Switch the canvas to outcomes, recipe, surfaces, intersection, model, gaps, coverage or research.',
           inputSchema: {
             type: 'object',
             additionalProperties: false,
@@ -198,7 +248,24 @@ await joinSession({
           name: 'get_coverage',
           description: 'Return the full live coverage (funnels, breakdowns, freshness) currently shown.',
           inputSchema: { type: 'object', additionalProperties: false, properties: {} },
-          handler: async (ctx) => coverageFor(instanceFor(ctx).options),
+          handler: async (ctx) => withoutRecipe(await coverageFor(instanceFor(ctx).options)),
+        },
+        {
+          name: 'get_recipe',
+          description: 'Return the Recipe summary: cycle stations, KPIs, branch-convention adherence and the latest cycles.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+          handler: async (ctx) => summarizeRecipe(await recipeFor(instanceFor(ctx))),
+        },
+        {
+          name: 'verify_recipe',
+          description:
+            'Verify Recipe cycles with GitHub (gh CLI) and Azure Boards (az CLI token or AZURE_DEVOPS_EXT_PAT): PR, reviews, merge and work-item closure. Sends only recorded identifiers; never titles, descriptions or commit messages.',
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: { azureDevOpsOrg: { type: 'string' } },
+          },
+          handler: async (ctx) => summarizeRecipe(await verifyInstance(instanceFor(ctx), ctx.input?.azureDevOpsOrg)),
         },
         {
           name: 'get_model',
