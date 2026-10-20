@@ -22,7 +22,9 @@
     tokens: document.getElementById('tokens'),
     split: document.getElementById('split'),
     basis: document.getElementById('basis'),
-    source: document.getElementById('source')
+    source: document.getElementById('source'),
+    climateRow: document.getElementById('climateRow'),
+    climate: document.getElementById('climate')
   };
 
   // ---------------------------------------------------------------- state ---
@@ -103,6 +105,56 @@
   const ICE_COLD = ['#eaf6ff', '#cfeaff', '#a9d8f2', '#6fb0d8', '#3d7fae'].map(hexToRgb);
   const ICE_DUSK = ['#f2ecff', '#ded2ff', '#c3b2e6', '#8f7fbe', '#584d86'].map(hexToRgb);
   const ICE_WARM = ['#ffeadb', '#ffd0b4', '#e0a894', '#a97a74', '#6b4a55'].map(hexToRgb);
+  const SKY_OVERCAST = ['#1b2230', '#2c3747', '#46546a', '#67778d', '#8d9bb0'].map(hexToRgb);
+
+  // --------------------------------------------------------- model climate --
+  // The weather follows the pace of the model in use (`state.climate`, from
+  // src/climate.ts): weight 0 is light (cloud, snow, a pinprick sun), 0.5 is
+  // today's sky and 1 is heavy (a big sun, light thaw). It never changes the
+  // ice. Without a climate every branch below draws the neutral scene as before.
+  const climate = { on: false, weight: 0.5, effort: 0, context: 0.5, sun: null };
+  /** Overcast tint under light-model clouds, and thaw strength for heavy models. */
+  const OVERCAST = 0.3;
+  const THAW = 0.5;
+
+  function setClimate(c) {
+    const on = !!c && typeof c.weight === 'number' && Number.isFinite(c.weight);
+    const level = (v, fallback) => (on && typeof v === 'number' && Number.isFinite(v) ? clamp(v, 0, 1) : fallback);
+    const next = {
+      on,
+      weight: level(on && c.weight, 0.5),
+      effort: level(on && c.effortLevel, 0),
+      context: level(on && c.contextLevel, 0.5)
+    };
+    const same = next.on === climate.on && next.weight === climate.weight &&
+      next.effort === climate.effort && next.context === climate.context;
+    if (same) return;
+    const reseed = next.on !== climate.on;
+    Object.assign(climate, next);
+    palKey = -1;
+    dirty = true;
+    if (reseed) seedFlakes();
+  }
+
+  /** 1 for the lightest models, fading out by weight 0.4. */
+  const cloudiness = () => (climate.on ? clamp((0.4 - climate.weight) / 0.3, 0, 1) : 0);
+  /** 0 below weight 0.6, rising to THAW for the heaviest models. */
+  const thaw = () => (climate.on ? clamp((climate.weight - 0.6) / 0.3, 0, 1) * THAW : 0);
+
+  function climateSnowCount() {
+    const amount = clamp(1.25 - climate.weight * 1.4, 0, 1.25);
+    return amount <= 0.02 ? 0 : Math.round(W * 0.35 * (0.15 + amount * 2.2));
+  }
+
+  function climateDrip() {
+    if (!climate.on) return 1;
+    return climate.weight < 0.5 ? lerp(0.4, 1, clamp((climate.weight - 0.1) / 0.4, 0, 1)) : 1 + 1.8 * thaw();
+  }
+
+  function puddleAt(x) {
+    const k = thaw();
+    return k > 0.02 && noise1(x * 0.23 + 5) > lerp(1, -0.1, k);
+  }
 
   /** Palette for the current health, rebuilt only when health moves a notch. */
   let pal = null;
@@ -116,8 +168,10 @@
   }
 
   function buildPalette(h) {
-    const warmth = Math.pow(clamp(1 - h, 0, 1), 1.7);
-    const sky = ramp(SKY_COLD, SKY_DUSK, SKY_WARM, warmth);
+    let warmth = Math.pow(clamp(1 - h, 0, 1), 1.7);
+    if (climate.on) warmth = clamp(warmth + (climate.weight - 0.5) * 0.6, 0, 1);
+    let sky = ramp(SKY_COLD, SKY_DUSK, SKY_WARM, warmth);
+    if (climate.on) sky = sky.map((c, i) => mixRgb(c, SKY_OVERCAST[i], OVERCAST * cloudiness()));
     const sea = ramp(SEA_COLD, SEA_DUSK, SEA_WARM, warmth);
     const ice = ramp(ICE_COLD, ICE_DUSK, ICE_WARM, Math.min(1, warmth * 0.9));
     return {
@@ -188,7 +242,8 @@
   }
 
   function drawStars(t, h) {
-    const alpha = clamp(h * 1.1 - 0.05, 0, 1);
+    let alpha = clamp(h * 1.1 - 0.05, 0, 1);
+    if (climate.on) alpha *= (1 - climate.weight * 0.75) * (1 - 0.7 * cloudiness());
     if (alpha <= 0.02) return;
     const count = Math.round(W * 0.22);
     for (let i = 0; i < count; i++) {
@@ -200,6 +255,7 @@
   }
 
   function drawSun(t, h) {
+    if (climate.on) return drawClimateSun(t, h);
     const size = Math.round(lerp(3, 7, 1 - h));
     const sx = Math.round(lerp(W * 0.78, W * 0.2, 1 - h));
     const sy = Math.round(lerp(view.waterY * 0.22, view.waterY * 0.72, 1 - h));
@@ -222,8 +278,104 @@
     }
   }
 
+  /**
+   * A pinprick sun for light models, today's size at weight 0.5, a big low sun
+   * for heavy ones; always with turning rays. Effort adds rays and spin,
+   * context reach widens the halo.
+   */
+  function drawClimateSun(t, h) {
+    const w = climate.weight;
+    const mult = w < 0.5 ? lerp(0.555, 1, (w - 0.1) / 0.4) : lerp(1, 2.195, (w - 0.5) / 0.4);
+    const size = Math.max(1, Math.round(lerp(3, 7, 1 - h) * Math.max(0.3, mult)));
+    const sx = Math.round(lerp(W * 0.78, W * 0.2, 1 - h));
+    const sy = Math.round(lerp(view.waterY * 0.22, view.waterY * 0.72, 1 - h) + Math.max(0, w - 0.5) * view.waterY * 0.12);
+    climate.sun = { x: sx, y: sy, r: size };
+    const halo = 3 + Math.round(climate.context * 8);
+    const glow = 0.25 + 0.12 * Math.sin(t * 1.3);
+    for (let r = size + halo; r >= size; r--) {
+      ctx.fillStyle = css(pal.sun, (glow * (size + halo + 1 - r)) / (halo * 3));
+      circle(sx, sy, r);
+    }
+    const rays = climate.effort < 0.3 ? 4 : climate.effort < 0.6 ? 6 : climate.effort < 0.85 ? 8 : 12;
+    const len = 2 + Math.round(climate.effort * 4) + (size > 6 ? 1 : 0);
+    const spin = t * lerp(0.25, 0.7, climate.effort);
+    for (let i = 0; i < rays; i++) {
+      const ang = (i / rays) * Math.PI * 2 + spin;
+      const reach = len + Math.round(Math.sin(t * 2.6 + i * 1.7));
+      for (let k = 0; k < reach; k++) {
+        if (k % 2 && rays > 8) continue;
+        const d = size + 2 + k;
+        px(sx + Math.round(Math.cos(ang) * d), sy + Math.round(Math.sin(ang) * d), css(pal.sun, 0.85 * (1 - k / (reach + 1))));
+      }
+    }
+    ctx.fillStyle = css(pal.sun);
+    circle(sx, sy, size);
+    ctx.fillStyle = css(shade(pal.sun, 0.35));
+    circle(sx - 1, sy - 1, Math.max(1, size - 2));
+  }
+
+  /** Slow pixel clouds for light models, thinning where they cross the sun. */
+  function drawClouds(t) {
+    const amount = cloudiness();
+    const cover = lerp(0.45, 1, climate.context);
+    const band = Math.round(view.waterY * lerp(0.3, 0.55, cover));
+    const n = Math.max(1, Math.round((W / 26) * (0.7 + cover) * amount));
+    const speed = lerp(0.8, 2.5, climate.effort);
+    const fade = Math.sqrt(amount);
+    const sun = climate.sun;
+    const body = mixRgb(pal.sky[2], [116, 128, 146], 0.6);
+    const lite = mixRgb(pal.sky[3], [196, 206, 220], 0.6);
+    const dark = shade(body, -0.25);
+    for (let i = 0; i < n; i++) {
+      const w = 12 + Math.round(hash1(i * 1.9) * 18);
+      const cx = Math.round(((hash1(i * 4.1) * (W + w * 2) + t * speed * (0.6 + hash1(i) * 0.6)) % (W + w * 2)) - w);
+      const base = Math.round(4 + hash1(i * 2.7) * band);
+      const tall = 4 + Math.round(hash1(i * 8.3) * 5);
+      for (let dx = -w; dx <= w; dx++) {
+        const x = cx + dx;
+        if (x < 0 || x >= W) continue;
+        const u = dx / w;
+        const bump = 0.65 + 0.35 * Math.abs(Math.sin(u * 4.2 + i));
+        const hgt = Math.round(tall * Math.sqrt(Math.max(0, 1 - u * u)) * bump);
+        if (hgt <= 0) continue;
+        const veil = sun && Math.abs(x - sun.x) <= sun.r + 5 && base - hgt <= sun.y + sun.r + 5 && base >= sun.y - sun.r - 5
+          ? 0.3 : 1;
+        const a = fade * veil;
+        vline(x, base - hgt, base, css(body, 0.93 * a));
+        px(x, base - hgt, css(lite, 0.9 * a));
+        vline(x, base - 1, base, css(dark, 0.85 * a));
+      }
+    }
+  }
+
+  /** A warm haze on the horizon for heavy models; context reach sets its depth. */
+  function drawHaze() {
+    const k = thaw();
+    const rows = Math.max(1, Math.round(lerp(3, 14, climate.context) * k));
+    const col = mixRgb(pal.sun, [255, 220, 170], 0.4);
+    for (let r = 0; r < rows; r++) {
+      rect(0, view.waterY - 1 - r, W, 1, css(col, 0.2 * (0.4 + 0.6 * k) * (1 - r / rows)));
+    }
+  }
+
+  /** Heat shimmer rising off the sea for heavy models; effort sets its density. */
+  function drawShimmer(t) {
+    const k = thaw();
+    const n = Math.round(lerp(14, 36, climate.effort) * k);
+    const span = view.waterY * 0.7;
+    for (let i = 0; i < n; i++) {
+      const x0 = hash1(i * 6.3) * W;
+      for (let j = 0; j < 9; j++) {
+        const y = Math.round(view.waterY - 3 - ((t * 10 + i * 9 + j * 2) % span));
+        const x = Math.round(x0 + Math.sin(y * 0.35 + t * 3 + i) * 1.5);
+        px(x, y, css([255, 236, 210], (0.12 + 0.03 * (9 - j)) * (0.5 + 0.5 * k)));
+      }
+    }
+  }
+
   function drawAurora(t, h) {
-    const strength = clamp((h - 0.4) / 0.6, 0, 1);
+    let strength = clamp((h - 0.4) / 0.6, 0, 1);
+    if (climate.on) strength *= clamp(1.4 - climate.weight * 1.6, 0, 1) * (1 - cloudiness());
     if (strength <= 0.02) return;
     for (let b = 0; b < 3; b++) {
       const baseY = view.waterY * (0.18 + b * 0.11);
@@ -384,6 +536,9 @@
     const x1 = Math.min(W - 1, view.cx + bergHalfW);
     const snow = css(pal.snow);
     const cracks = Math.floor((1 - h) * 6);
+    // Fresh snow settles on the ledges under light models.
+    const cap = climate.on ? Math.round(clamp(1.1 - climate.weight * 1.6, 0, 1) * 3) : 0;
+    const puddle = mixRgb(pal.sea[1], [110, 196, 245], 0.55);
 
     for (let x = x0; x <= x1; x++) {
       const top = surfaceY[x];
@@ -397,7 +552,7 @@
       const flat = surfaceY[Math.max(x0, x - 1)] === top && surfaceY[Math.min(x1, x + 1)] === top;
       const span = view.waterY - top;
 
-      const b1 = top + (flat ? 2 : 1);
+      const b1 = top + (flat ? 2 + cap : 1 + Math.min(cap, 1));
       const b2 = top + Math.max(b1 - top + 1, Math.round(span * 0.46));
       const b3 = top + Math.max(b2 - top + 1, Math.round(span * 0.8));
 
@@ -405,6 +560,11 @@
       vline(x, b1, b2 - 1, css(shade(pal.ice[1], lit)));
       vline(x, b2, b3 - 1, css(shade(pal.ice[2], lit)));
       vline(x, b3, view.waterY, css(shade(pal.ice[3], lit)));
+      // Meltwater pools on the flats under heavy models.
+      if (flat && puddleAt(x)) {
+        px(x, top, (x + Math.floor(t * 3)) % 9 === 0 ? '#e8f8ff' : css(puddle));
+        px(x, top + 1, css(shade(puddle, -0.15), 0.7));
+      }
 
       // Hard edge wherever a facet steps.
       const stepL = surfaceY[Math.max(x0, x - 1)];
@@ -687,13 +847,14 @@
 
   function seedFlakes() {
     flakes.length = 0;
-    const n = Math.round(W * 0.35);
+    const n = Math.round(W * (climate.on ? 1.2 : 0.35));
     for (let i = 0; i < n; i++) {
       flakes.push({
         x: Math.random() * W,
         y: Math.random() * view.waterY,
         v: 4 + Math.random() * 10,
-        d: Math.random() * 0.6 - 0.3
+        d: Math.random() * 0.6 - 0.3,
+        big: hash1(i * 9.7) < 0.18
       });
     }
   }
@@ -704,10 +865,11 @@
       if (footprints[i].life <= 0) footprints.splice(i, 1);
     }
 
-    const snowy = clamp((h - 0.25) / 0.5, 0, 1);
+    const snowy = climate.on ? clamp((h - 0.1) / 0.5, 0.3, 1) : clamp((h - 0.25) / 0.5, 0, 1);
+    const wind = climate.on ? 0.7 * cloudiness() : 0;
     for (const f of flakes) {
       f.y += f.v * dt * (0.4 + snowy);
-      f.x += (f.d + Math.sin(t * 0.7 + f.y * 0.05) * 0.5) * dt * 10;
+      f.x += (f.d + Math.sin(t * 0.7 + f.y * 0.05) * 0.5 + wind) * dt * 10;
       if (f.y > view.waterY) {
         f.y = -1;
         f.x = Math.random() * W;
@@ -717,7 +879,9 @@
     }
 
     // Melt water dripping off the flanks.
-    if (h < 0.92 && Math.random() < (1 - h) * dt * 26) {
+    const drip = climateDrip();
+    const dripChance = climate.on ? Math.max(1 - h, 0.15) * drip : 1 - h;
+    if ((h < 0.92 || drip > 1.2) && Math.random() < dripChance * dt * 26) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const x = view.cx + side * Math.round(bergHalfW * (0.5 + Math.random() * 0.5));
       const y = surfaceAt(x) + Math.random() * Math.max(1, view.waterY - surfaceAt(x));
@@ -774,10 +938,15 @@
       px(Math.round(f.x), f.y + 1, css(pal.ice[3], a));
     }
 
-    const snowy = clamp((h - 0.25) / 0.5, 0, 1);
-    if (snowy > 0.02) {
-      for (const f of flakes) {
-        px(Math.floor(f.x), Math.floor(f.y), css(pal.snow, 0.25 + 0.5 * snowy));
+    const snowy = climate.on ? clamp((h - 0.1) / 0.5, 0.3, 1) : clamp((h - 0.25) / 0.5, 0, 1);
+    const count = climate.on ? Math.min(flakes.length, climateSnowCount()) : flakes.length;
+    if (snowy > 0.02 && count > 0) {
+      const heavy = climate.on && climate.weight < 0.25;
+      const col = css(pal.snow, 0.25 + 0.5 * snowy);
+      for (let i = 0; i < count; i++) {
+        const f = flakes[i];
+        px(Math.floor(f.x), Math.floor(f.y), col);
+        if (heavy && f.big) px(Math.floor(f.x) + 1, Math.floor(f.y), col);
       }
     }
 
@@ -845,7 +1014,7 @@
   }
 
   function renderSkyIfNeeded(force) {
-    const key = Math.round(state.health * 40);
+    const key = Math.round(state.health * 40) + (climate.on ? ':' + climate.weight : '');
     if (!force && key === palKey && pal) return;
     palKey = key;
     pal = buildPalette(state.health);
@@ -885,16 +1054,21 @@
     updateParticles(dt, t, state.health);
 
     ctx.drawImage(skyCanvas, 0, 0);
+    const clouds = cloudiness() > 0.02;
+    const heat = thaw() > 0.02;
     drawStars(t, state.health);
     drawSun(t, state.health);
     drawAurora(t, state.health);
+    if (clouds) drawClouds(t);
     drawDistantBergs(t, state.health);
+    if (heat) drawHaze();
     drawSea(t);
     drawBergUnderwater(t, state.health);
     drawReflection(t);
     drawBerg(t, state.health);
     drawBear(t);
     drawParticles(t, state.health);
+    if (heat) drawShimmer(t);
   }
 
   // ------------------------------------------------------------------ HUD ---
@@ -905,6 +1079,30 @@
     return n.toLocaleString('en-US');
   }
 
+  function fmtCredits(n) {
+    if (n === 0) return '0';
+    if (n < 0.01) return '<0.01';
+    return n < 1 ? n.toFixed(2) : n < 10 ? n.toFixed(1) : String(Math.round(n));
+  }
+
+  function showClimate(c) {
+    if (el.climateRow) el.climateRow.hidden = !climate.on;
+    if (!el.climate) return;
+    if (!climate.on) {
+      el.climate.textContent = '';
+      el.climate.title = '';
+      return;
+    }
+    const credits = fmtCredits(c.creditsPerCall);
+    el.climate.textContent = c.band + ' weather · ' + c.model + ' · ~' + credits + ' credits/call';
+    el.climate.title =
+      'Weather follows the pace of the model in use, not the ice: ' + c.model + ' averaged ' + credits +
+      ' AI credits per call across ' + c.sampleCalls + ' retained calls that reported credits. Reasoning effort: ' +
+      (c.effort || 'not reported') + '. Prompt limit: ' +
+      (c.contextLimit ? c.contextLimit.toLocaleString('en-US') + ' tokens' : 'not reported') +
+      '. A usage metaphor, not energy or emissions.';
+  }
+
   function applyState(s) {
     const first = state.total === 0 && s.total === 0;
     Object.assign(state, s);
@@ -912,6 +1110,8 @@
     if (first) state.health = state.targetHealth;
     dirty = true;
     if (s.pixelScale !== undefined) layout();
+    setClimate(s.climate);
+    showClimate(s.climate);
 
     const pct = Math.round(state.targetHealth * 100);
     el.name.textContent = s.bearName || 'Nanuq';

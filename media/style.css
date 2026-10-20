@@ -87,6 +87,15 @@ body {
   font: 11px/1.35 var(--vscode-editor-font-family, ui-monospace, monospace);
 }
 
+.row[hidden] {
+  display: none;
+}
+
+/* Model climate: the weather's reading, styled like the gauge it sits under. */
+.climate {
+  color: var(--ice-accent, #9fd8ff);
+}
+
 .name {
   font-weight: 700;
   letter-spacing: 0.5px;

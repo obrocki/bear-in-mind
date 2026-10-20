@@ -82,6 +82,9 @@ class HabitatHost implements vscode.Disposable {
     <div class="row sub">
       <span id="tokens">Waiting for local usage…</span>
     </div>
+    <div class="row sub" id="climateRow" hidden>
+      <span id="climate" class="climate"></span>
+    </div>
     <div class="row sub">
       <span id="source" class="source" title="Where the numbers come from">—</span>
       <button id="btnDashboard" type="button" title="Open the cost, speed and quality dashboard">Dashboard →</button>

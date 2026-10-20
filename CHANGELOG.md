@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.7.1
+
+- **Model climate:** the habitat's weather now shows the pace of the model in
+  use, while the ice still shows remaining allowance. Light models bring slow
+  clouds, heavy snow and a pinprick sun; mid models keep today's sky; heavy
+  models bring a big low sun, a warm sky and a light thaw. Pace is the model's
+  average reported AI credits per call in retained traces, on a fixed scale
+  (0.05 to 25 credits per call). Reasoning effort adds turning sun rays and the
+  prompt limit widens the halo, clouds and haze. A HUD line names the band,
+  model and average. Without enough reported credits, after 30 minutes idle,
+  during the demo or with `iceberg.climate.enabled` off, the scene is unchanged.
+  `getUsage()` snapshots include the climate when present. README screenshots
+  show light, mid and heavy models.
+
 ## 0.7.0
 
 - Refreshed the attribution research and canvas model to 19 October 2026:

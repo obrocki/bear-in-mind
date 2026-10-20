@@ -11,6 +11,8 @@ research model, regenerate the canvas shots too.
 | `hero.png` | Wide scene at 100% ice, no HUD. README banner. |
 | `melt.gif` | The full melt plus a refreeze, ~106 frames. |
 | `melt-progression.png` | Four panels at 100 / 60 / 28 / 0% ice. |
+| `climate-models.png` | The same 75% allowance under an illustrative light, mid and heavy model (`tools/climate-grid.html`). |
+| `panel-climate-small.png`, `panel-climate-medium.png`, `panel-climate-large.png` | Sidebar habitat with each illustrative model climate (`shot.html?account&climate=…`). |
 | `panel-full.png`, `panel-mid.png`, `panel-low.png`, `panel-melted.png` | Synthetic demo ice at four levels, without recording usage. |
 | `panel-context.png` | Illustrative reported prompt allowance, separate from cumulative tokens. |
 | `editor-view.png` | The wide editor-tab view. |

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Iceberg — model climate</title>
+<!--
+  The same 75% plan allowance under an illustrative light, mid and heavy model,
+  so only the weather differs. See the climate fixtures in shot.html.
+-->
+<style>
+  html, body { margin: 0; height: 100%; background: #101317; }
+  #wrap { display: flex; gap: 14px; padding: 14px; box-sizing: border-box; height: 100%; }
+  .cell { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; }
+  .cap {
+    font: 700 12px/1.5 "Segoe UI", system-ui, sans-serif;
+    letter-spacing: .6px;
+    color: #cfd6dd;
+    padding: 0 0 7px 1px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .cap .n { color: #7d8894; font-weight: 600; }
+  .box { flex: 1 1 auto; border: 1px solid #2b3138; min-height: 0; }
+  iframe { width: 100%; height: 100%; border: 0; display: block; }
+</style>
+</head>
+<body>
+  <div id="wrap">
+    <div class="cell">
+      <div class="cap"><span style="color:#cfeaff">Light model &middot; snowy</span><span class="n">~0.11 credits/call</span></div>
+      <div class="box"><iframe src="shot.html?account&amp;climate=small&amp;chrome=0&amp;note=0"></iframe></div>
+    </div>
+    <div class="cell">
+      <div class="cap"><span style="color:#9fd8ff">Mid model &middot; mild</span><span class="n">~0.61 credits/call</span></div>
+      <div class="box"><iframe src="shot.html?account&amp;climate=medium&amp;chrome=0&amp;note=0"></iframe></div>
+    </div>
+    <div class="cell">
+      <div class="cap"><span style="color:#ffcf7a">Heavy model &middot; thawing</span><span class="n">~19 credits/call</span></div>
+      <div class="box"><iframe src="shot.html?account&amp;climate=large&amp;chrome=0&amp;note=0"></iframe></div>
+    </div>
+  </div>
+</body>
+</html>

@@ -15,6 +15,7 @@
     pixelScale=<n>  0 = auto-fit           note=0       hide the compassion note
     context        show latest-prompt headroom with separate local totals
     account        show a synthetic Copilot plan allowance and combined usage
+    climate=small|medium|large  weather for an illustrative light, mid or heavy model
 -->
 <style>
   :root {
@@ -90,6 +91,9 @@
         <div class="row sub">
           <span id="tokens">Waiting for local usage&hellip;</span>
         </div>
+        <div class="row sub" id="climateRow" hidden>
+          <span id="climate" class="climate"></span>
+        </div>
         <div class="row sub">
           <span id="source" class="source">metered by OpenTelemetry</span>
           <button id="btnDashboard" type="button">Dashboard &rarr;</button>
@@ -129,6 +133,18 @@
         : undefined;
       var total = context ? 2100000 : Math.round(budget * (1 - health));
       if (context) health = 1 - context.used / context.limit;
+      // Illustrative figures near the calibration traces in src/climate.ts; the
+      // weights are that module's creditWeight() of each credits-per-call value.
+      var climates = {
+        small: { model: 'gpt-5.6-luna', creditsPerCall: 0.11, sampleCalls: 18, weight: 0.127, band: 'snowy',
+          effort: 'low', effortLevel: 0.2, contextLimit: 128000, contextLevel: 0.403 },
+        medium: { model: 'gpt-5.3-codex', creditsPerCall: 0.61, sampleCalls: 12, weight: 0.402, band: 'mild',
+          effort: 'medium', effortLevel: 0.5, contextLimit: 272000, contextLevel: 0.622 },
+        large: { model: 'claude-opus-5.5', creditsPerCall: 19.2, sampleCalls: 40, weight: 0.958, band: 'thawing',
+          effort: 'high', effortLevel: 0.8, contextLimit: 1000000, contextLevel: 1 }
+      };
+      var climate = climates[q.get('climate')];
+      if (climate) climate.atMs = Date.now();
       var input = Math.round(total * 0.92);
       window.postMessage({
         type: 'state',
@@ -141,6 +157,7 @@
           basis: context ? 'context' : account ? 'account' : demo ? 'demo' : budget ? 'budget' : 'unavailable',
           context: context,
           account: account,
+          climate: climate,
           source: 'otel',
           requests: Math.max(1, Math.round((1 - health) * 140)),
           credits: Math.round((1 - health) * 3200) / 10,

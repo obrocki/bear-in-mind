@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { computeDrift, type ContextWindow, type DriftReport } from './otelSummary';
 import { ACCOUNT_QUOTA_MAX_AGE_MS, type AccountUsageState, type AccountQuota } from './accountUsage';
+import { CLIMATE_STALE_MS, type Climate } from './climate';
 
 const STORAGE_KEY = 'iceberg.usage.v4';
 const CONTEXT_STALE_MS = 30 * 60 * 1000;
@@ -29,6 +30,8 @@ export interface UsageSnapshot {
   basis: MeltBasis;
   context?: ContextWindow;
   account?: AccountUsageState;
+  /** Pace of the model in use, for the habitat weather only; never changes health. */
+  climate?: Climate;
   drift: DriftReport;
 }
 
@@ -63,6 +66,7 @@ export class TokenMeter implements vscode.Disposable {
   readonly onDidChange = this._onDidChange.event;
   private readonly state: StoredUsage;
   private context?: ContextWindow;
+  private climate?: Climate;
   private account?: AccountUsageState;
   private sessionSelected = false;
   private demoTimer?: NodeJS.Timeout;
@@ -132,6 +136,15 @@ export class TokenMeter implements vscode.Disposable {
       : this.budget > 0 ? 'budget' : 'unavailable';
   }
 
+  /** Demo, disabled or stale climate renders the neutral scene. */
+  private get liveClimate(): Climate | undefined {
+    const climate = this.climate;
+    const age = climate ? Date.now() - climate.atMs : NaN;
+    return climate && !this.demoTimer && this.config.get<boolean>('climate.enabled', true) &&
+      age >= 0 && age <= CLIMATE_STALE_MS
+      ? climate : undefined;
+  }
+
   private get liveAccount(): (AccountQuota & { percentRemaining: number }) | undefined {
     const quota = !this.sessionSelected && this.account?.status === 'ready' ? this.account.quota : undefined;
     return quota && !quota.unlimited && quota.percentRemaining !== undefined &&
@@ -173,6 +186,7 @@ export class TokenMeter implements vscode.Disposable {
           (this.account.quota.resetAtMs !== undefined && Date.now() >= this.account.quota.resetAtMs))
         ? { status: 'error', message: 'Account quota is stale or its period has reset. Refresh account usage.' }
         : this.account,
+      climate: this.liveClimate,
       drift: this.drift
     };
   }
@@ -180,6 +194,13 @@ export class TokenMeter implements vscode.Disposable {
   setContext(context: ContextWindow | undefined): void {
     if (JSON.stringify(context) !== JSON.stringify(this.context)) {
       this.context = context;
+      this.publish();
+    }
+  }
+
+  setClimate(climate: Climate | undefined): void {
+    if (JSON.stringify(climate) !== JSON.stringify(this.climate)) {
+      this.climate = climate;
       this.publish();
     }
   }

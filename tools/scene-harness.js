@@ -120,7 +120,7 @@ function createScene(root, viewW, viewH) {
     addEventListener() {},
     getBoundingClientRect: () => ({ width: viewW, height: viewH })
   });
-  for (const id of ['stage', 'melted', 'bearName', 'pct', 'fill', 'tokens', 'split', 'basis', 'source', 'btnDashboard']) {
+  for (const id of ['stage', 'melted', 'bearName', 'pct', 'fill', 'tokens', 'split', 'basis', 'source', 'climateRow', 'climate', 'btnDashboard']) {
     els[id] = mkEl(id);
   }
   const canvas = new Canvas();

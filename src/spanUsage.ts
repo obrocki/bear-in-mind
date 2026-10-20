@@ -561,6 +561,19 @@ export function digestSpans(spans: Iterable<UsageSpan>, ancestors: Iterable<Span
   digest.cacheReadRatio = tokens.cacheReadRatio() ?? undefined;
   digest.cacheReadRatioCoverage = tokens.ratioCoverage(digest.chatCalls);
   for (const span of latestCalls.values()) {
+    if (span.sessionId) {
+      const call = {
+        model: span.model, effort: span.effort, promptLimit: span.promptLimit,
+        atMs: span.start, sessionId: span.sessionId
+      };
+      if (!digest.latestCall || call.atMs > digest.latestCall.atMs) {
+        digest.latestCall = call;
+      }
+      const session = sessions.get(span.sessionId);
+      if (session) {
+        session.latestCall = call;
+      }
+    }
     if (span.promptLimit && span.input !== undefined) {
       const context = {
         used: span.input, limit: span.promptLimit, model: span.model,

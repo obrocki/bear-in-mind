@@ -58,6 +58,8 @@ export interface SpanSession {
   tokenCalls?: number;
   activeMs?: number;
   context?: ContextWindow;
+  /** The session's latest non-auxiliary model call, for the habitat's model climate. */
+  latestCall?: LatestCall;
   /** From the session's agent spans (`github.copilot.git.*`), when reported. */
   repository?: string;
   branch?: string;
@@ -100,6 +102,8 @@ export interface SpanDigest {
   sdkCredits: SdkInvocationCredits;
   /** Latest observed prompt occupancy against `max_prompt_tokens`, from any session. */
   context?: ContextWindow;
+  /** Latest non-auxiliary model call in any chat session; sessionless helper calls are excluded. */
+  latestCall?: LatestCall;
   /** Unique `chat` spans, and the reported credits among them. */
   chatCalls: number;
   creditCalls: number;
@@ -145,6 +149,17 @@ export interface ContextWindow {
   used: number;
   limit: number;
   model: string | null;
+  atMs: number;
+  sessionId?: string;
+}
+
+/** Metadata of one model call: never prompts, responses or tool content. */
+export interface LatestCall {
+  model: string | null;
+  /** Reported reasoning effort word, when the request carried one. */
+  effort?: string;
+  /** `copilot_chat.request.max_prompt_tokens`, when reported. */
+  promptLimit?: number;
   atMs: number;
   sessionId?: string;
 }

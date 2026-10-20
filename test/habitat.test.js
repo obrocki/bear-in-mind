@@ -5,6 +5,86 @@ const path = require('node:path');
 const { it } = require('node:test');
 const { createScene } = require('../tools/scene-harness');
 const { TokenMeter } = require(path.join(process.env.BEAR_TEST_BUILD, 'tokenMeter.js'));
+const { CLIMATE_STALE_MS, climateFor } = require(path.join(process.env.BEAR_TEST_BUILD, 'climate.js'));
+
+/** A model whose retained calls averaged `credits` per call, observed a minute ago. */
+function climateOf(model, credits, extra = {}) {
+  return climateFor({ model, atMs: Date.now() - 60_000, sessionId: 's', ...extra },
+    [{ key: model, calls: 6, creditCalls: 5, credits: credits * 5 }]);
+}
+
+function render(climate, health = 1) {
+  const scene = createScene(path.resolve(__dirname, '..'), 480, 300);
+  scene.step(16);
+  scene.setState({ health, input: 0, output: 0, total: 0, budget: 0, basis: 'demo', source: 'otel',
+    bearName: 'Nanuq', animate: true, pixelScale: 2, climate });
+  for (let i = 0; i < 90; i++) scene.step(33);
+  return scene;
+}
+
+/** Mean of one channel over the sky above the horizon. */
+function skyMean(scene, channel) {
+  const { width, data } = scene.canvas;
+  const rows = Math.round(scene.canvas.height * 0.6);
+  let sum = 0;
+  for (let i = 0; i < width * rows; i++) sum += data[i * 4 + channel];
+  return sum / (width * rows);
+}
+
+it('weathers the scene by model pace without touching the ice or the neutral HUD', () => {
+  const neutral = render(undefined);
+  const light = render(climateOf('gpt-5.6-luna', 0.1));
+  const heavy = render(climateOf('claude-opus-5.5', 19, { effort: 'high', promptLimit: 1_000_000 }));
+
+  assert.equal(neutral.els.climateRow.hidden, true);
+  assert.equal(neutral.els.climate.textContent, '');
+  for (const scene of [light, heavy]) {
+    assert.equal(scene.els.pct.textContent, neutral.els.pct.textContent, 'weather never changes the ice');
+    assert.equal(scene.els.climateRow.hidden, false);
+  }
+  assert.equal(light.els.climate.textContent, 'snowy weather · gpt-5.6-luna · ~0.10 credits/call');
+  assert.equal(heavy.els.climate.textContent, 'thawing weather · claude-opus-5.5 · ~19 credits/call');
+  assert.match(heavy.els.climate.title, /across 5 retained calls that reported credits/);
+  assert.match(heavy.els.climate.title, /Reasoning effort: high\. Prompt limit: 1,000,000 tokens/);
+  assert.match(heavy.els.climate.title, /not energy or emissions/);
+  assert.match(light.els.climate.title, /Reasoning effort: not reported\. Prompt limit: not reported/);
+
+  assert.ok(skyMean(heavy, 0) > skyMean(neutral, 0) + 10, 'a heavy model warms the sky');
+  let changed = 0;
+  for (let i = 0; i < light.canvas.data.length; i += 4) {
+    if (Math.abs(light.canvas.data[i + 2] - neutral.canvas.data[i + 2]) > 24) changed++;
+  }
+  assert.ok(changed > light.canvas.data.length / 4 * 0.05, 'a light model clouds and snows the sky');
+});
+
+it('returns to the neutral scene when the climate goes stale, is disabled or the demo runs', () => {
+  const m = new TokenMeter({ get: () => undefined, update: async () => {} });
+  const scene = createScene(path.resolve(__dirname, '..'), 330, 300);
+  try {
+    m.setClimate(climateOf('gpt-5.3-codex', 0.6));
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, false);
+    assert.match(scene.els.climate.textContent, /^mild weather · gpt-5\.3-codex · ~0\.60 credits\/call$/);
+
+    globalThis.__BEAR_SETTINGS__ = { 'iceberg.climate.enabled': false };
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, true);
+    delete globalThis.__BEAR_SETTINGS__;
+
+    m.toggleDemo();
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, true);
+    m.toggleDemo();
+
+    m.setClimate({ ...climateOf('gpt-5.3-codex', 0.6), atMs: Date.now() - CLIMATE_STALE_MS - 1000 });
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, true);
+    assert.equal(scene.els.climate.textContent, '');
+  } finally {
+    delete globalThis.__BEAR_SETTINGS__;
+    m.dispose();
+  }
+});
 
 it('keeps the habitat percentage and token fraction on the same basis', () => {
   globalThis.__BEAR_SETTINGS__ = { 'iceberg.tokenBudget': 5000000 };
