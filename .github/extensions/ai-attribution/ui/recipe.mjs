@@ -2,6 +2,7 @@
 // Rendering only; lib/recipe.mjs decides steps, evidence and counts.
 
 import { h, s, disclosure } from './dom.js';
+import { usageLabels, evidenceLabels, sourceLabels as SOURCE_SHORT } from './format.mjs';
 
 export const STEP_NAMES = {
   workItem: 'Work item',
@@ -12,28 +13,19 @@ export const STEP_NAMES = {
   review: 'Review',
   close: 'Merge & close',
 };
-const STEP_CONCEPT = {
-  workItem: 'issue_task',
-  branch: 'branch_commit',
-  aiWork: 'credits',
-  commits: 'branch_commit',
-  pullRequest: 'pull_request',
-  review: 'acceptance',
-  close: 'delivery',
-};
-const SOURCE_SHORT = { sessionStore: 'CLI / app', traces: 'VS Code', agentHost: 'VS Code harness' };
 const EVIDENCE_ORDER = ['verified', 'recorded', 'convention', 'observed'];
 const STATUS_TEXT = {
   ok: 'connected',
-  partial: 'partly verified',
+  partial: 'partly checked',
   error: 'failed',
   unavailable: 'unavailable',
   'not-configured': 'not configured',
-  skipped: 'nothing to verify',
+  skipped: 'nothing to check',
 };
 const MAX_LANES = 12;
 
 const fmtCredits = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+const fmtAmount = new Intl.NumberFormat(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 const fmtInt = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
 const fmtDay = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 const fmtStamp = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -48,17 +40,102 @@ export function formatHours(hours) {
 const when = (value) => (value ? fmtStamp.format(new Date(value)) : '—');
 const badge = (kind, text) => h('span', { class: `badge ${kind}` }, text ?? kind);
 
-function sourceChips(sources, title = (x) => `${x.calls} calls · ${x.creditedCalls} reporting credits`) {
+function sourceChips(sources, title = (x) => `${x.calls} requests · ${x.creditedCalls} with credit counts`) {
   return h(
     'span',
     { class: 'source-chips' },
     sources.map((x) =>
-      h('span', { class: `src src-${x.id}`, title: title(x) }, `${SOURCE_SHORT[x.id] ?? x.id} ${fmtCredits.format(x.credits)} cr`),
+      h('span', { class: `src src-${x.id}`, title: title(x) }, `${SOURCE_SHORT[x.id] ?? x.id} ${fmtCredits.format(x.credits)} credits`),
     ),
   );
 }
 
-const cycleCredits = (list) => sourceChips(list, (x) => `Reported credits in ${x.cycles} cycle${x.cycles === 1 ? '' : 's'} from ${SOURCE_SHORT[x.id] ?? x.id}`);
+const creditValue = (usage) => usage?.credits === null || usage?.credits === undefined ? '—' : fmtCredits.format(usage.credits);
+
+export function developerSelection(view, ui) {
+  const sources = view.developers.sources;
+  const source = sources.find((entry) => entry.id === ui.sourceId) ??
+    sources.find((entry) => entry.measured.calls > 0) ?? sources[0];
+  const person = source?.actors.find((actor) => actor.key === ui.actorKey);
+  const owned = ui.perspective === 'ownership';
+  const summary = ui.actorKey === '__unknown' ? source?.[owned ? 'unowned' : 'unknown'] :
+    ui.actorKey ? person?.[owned ? 'ownership' : 'usage'] : owned ? source?.ownership : source;
+  return { source, summary, actor: view.developers.actors.find((a) => a.key === ui.actorKey) };
+}
+
+function developerPanel(view, ui) {
+  const { source, summary, actor } = developerSelection(view, ui);
+  const select = (label, key, value, choices) => h('select', {
+    'aria-label': label, 'data-focus-key': key, onchange: (event) => ui.setDeveloper(key, event.target.value),
+  }, choices.map(([id, text]) => h('option', { value: id, selected: value === id }, text)));
+  const total = summary?.total;
+  const workRows = summary?.work ?? [];
+  const displayed = ui.allWork ? workRows : workRows.slice(0, 5);
+  return h('section', { class: 'card developer-report' },
+    h('div', { class: 'toolbar' },
+      h('h3', {}, 'Developer → work'),
+      select('Usage source', 'developer-source', source?.id, view.developers.sources.map((entry) => [entry.id, SOURCE_SHORT[entry.id] ?? entry.id])),
+      select('Developer', 'developer-actor', ui.actorKey ?? '', [
+        ['', 'All accounts'], ['__unknown', ui.perspective === 'ownership' ? 'No known owner' : 'Account unknown'],
+        ...view.developers.actors.map((a) => [a.key, `${a.label} · ${{ github: 'GitHub', 'azure-boards': 'Azure Boards', telemetry: 'local record' }[a.provider] ?? a.provider}`]),
+      ]),
+      select('Show usage or owned work', 'developer-perspective', ui.perspective ?? 'usage', [
+        ['usage', 'Credits used'], ['ownership', 'Work owned'],
+      ]),
+    ),
+    h('div', { class: 'actor-balance' },
+      h('strong', { title: total ? `${total.creditedCalls}/${total.calls} requests include credit counts` : 'No usage matches this selection' }, `${creditValue(total)} credits`),
+      ...['measured', 'inferred', 'unattributed'].map((method) =>
+        h('span', { class: method }, `${usageLabels[method]} `, h('strong', {}, creditValue(summary?.[method]))),
+      ),
+    ),
+    h('div', { class: 'actor-credit-bar', role: 'img', 'aria-label': 'Credits from recorded users, estimates based on owners and unknown users' },
+      ...['measured', 'inferred', 'unattributed'].map((method) => h('span', {
+        class: method, style: { width: `${total?.credits > 0 ? ((summary[method].credits ?? 0) / total.credits) * 100 : 0}%` },
+      })),
+    ),
+    h('p', { class: 'muted small' }, ui.perspective === 'ownership'
+      ? `Work owned by ${actor?.label ?? 'selected accounts'}; includes other contributors, not just this person’s AI use.`
+      : 'Recorded accounts show who used AI. An owner-based estimate is not proof. This machine may have only part of the history.'),
+    displayed.length ? h('div', { class: 'matrix-wrap' }, h('table', { class: 'actor-work' },
+      h('thead', {}, h('tr', {}, ...['Work / pull request', ...Object.values(usageLabels)].map((label) => h('th', {}, label)))),
+      h('tbody', {}, displayed.map((row) => {
+        const cycle = view.cycles.find((c) => c.key === row.cycleKey);
+        return h('tr', {},
+          h('td', {}, cycle
+            ? h('span', {}, h('strong', {}, cycle.workItems.map((w) => w.reference).join(', ') || 'No work item'),
+                cycle.pullRequest ? ` → PR #${cycle.pullRequest.number}` : '',
+                h('span', { class: 'mono muted' }, `${cycle.repository} · ${cycle.branch ?? 'no branch'}`))
+            : 'No repository, or work outside this list'),
+          ...['measured', 'inferred', 'unattributed'].map((method) => h('td', { class: 'num' }, creditValue(row[method]))),
+        );
+      })),
+    )) : h('p', { class: 'muted' }, 'No usage for this selection.'),
+    workRows.length > 5 ? h('button', { class: 'more', onclick: () => ui.toggleWork(), 'data-focus-key': 'actor-work-more' },
+      ui.allWork ? 'Show less' : `All ${workRows.length} work groups`) : null,
+    total ? h('span', { class: 'muted small' }, `${total.creditedCalls}/${total.calls} requests include credit counts`) : null,
+  );
+}
+
+function identityPanel(view, ui) {
+  const identities = [...new Map(view.cycles.flatMap((cycle) => cycle.ownership.roles)
+    .filter((role) => role.identity.provider === 'azure-boards').map((role) => [role.identity.key, role.identity])).values()];
+  if (!identities.length) return null;
+  const choices = h('select', { 'aria-label': 'Azure Boards identity' },
+    identities.map((identity) => h('option', { value: identity.key }, `${identity.label} · ${identity.key}`)));
+  const login = h('input', { 'aria-label': 'GitHub login', placeholder: 'GitHub login', required: true, maxLength: 39 });
+  return disclosure('identity-links', 'Link accounts across tools',
+    h('p', { class: 'small' }, 'Tell us which accounts belong together. The link lasts only in this panel; we never match names or emails automatically.'),
+    h('form', { class: 'toolbar', onsubmit: (event) => {
+      event.preventDefault();
+      ui.linkIdentity(choices.value, login.value);
+    } }, choices, login, h('button', { type: 'submit', disabled: ui.verifying }, 'Link accounts')),
+    h('ul', { class: 'small' }, view.developers.identityLinks.map((link) => h('li', {},
+      `${link.boardsKey} → ${link.githubLogin}`, ' ',
+      h('button', { type: 'button', onclick: () => ui.unlinkIdentity(link.boardsKey) }, 'Remove'),
+    ))),
+  );
+}
 
 // ------------------------------------------------------------------ icons ---
 
@@ -87,6 +164,9 @@ function icon(step) {
       );
     case 'review':
       return g(s('path', { d: 'M-9 0 C-5 -7 5 -7 9 0 C5 7 -5 7 -9 0 Z' }), s('circle', { cx: 0, cy: 0, r: 2.6 }));
+    case 'billing':
+      return g(s('rect', { x: -8, y: -9, width: 16, height: 18, rx: 2 }),
+        s('path', { d: 'M-4 -4 H4 M-4 0 H1 M-4 4 H4' }));
     default:
       return g(s('path', { d: 'M-6 0 L-2 4.5 L6.5 -5' }));
   }
@@ -95,7 +175,7 @@ function icon(step) {
 // ----------------------------------------------------------- recipe strip ---
 
 const STRIP = {
-  width: 1200,
+  width: 1480,
   height: 330,
   center: 158,
   maxHalf: 34,
@@ -128,6 +208,9 @@ function recipeStrip(view, model) {
   const half = (n) => (total ? Math.max(n ? 3 : 1.2, (STRIP.maxHalf * n) / total) : 1.2);
   const steps = model.recipe.steps;
   const stations = view.stations;
+  const billingStatus = view.billing?.status === 'ok' ? 'Report loaded' :
+    view.billing?.status === 'error' ? 'Read failed' :
+      view.billing?.status === 'loading' ? 'Reading…' : 'Not read';
   const start = { x: STRIP.bands[0].x, half: half(total) };
   const end = (n) => ({ x: STRIP.bands[2].x + STRIP.bands[2].w, half: half(n) });
 
@@ -158,7 +241,7 @@ function recipeStrip(view, model) {
           s('title', {}, `${dropped} cycle${dropped === 1 ? '' : 's'} left the in-order recipe at ${STEP_NAMES[st.id]}`),
           s('path', { d: `M ${dx - 26} ${y0} C ${dx - 6} ${y0 + 6} ${dx} ${y0 + 30} ${dx} 282` }),
           s('circle', { cx: dx, cy: 286, r: 3 }),
-          s('text', { x: dx, y: 306, 'text-anchor': 'middle' }, `−${dropped} stopped`),
+          s('text', { x: dx, y: 306, 'text-anchor': 'middle' }, `−${dropped} missing step`),
         ),
       );
     }
@@ -171,7 +254,7 @@ function recipeStrip(view, model) {
     { class: 'recipe-strip card' },
     s(
       'svg',
-      { viewBox: `0 0 ${STRIP.width} ${STRIP.height}`, role: 'img', 'aria-label': 'Recipe: cycles reaching each step from work item to merged pull request' },
+      { viewBox: `0 0 ${STRIP.width} ${STRIP.height}`, role: 'img', 'aria-label': 'Recipe: work item to merge and closure, followed visually by a separate bill comparison, not another delivery step' },
       s('defs', {},
         s('pattern', { id: 'recipe-hatch', width: 7, height: 7, patternUnits: 'userSpaceOnUse', patternTransform: 'rotate(45)' },
           s('rect', { width: 7, height: 7, class: 'hatch-bg' }),
@@ -186,6 +269,19 @@ function recipeStrip(view, model) {
           s('text', { x: band.x + 16, y: 52, class: 'band-detail' }, phase.detail),
         );
       }),
+      s('g', { class: 'band band-billing billing-endpoint', 'data-billing-checkpoint': 'true' },
+        s('title', {}, 'Compare the bill by account, day in UTC and model, independently of merge. GitHub does not bill by pull request or session. This is not another delivery step.'),
+        s('rect', { x: 1202, y: 10, width: 260, height: 310, rx: 14 }),
+        s('text', { x: 1218, y: 34, class: 'band-label' }, 'CHECK THE BILL'),
+        s('text', { x: 1218, y: 52, class: 'band-detail' }, 'Separate from delivery'),
+        s('text', { x: 1332, y: 92, class: 'station-name', 'text-anchor': 'middle' }, 'Compare usage and bill'),
+        s('path', { d: 'M1184 158 H1305 M1297 153 L1305 158 L1297 163', class: 'billing-connector' }),
+        s('circle', { cx: 1332, cy: STRIP.center, r: 25, class: 'station-ring' }),
+        s('g', { transform: `translate(1332 ${STRIP.center})` }, icon('billing')),
+        s('text', { x: 1332, y: 208, class: 'station-count', 'text-anchor': 'middle' }, billingStatus),
+        s('text', { x: 1332, y: 250, class: 'station-any', 'text-anchor': 'middle' }, 'User · UTC day · model'),
+        s('text', { x: 1332, y: 286, class: 'station-any', 'text-anchor': 'middle' }, 'Not a bill for each change'),
+      ),
       s('path', { d: ribbonPath(hatched), class: 'ribbon-pending' }, s('title', {}, 'Cycles that may have this step: unknown until verified')),
       s('path', { d: ribbonPath(reach), class: 'ribbon-any' }, s('title', {}, 'Cycles that have this step, in any order')),
       s('path', { d: ribbonPath(core), class: 'ribbon' }, s('title', {}, 'Cycles that followed the recipe in order up to this step')),
@@ -206,7 +302,7 @@ function recipeStrip(view, model) {
           s('title', {}, [
             `${spec.name}`,
             `${st.any} of ${total} cycles have this step; ${st.strict} followed the recipe in order up to here; ${st.unknown} unknown`,
-            `Evidence: ${EVIDENCE_ORDER.filter((e) => st.evidence[e]).map((e) => `${st.evidence[e]} ${e}`).join(', ') || 'none'}`,
+            `Evidence: ${EVIDENCE_ORDER.filter((e) => st.evidence[e]).map((e) => `${st.evidence[e]} ${evidenceLabels[e]}`).join(', ') || 'none'}`,
             `Local: ${spec.local}`,
             `Verified: ${spec.verified}`,
           ].join('\n')),
@@ -216,111 +312,30 @@ function recipeStrip(view, model) {
           s('text', { x, y: 208, class: 'station-count', 'text-anchor': 'middle' }, `${st.any} / ${total}`),
           s('rect', { x: x - 45, y: 226, width: 90, height: 6, rx: 3, class: 'ev-track' }),
           segments,
-          s('text', { x, y: 250, class: 'station-any', 'text-anchor': 'middle' }, `${st.strict} in order${st.unknown ? ` · ${st.unknown} unknown` : ''}`),
+          s('text', { x, y: 250, class: 'station-any', 'text-anchor': 'middle' }, `${st.strict} no gaps${st.unknown ? ` · ${st.unknown} unknown` : ''}`),
         );
       }),
     ),
     h('figcaption', { class: 'legend' },
-      h('span', {}, h('i', { class: 'swatch ribbon' }), 'In order'),
-      h('span', {}, h('i', { class: 'swatch ribbon-any' }), 'Any order'),
+      h('span', {}, h('i', { class: 'swatch ribbon' }), 'No missing steps'),
+      h('span', {}, h('i', { class: 'swatch ribbon-any' }), 'Step present'),
       h('span', {}, h('i', { class: 'swatch pending' }), 'Unknown'),
       EVIDENCE_ORDER.map((e) => h('span', { title: model.recipe.evidence.find((x) => x.id === e)?.description }, h('i', { class: `swatch ev-${e}` }), model.recipe.evidence.find((x) => x.id === e)?.label ?? e)),
-      h('span', {}, h('i', { class: 'swatch drop' }), 'Stopped here'),
+      h('span', {}, h('i', { class: 'swatch drop' }), 'Missing a step'),
     ),
   );
 }
 
-// ------------------------------------------------------------------- KPIs ---
-
-function kpiCards(view) {
+function medianTimes(view) {
   const k = view.kpis;
-  const verified = Boolean(view.verification);
-  const pending = (value) => (verified ? value : h('span', { class: 'muted' }, '—'));
-  return h('section', { class: 'recipe-results' },
-    h('div', { class: 'grid kpis recipe-kpis' }, [
-      ['PRs opened', fmtInt.format(k.prOpened), 'Verified or recorded references'],
-      ['Reviewed', pending(fmtInt.format(k.reviewed)), 'At least one submitted review'],
-      ['Merged', pending(fmtInt.format(k.merged)), 'PR state MERGED'],
-      ['Merged & closed', pending(fmtInt.format(k.closed)), 'Merged and linked work items closed; no linked item requires only a merge'],
-    ].map(([label, value, note]) =>
-      h('div', { class: 'card kpi', title: note }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value)),
-    )),
-    h('div', { class: 'timing-row small', 'aria-label': 'Median cycle times' }, [
-      ['Pickup → done', k.medianPickupToDoneHours, 'First AI work or activation to merge and closure'],
-      ['PR → merge', k.medianOpenToMergeHours, 'PR opened to merged'],
-      ['PR → review', k.medianOpenToFirstReviewHours, 'PR opened to first review'],
-    ].map(([label, value, title]) => h('span', { title }, label, ' ', h('strong', {}, pending(formatHours(value))))),
-    h('span', { class: 'muted' }, 'Median times')),
-  );
-}
-
-// ------------------------------------------------------------ adherence ---
-
-function donut(segments, total) {
-  const r = 46;
-  const c = 2 * Math.PI * r;
-  let offset = 0;
-  return s('svg', { viewBox: '0 0 120 120', class: 'donut', role: 'img', 'aria-label': 'Branch convention adherence' },
-    s('circle', { cx: 60, cy: 60, r, class: 'donut-track' }),
-    segments.map((seg) => {
-      const len = total ? (c * seg.value) / total : 0;
-      const el = len > 0
-        ? s('circle', { cx: 60, cy: 60, r, class: `donut-seg ${seg.cls}`, 'stroke-dasharray': `${len} ${c - len}`, 'stroke-dashoffset': -offset, transform: 'rotate(-90 60 60)' }, s('title', {}, `${seg.label}: ${seg.value}`))
-        : null;
-      offset += len;
-      return el;
-    }),
-  );
-}
-
-function adherenceCard(view, model) {
-  const a = view.adherence;
-  const conforming = a.azureBoards + a.github;
-  const share = a.cycles ? Math.round((100 * conforming) / a.cycles) : null;
-  const segments = [
-    { cls: 'seg-ab', label: 'AB123 → Boards', value: a.azureBoards },
-    { cls: 'seg-gh', label: '123 → GitHub issue', value: a.github },
-    { cls: 'seg-non', label: 'Other names', value: a.nonConforming },
-    { cls: 'seg-none', label: 'No branch', value: a.noBranch },
-  ];
-  const credits = (list) => (list.length ? cycleCredits(list) : h('span', { class: 'muted' }, '—'));
-  return h('section', { class: 'card adherence' },
-    h('h3', {}, 'Branch convention'),
-    h('div', { class: 'adherence-body' },
-      h('div', { class: 'donut-wrap' }, donut(segments, a.cycles), h('div', { class: 'donut-center' }, h('strong', {}, share === null ? '—' : `${share}%`), h('span', {}, 'follow it'))),
-      h('ul', { class: 'legend-list' }, segments.map((seg) => h('li', {}, h('i', { class: `swatch ${seg.cls}` }), seg.label, h('strong', {}, ` ${seg.value}`)))),
-    ),
-    h('table', { class: 'compact' },
-      h('tbody', {},
-        h('tr', {}, h('td', {}, 'Convention'), h('td', {}, credits(a.credits.conforming))),
-        h('tr', {}, h('td', {}, 'Other branches'), h('td', {}, credits(a.credits.nonConforming))),
-      ),
-    ),
-    disclosure('recipe-convention', 'Convention & commit hook',
-      h('p', { class: 'small' }, model.recipe.convention.branch),
-      h('p', { class: 'small' }, model.recipe.convention.hook),
-      h('pre', {}, h('code', {}, 'git config core.hooksPath .github/extensions/ai-attribution/hooks')),
-      h('p', { class: 'muted small' }, 'Or copy hooks/commit-msg into another repository\u2019s .git/hooks/. Requires Node on PATH. Set AI_ATTRIBUTION_HOOK=off to skip once.'),
-    ),
-  );
-}
-
-// ------------------------------------------------------------ ingredients ---
-
-function ingredientsCard(view) {
-  const max = Math.max(1, ...view.ingredients.map((i) => i.cycles));
-  return h('section', { class: 'card pantry' },
-    h('h3', {}, 'Ingredients'),
-    view.ingredients.length
-      ? h('div', { class: 'pantry-grid' }, view.ingredients.map((i) =>
-          h('div', { class: `jar jar-${i.provider ?? 'none'}` },
-            h('div', { class: 'jar-head' }, h('strong', {}, i.label), h('span', { class: 'muted small' }, `${i.cycles} cycle${i.cycles === 1 ? '' : 's'}${i.provider ? ` · ${i.closed} served` : ''}`)),
-            h('div', { class: 'jar-bar' }, h('div', { style: { width: `${(100 * i.cycles) / max}%` } })),
-            i.credits.length ? cycleCredits(i.credits) : null,
-          ),
-        ))
-      : h('p', { class: 'muted' }, 'No cycles in this window.'),
-    h('p', { class: 'muted small' }, 'Types appear after verification. Credits stay per source.'),
+  return h('div', { class: 'timing-row small', 'aria-label': 'Median cycle times' }, [
+    ['Pickup → done', k.medianPickupToDoneHours, 'First AI work or activation to merge and closure'],
+    ['Pull request → merge', k.medianOpenToMergeHours, 'Pull request opened to merged'],
+    ['Pull request → review', k.medianOpenToFirstReviewHours, 'Pull request opened to first review'],
+  ].map(([label, value, title]) => h('span', { title }, label, ' ',
+    h('strong', {}, view.verification ? formatHours(value) : h('span', { class: 'muted' }, '—')),
+  )),
+    h('span', { class: 'muted', title: 'Half of measured changes took less time; half took more.' }, 'Typical times (median)'),
   );
 }
 
@@ -380,7 +395,7 @@ function laneTrack(cycle) {
     earlier.length
       ? s('g', { class: 'mk mk-earlier' }, s('title', {}, earlier.map((e) => `${e.label}: ${when(e.at)}`).join('\n')), s('path', { d: `M ${LANE.left + 6} ${LANE.axis - 5} L ${LANE.left} ${LANE.axis} L ${LANE.left + 6} ${LANE.axis + 5}` }))
       : null,
-    cycle.events.filter((e) => Date.parse(e.at) >= start).map((e) => marker(e.kind, xOf(e.at), e.evidence, `${e.label} · ${when(e.at)} · ${e.evidence}`)),
+    cycle.events.filter((e) => Date.parse(e.at) >= start).map((e) => marker(e.kind, xOf(e.at), e.evidence, `${e.label} · ${when(e.at)} · ${evidenceLabels[e.evidence]}`)),
   );
 }
 
@@ -391,7 +406,14 @@ function stepDots(cycle) {
 }
 
 function recipeCard(cycle, model) {
-  return h('ol', { class: 'recipe-card' },
+  return h('div', { class: 'recipe-card' },
+    h('div', { class: 'actor-roles' },
+      ...cycle.ownership.roles.map((role) => h('span', { class: 'chip', title: `${role.identity.key} · ${role.at ?? 'date unknown'}` },
+        `${{ 'PR author': 'Pull request author', 'Assigned at pickup': 'Assigned at first AI use' }[role.role] ?? role.role}: ${role.actor.label}${role.reference ? ` · ${role.reference}` : ''}`)),
+      ...cycle.attribution.map((entry) => h('span', { class: `chip ${entry.method}` },
+        `${entry.actor?.label ?? 'Account unknown'} · ${creditValue(entry)} credits · ${usageLabels[entry.method]} · ${SOURCE_SHORT[entry.source]}`)),
+    ),
+    h('ol', { class: 'recipe-steps' },
     Object.entries(cycle.steps).map(([id, st]) => {
       const spec = model.recipe.steps.find((x) => x.id === id);
       return h('li', { class: `rc-step ${st.state}` },
@@ -400,19 +422,19 @@ function recipeCard(cycle, model) {
           h('div', { class: 'rc-head' }, h('strong', {}, spec?.name ?? STEP_NAMES[id])),
           h('div', { class: 'rc-meta' },
             badge(st.state === 'yes' ? 'native' : st.state === 'no' ? 'missing' : 'unverified', st.state === 'yes' ? 'done' : st.state === 'no' ? 'not done' : 'unknown'),
-            st.evidence ? badge(`ev-${st.evidence}`, st.evidence) : null,
+            st.evidence ? badge(`ev-${st.evidence}`, evidenceLabels[st.evidence]) : null,
             st.at ? h('span', { class: 'muted small' }, when(st.at)) : null,
           ),
           h('div', { class: 'small' }, st.detail),
         ),
       );
-    }),
+    })),
   );
 }
 
 function workItemChip(w) {
   const state = w.found === false ? 'not found' : w.closed ? 'closed' : w.state ? w.state.toLowerCase() : null;
-  return h('span', { class: `chip wi wi-${w.provider}`, title: `${w.provider === 'azure-boards' ? 'Azure Boards' : 'GitHub'} ${w.reference} · ${w.evidence}${w.type ? ` · ${w.type}` : ''}${state ? ` · ${state}` : ''} · via ${w.via.join(', ')}` },
+  return h('span', { class: `chip wi wi-${w.provider}`, title: `${w.provider === 'azure-boards' ? 'Azure Boards' : 'GitHub'} ${w.reference} · ${evidenceLabels[w.evidence]}${w.type ? ` · ${w.type}` : ''}${state ? ` · ${state}` : ''} · via ${w.via.map((e) => evidenceLabels[e]).join(', ')}` },
     w.reference, w.type ? ` ${w.type}` : '', state ? h('span', { class: 'muted' }, ` · ${state}`) : null);
 }
 
@@ -445,6 +467,8 @@ function lanes(view, model, ui) {
               ? h('span', { class: `chip pr pr-${String(cycle.pullRequest.state).toLowerCase()}` }, `PR #${cycle.pullRequest.number} ${cycle.pullRequest.isDraft ? 'draft' : String(cycle.pullRequest.state).toLowerCase()}`)
               : null,
             stepDots(cycle),
+            [...new Set(cycle.attribution.filter((entry) => entry.actor).map((entry) => `${entry.actor.label} · ${usageLabels[entry.method]}`))]
+              .slice(0, 2).map((label) => h('span', { class: 'small muted' }, label)),
           ),
         ),
         laneTrack(cycle),
@@ -465,27 +489,6 @@ function lanes(view, model, ui) {
 
 // ------------------------------------------------------------ surface map ---
 
-function surfaceMatrix(model) {
-  return h('div', { class: 'matrix-wrap' },
-    h('table', { class: 'matrix' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Step'), model.surfaces.map((x) => h('th', { title: x.collection }, x.name)))),
-      h('tbody', {}, model.recipe.steps.map((step) => {
-        const concept = model.concepts.find((c) => c.id === STEP_CONCEPT[step.id]);
-        return h('tr', {},
-          h('td', { class: 'concept' }, h('strong', {}, step.name), h('span', { class: 'mono' }, concept?.name ?? '')),
-          model.surfaces.map((x) => {
-            const cell = concept?.surfaces[x.id];
-            return h('td', { class: 'cell', title: cell?.note ?? '' },
-              cell ? badge(cell.availability, model.availabilityLevels.find((l) => l.id === cell.availability)?.label) : '—',
-              cell ? h('span', { class: 'mono' }, cell.field) : null,
-            );
-          }),
-        );
-      })),
-    ),
-  );
-}
-
 // -------------------------------------------------------------- toolbar ---
 
 function statusChip(label, status) {
@@ -505,14 +508,14 @@ function toolbar(view, ui) {
     h('input', {
       type: 'text',
       class: 'org',
-      placeholder: 'Azure DevOps org (optional)',
+      placeholder: 'Azure DevOps organization (optional)',
       'aria-label': 'Azure DevOps organization',
       'data-focus-key': 'recipe-org',
       value: ui.org ?? '',
       oninput: (e) => ui.setOrg(e.target.value),
     }),
-    h('button', { class: 'primary', title: 'Verify with GitHub & Azure Boards', 'aria-label': 'Verify with GitHub & Azure Boards', 'data-focus-key': 'recipe-verify', onclick: () => ui.verify(), 'aria-disabled': ui.verifying ? 'true' : undefined },
-      ui.verifying ? 'Verifying…' : v ? 'Verify again' : 'Verify'),
+    h('button', { class: 'primary', title: 'Check delivery with GitHub & Azure Boards', 'aria-label': 'Check delivery with GitHub & Azure Boards', 'data-focus-key': 'recipe-verify', onclick: () => ui.verify(), 'aria-disabled': ui.verifying ? 'true' : undefined },
+      ui.verifying ? 'Checking…' : v ? 'Check again' : 'Check delivery'),
     statusChip('GitHub', v?.github),
     statusChip('Azure Boards', v?.azureBoards),
   );
@@ -520,36 +523,185 @@ function toolbar(view, ui) {
 
 // ------------------------------------------------------------------ view ---
 
+function setupSection(view, ui) {
+  const rows = [
+    ['Local usage',
+      h('span', {}, 'Node 22+ and readable Copilot usage files. Use Connect Copilot Telemetry and choose whether to record the GitHub account.'),
+      h('span', {}, 'VS Code Local: ', h('code', {}, 'github.copilot.chat.otel.captureIdentity'),
+        '. Copilot Agent Host harness: managed ', h('code', {}, 'telemetry.capture.identity'),
+        '. Without a recorded account, usage is estimated from ownership or left unknown; a computer name is not a person.')],
+    ['Work links',
+      h('span', {}, h('code', {}, 'alex/123-feature'), ' → GitHub issue; ', h('code', {}, 'alex/AB123-feature'), ' → Azure Boards.'),
+      h('span', {}, 'Put the work-item number immediately after the last slash. The optional ', h('code', {}, 'hooks/commit-msg'),
+        ' adds a Refs line to commits. Keep existing hooks: copy or run this hook alongside them instead of replacing hooksPath.')],
+    ['GitHub checks',
+      h('span', {}, h('code', {}, 'gh auth login'), '; repository read access, including private repositories and SSO where required.'),
+      'Check delivery reads pull requests, reviews and assignments only. It does not need permission to change them.'],
+    ['Azure Boards',
+      'Set the organization here. Use az login with project access, or AZURE_DEVOPS_EXT_PAT with Work Items (Read).',
+      'We check who was assigned when AI use began. Connect Azure Boards to GitHub if commit mentions should create links automatically.'],
+    ['Billing',
+      'Personal: account holder. Organization: billing/admin access. Enterprise: a billing-authorized role or billing-read GitHub App. Repository read access alone is insufficient.',
+      h('span', {}, 'If an organization pays for the license, use its bill, not the personal account’s bill. Choose a completed UTC day and GitHub username. ',
+        h('a', { href: 'https://docs.github.com/en/rest/billing/usage', target: '_blank', rel: 'noopener noreferrer' }, 'API permissions'))],
+  ];
+  return disclosure('recipe-setup', 'Setup & permissions',
+    h('div', { class: 'matrix-wrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, ...['Step', 'Required', 'Naming rules / assumptions'].map((label) => h('th', {}, label)))),
+      h('tbody', {}, rows.map(([label, required, assumption]) => h('tr', {},
+        h('th', { scope: 'row' }, label), h('td', {}, required), h('td', {}, assumption)))),
+    )),
+    h('p', { class: 'small' }, 'Check delivery and Read billing contact the services only when you ask. We do not read prompts, descriptions or commit text. Access tokens and account links are not saved; screenshots use invented data.'),
+    h('p', { class: 'small' }, 'Only you can link accounts across tools. Billing comparisons use recorded users, not guessed owners. Local usage does not prove which account paid.'),
+    h('p', { class: 'small' }, 'GitHub does not provide a bill for each pull request or session. Work costs are estimates. Usage and charges we cannot explain stay separate.'),
+    identityPanel(view, ui),
+  );
+}
+
+function billingPanel(view, ui) {
+  const report = view.billing;
+  const { source, actor } = developerSelection(view, ui);
+  const result = report?.sources?.find((entry) => entry.sourceId === source?.id);
+  const form = ui.billingForm ?? {};
+  const input = (field, label, value, extra = {}) => h('label', { class: 'billing-field' }, label,
+    h('input', { name: field, 'aria-label': label, 'data-focus-key': `billing-${field}`, value, required: true, ...extra,
+      oninput: (event) => ui.setBilling(field, event.target.value) }));
+  const level = h('label', { class: 'billing-field' }, 'Who pays?',
+    h('select', { name: 'level', 'aria-label': 'Billing level', 'data-focus-key': 'billing-level', onchange: (event) => ui.setBilling('level', event.target.value) },
+      [['organization', 'Organization'], ['enterprise', 'Enterprise'], ['user', 'Personal']].map(([value, label]) =>
+        h('option', { value, selected: (form.level ?? 'organization') === value }, label))),
+  );
+  return h('section', { class: 'card billing-panel' },
+    h('h3', {}, 'Compare usage with the bill'),
+    h('p', { class: 'muted small' }, 'Same account, day in UTC and model. Billing does not wait for merge and is not a bill for each pull request.'),
+    h('form', { class: 'toolbar billing-form', onsubmit: (event) => {
+      event.preventDefault();
+      ui.readBilling(Object.fromEntries(new FormData(event.currentTarget)));
+    } },
+      level,
+      input('account', 'Paying account', form.account ?? '', { maxLength: 100, placeholder: 'organization or account name' }),
+      input('user', 'Person on the bill', form.user ?? (actor?.provider === 'github' ? actor.label : ''), { maxLength: 45, placeholder: 'GitHub username' }),
+      input('day', 'Day (UTC)', form.day ?? ui.lastCompleteDay, { type: 'date', max: ui.lastCompleteDay, title: 'A completed day in UTC, not your local time zone' }),
+      h('button', { type: 'submit', disabled: ui.readingBilling || !report, class: 'primary' }, ui.readingBilling ? 'Reading…' : 'Read billing'),
+    ),
+    !report ? h('p', { role: 'alert' }, 'Reload the extension to enable billing.') : null,
+    report?.status === 'error' ? h('p', { role: 'alert' }, report.reason) : null,
+    report?.status === 'ok' && result ? [
+      h('p', { class: 'small' }, `${report.scope.user} · ${report.scope.day} UTC · ${report.scope.level}/${report.scope.account} · ${SOURCE_SHORT[result.sourceId]}`),
+      h('div', { class: 'grid billing-stats' }, [
+        ['Credits on bill', result.grossQuantity],
+        ['Recorded for this account', result.observed],
+        ['Bill minus recorded', result.difference],
+        ['Charge after discounts', result.netAmount, true],
+      ].map(([label, value, amount]) => h('div', { class: 'kpi' },
+        h('div', { class: 'label' }, label),
+        h('div', { class: 'value' }, value === null ? '—' : (amount ? fmtAmount : fmtCredits).format(value))))),
+      h('p', { class: 'muted small' }, `Before discounts ${fmtAmount.format(result.grossAmount)} · discounts ${fmtCredits.format(result.discountQuantity)} credits / ${fmtAmount.format(result.discountAmount)} · after discounts ${fmtCredits.format(result.netQuantity)} credits. Amounts come from GitHub.`),
+      result.localExceedsBilling ? h('p', { role: 'alert' }, 'We recorded more usage than billed for a model. We do not estimate work costs for that model.') : null,
+      result.outsideModelScope > 0 ? h('p', { class: 'small' }, `${fmtCredits.format(result.outsideModelScope)} recorded credits do not exactly match a model on the bill.`) : null,
+      result.unknownIdentity > 0 ? h('p', { class: 'small' }, `${fmtCredits.format(result.unknownIdentity)} recorded credits have no known user, so they are not assigned to the person on this bill.`) : null,
+      h('p', { class: 'small' }, `Billed credits not matched here: ${fmtCredits.format(result.unmatchedBilling)}. Charge not assigned to work: ${fmtAmount.format(result.unallocatedNetAmount)}.`),
+      disclosure('billing-detail', 'Models & estimated work costs',
+        h('p', {}, 'Model names must match exactly. A difference does not prove a billing error: local history may be incomplete. Estimated work cost = charge after discounts × recorded user’s work credits / credits on the bill, per model.'),
+        h('table', {}, h('thead', {}, h('tr', {}, ...['Model', 'Billed credits', 'Recorded credits', 'Difference'].map((label) => h('th', {}, label)))),
+          h('tbody', {}, result.models.map((row) => h('tr', {}, h('td', {}, row.model),
+            ...[row.grossQuantity, row.observed, row.difference].map((value) => h('td', { class: 'num' }, value === null ? '—' : fmtCredits.format(value))))))),
+        h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Work · estimated cost'), h('th', {}, 'Credits'), h('th', {}, 'Charge after discounts'))),
+          h('tbody', {}, result.work.map((row) => {
+            const cycle = view.cycles.find((entry) => entry.key === row.cycleKey);
+            return h('tr', {}, h('td', {}, cycle ? `${cycle.repository} · ${cycle.branch}` : 'Outside displayed cycles'),
+              h('td', { class: 'num' }, fmtCredits.format(row.grossQuantity)), h('td', { class: 'num' }, fmtAmount.format(row.netAmount)));
+          }))),
+      ),
+    ] : null,
+  );
+}
+
+function handoffEntry(id, [title, handoff, assumption], tag = 'li') {
+  return h(tag, { class: `handoff-card${id === 'billing' ? ' billing-handoff' : ''}`, 'data-handoff': id },
+    h('div', { class: 'handoff-title' },
+      s('svg', { viewBox: '-12 -12 24 24', width: 20, height: 20, 'aria-hidden': 'true' }, icon(id)),
+      h('h3', {}, title),
+    ),
+    h('p', {}, h('strong', {}, 'Handoff: '), handoff),
+    h('p', { class: 'muted' }, h('strong', {}, 'Assumption: '), assumption),
+  );
+}
+
+function readingFlow(model) {
+  const handoffs = {
+    workItem: [
+      'Work item → branch',
+      'The issue number or AB# ID connects planned work to a branch.',
+      'Being assigned the work does not prove who used AI.',
+    ],
+    branch: [
+      'Branch → AI session',
+      'Repository + branch group local sessions into one cycle.',
+      'First activity is not branch creation; reused branches can mix efforts.',
+    ],
+    aiWork: [
+      'Session → credit record',
+      'AI requests supply credit counts and, when enabled, the account that used AI. The developer view links those credits to work.',
+      'A recorded account takes priority. Without one, a single owner can support an estimate, not a measured user.',
+    ],
+    commits: [
+      'AI work → commits',
+      'Local commit references and PR commits link the change.',
+      'A matching commit does not prove AI wrote it or tell us its exact credit use.',
+    ],
+    pullRequest: [
+      'Branch → pull request',
+      'Check delivery finds the pull request and the issues it closes.',
+      'Mentioning a pull request does not prove ownership. Its author may not be the person who used AI.',
+    ],
+    review: [
+      'PR author → review',
+      'Submitted review states and dates show when the change entered review.',
+      'A review does not necessarily mean approval, correct code or time spent by a person.',
+    ],
+    close: [
+      'Merge → work-item closure',
+      'Check delivery checks the merge and whether linked work items are closed.',
+      'With no linked work item, completion means merged only. It does not prove the change was deployed or created business value.',
+    ],
+  };
+  return disclosure('recipe-guide', 'Reading the flow · handoffs & assumptions',
+    h('p', { class: 'small' }, 'Developer filters change the credit breakdown; Lifecycle and Cycles retain all work in the window.'),
+    h('ol', { class: 'recipe-handoffs' }, model.recipe.steps.map((step) => handoffEntry(step.id, handoffs[step.id]))),
+    handoffEntry('billing', [
+      'Separately: recorded usage → bill → estimated work cost',
+      'Read billing gets a user’s credits and charges from the selected paying account for one completed UTC day. Compare with recorded usage for the same GitHub account and exact model, one source at a time.',
+      'Billing does not wait for merge. Work costs are estimated shares of the charge after discounts, not bills for each work item. Unknown users, unmatched models and unexplained charges stay separate. We do not estimate work costs for a model when recorded usage exceeds billed usage.',
+    ], 'section'),
+    h('p', { class: 'small' }, 'Dark band: all steps so far are present, not necessarily recorded in date order. Light band: this step is present but earlier steps may be missing. Stripes: unknown. Dotted lines: a missing step.'),
+  );
+}
+
 export function renderRecipe(view, model, ui) {
   if (!view) return h('p', { class: 'muted' }, 'Loading recipe…');
+  if (!view.developers) return h('p', { role: 'alert' }, 'Reload the AI attribution extension to load developer attribution.');
   const notes = [
-    ...view.totals.unlinked.filter((u) => u.calls).map((u) => `${SOURCE_SHORT[u.id] ?? u.id}: ${fmtInt.format(u.calls)} model calls (${fmtCredits.format(u.credits)} credits) had no repository, so they belong to no cycle.`),
+    ...view.totals.unlinked.filter((u) => u.calls).map((u) => `${SOURCE_SHORT[u.id] ?? u.id}: ${fmtInt.format(u.calls)} calls / ${fmtCredits.format(u.credits)} cr have no repository.`),
     view.totals.droppedRefs ? `${view.totals.droppedRefs} recorded references were not a number or commit ID of the session's own repository and were ignored.` : null,
     view.totals.truncated ? `Only the ${view.totals.cycles} most recent cycles are shown; ${view.totals.truncated} older ones are not.` : null,
     view.verification?.truncated ? `Verification covered the most recent cycles only; ${view.verification.truncated} github.com cycles were not checked.` : null,
   ].filter(Boolean);
   return [
-    h('p', { class: 'lede' }, 'Work item → AI work → reviewed change. One cycle per branch.'),
+    h('h2', { class: 'recipe-headline' }, "What work is behind this developer's AI credits?"),
     toolbar(view, ui),
-    h('p', { class: 'muted small' }, `${view.totals.cycles} cycles · ${view.kpis.verifiedCycles}/${view.totals.github} GitHub cycles verified. Credits are separate, not a bill.`),
-    view.verification
-      ? null
-      : h('div', { class: 'callout' }, h('strong', {}, 'Local evidence only. '), 'Verify with GitHub / Boards to check review, merge and closure.'),
+    ui.error ? h('p', { role: 'alert' }, ui.error) : null,
+    h('p', { class: 'muted small' }, `${view.totals.cycles} branches · ${view.kpis.verifiedCycles}/${view.totals.github} GitHub branches checked. Sources are separate; recorded credits are not a bill.`),
+    view.verification ? null : h('div', { class: 'callout' }, 'Local records only. Check delivery to confirm online results; Read billing checks charges separately.'),
+    setupSection(view, ui),
+    h('h2', {}, 'Lifecycle · all cycles'),
     recipeStrip(view, model),
-    kpiCards(view),
-    h('div', { class: 'grid two recipe-pair' }, adherenceCard(view, model), ingredientsCard(view)),
+    developerPanel(view, ui),
+    readingFlow(model),
+    medianTimes(view),
+    billingPanel(view, ui),
     h('h2', {}, 'Cycles'),
     view.cycles.length ? lanes(view, model, ui) : h('p', { class: 'muted' }, 'No model calls with a repository in this window.'),
-    disclosure('recipe-surfaces', 'Step × surface', surfaceMatrix(model)),
-    disclosure('recipe-guide', 'Reading the flow',
-      h('p', {}, model.recipe.summary),
-      h('p', {}, 'Solid core: steps followed in order. Light band: step recorded in any order. Hatching: not verified. Tails: cycles leaving the in-order path.'),
-      h('p', {}, 'Timeline: hollow markers are local or referenced; filled markers are verified. Bars show credits per source, never summed.'),
-      h('ul', {}, model.recipe.evidence.map((e) => h('li', {}, h('strong', {}, `${e.label}: `), e.description))),
-    ),
-    disclosure('recipe-privacy', 'Network & limits',
-      h('ul', { class: 'small' }, model.recipe.guardrails.map((g) => h('li', {}, g))),
-    ),
     notes.length ? h('ul', { class: 'small muted' }, notes.map((n) => h('li', {}, n))) : null,
   ];
 }

@@ -2,8 +2,8 @@
 //
 // Sources:
 //   - Copilot CLI / GitHub Copilot app session store ($COPILOT_HOME/session-store.db)
-//   - VS Code Copilot Chat span store (globalStorage/github.copilot-chat/agent-traces.db)
-//   - VS Code Agent Host span store for the Copilot harness (<userData>/agent-host/otel/agent-host-traces.db)
+//   - VS Code Local harness span store (globalStorage/github.copilot-chat/agent-traces.db)
+//   - Copilot Agent Host harness span store (<userData>/agent-host/otel/agent-host-traces.db)
 //
 // Only aggregates leave this module: counts, token and credit sums, model,
 // agent and repository names. Prompt, response and tool content are never read.
@@ -15,6 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { TokenTally } from './tokenCoverage.cjs';
 import { CycleCollector, buildRecipe } from './recipe.mjs';
+import { sourceLabels } from '../ui/format.mjs';
 
 export const NANO_AIU_PER_CREDIT = 1_000_000_000;
 const DAY_MS = 86_400_000;
@@ -398,6 +399,7 @@ export function sessionStoreCoverage(db, { sinceDay = null, sinceMs = 0, cycles 
       repository: sessionId ? repository : null,
       branch: session?.branch,
       session: sessionId,
+      model: row.model,
       at: t.ms ?? (t.dateOnly ? Date.parse(`${t.day}T00:00:00Z`) : null),
       nano,
       credited: hasCredit,
@@ -743,6 +745,8 @@ export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false, cycles
       branch: ctx?.branch,
       commit: ctx?.commit,
       session: stageKey,
+      user,
+      model: chat.response_model || chat.request_model,
       at,
       nano,
       credited: hasCredit,
@@ -840,7 +844,7 @@ export function tracesCoverage(db, { sinceMs = 0, copilotRuntime = false, cycles
       hasAttributes ? null : 'span_attributes not found: credits and repository context are unavailable.',
       hasAttributes && actor.calls === 0
         ? copilotRuntime
-          ? 'No user.name on agent spans: Copilot-harness identity needs the managed telemetry.capture.identity setting (VS Code 1.141+).'
+          ? 'No user.name on agent spans: the Copilot Agent Host harness needs the managed telemetry.capture.identity setting (VS Code 1.141+).'
           : 'No user.name on agent spans: turn on github.copilot.chat.otel.captureIdentity (VS Code 1.140+, Local harness) to attribute calls to a GitHub account.'
         : null,
       actor.calls > 0
@@ -917,7 +921,7 @@ export async function computeCoverage(options = {}) {
     ? await readDatabase(agentHostPath, (db) => tracesCoverage(db, { sinceMs, copilotRuntime: true, cycles }))
     : {
         status: 'missing',
-        reason: 'No agent-host-traces.db. VS Code 1.141+ stores Copilot-harness traces locally only while chat.agentHost.otel.dbSpanExporter.enabled is on.',
+        reason: 'No agent-host-traces.db. VS Code 1.141+ stores Copilot Agent Host harness traces locally only while chat.agentHost.otel.dbSpanExporter.enabled is on.',
       };
 
   return {
@@ -926,15 +930,15 @@ export async function computeCoverage(options = {}) {
     sources: [
       {
         id: 'sessionStore',
-        label: 'Copilot CLI / app session store',
+        label: sourceLabels.sessionStore,
         surfaces: ['cli', 'app'],
         path: storePath,
         ...store,
       },
-      { id: 'traces', label: 'VS Code agent-traces.db', surfaces: ['vscode'], path: tracesPath ?? null, ...traces },
+      { id: 'traces', label: sourceLabels.traces, surfaces: ['vscode'], path: tracesPath ?? null, ...traces },
       {
         id: 'agentHost',
-        label: 'VS Code Copilot harness agent-host-traces.db',
+        label: sourceLabels.agentHost,
         surfaces: ['vscode'],
         path: agentHostPath ?? null,
         ...agentHost,

@@ -14,7 +14,7 @@ export const MODEL_SECTIONS = [
   'concepts',
   'entities',
   'relationships',
-  'tiers',
+  'linkMethods',
   'invariants',
   'reconciliation',
   'recipe',

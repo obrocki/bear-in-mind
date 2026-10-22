@@ -436,7 +436,7 @@ function agentHostStore(file) {
   return { db, span, attr };
 }
 
-it('reads Copilot-harness spans from the Agent Host trace store, excluding other harnesses and duplicates', (t) => {
+it('reads Copilot Agent Host harness spans from the Agent Host trace store, excluding other harnesses and duplicates', (t) => {
   let now = Date.UTC(2026, 9, 19, 12);
   t.mock.method(Date, 'now', () => now);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bear-agent-host-'));

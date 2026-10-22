@@ -15,7 +15,7 @@ export const COPILOT_OTEL_SECTION = 'github.copilot.chat.otel';
 /** Copilot Chat OTel keys the connect command may write, relative to `github.copilot.chat.otel`. */
 export const CONNECT_KEYS = ['enabled', 'dbSpanExporter.enabled', 'dbSpanExporter', 'outfile', 'exporterType', 'captureIdentity'] as const;
 
-/** Backup keys for VS Code Agent Host (Copilot harness) settings carry this prefix. */
+/** Backup keys for VS Code Agent Host (Copilot Agent Host harness) settings carry this prefix. */
 export const AGENT_HOST_BACKUP_PREFIX = 'agentHost:';
 
 /** Agent Host OTel keys the connect command may write, as recorded in the backup. */

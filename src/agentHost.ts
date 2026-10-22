@@ -1,7 +1,7 @@
 import * as path from 'path';
 
 /**
- * VS Code's Copilot harness runs in the Agent Host, a separate process with its
+ * VS Code's Copilot Agent Host harness runs in a separate process with its
  * own OTel pipeline (`chat.agentHost.otel.*`, VS Code 1.141+). Pure helpers so
  * the connect decision and store location can be tested without a VS Code host.
  */

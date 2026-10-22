@@ -3,8 +3,8 @@
 //
 // Only identifiers already recorded locally are sent: repository, branch and
 // PR, issue or work-item numbers. Queries select states, dates, types, review
-// states and commit IDs; titles, descriptions, commit messages, comments and
-// logins are never requested. GitHub calls go through the signed-in `gh` CLI
+// states, commit IDs and actor/assignment metadata. Titles, descriptions,
+// commit messages and comments are never requested. GitHub uses the signed-in CLI
 // (no shell; values are GraphQL variables). Azure Boards uses a token from
 // `az account get-access-token` or AZURE_DEVOPS_EXT_PAT, held only in memory.
 
@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { branchName } from './convention.mjs';
 import { isGitHubRepository } from './recipe.mjs';
+import { githubActor, boardsActor } from './actors.mjs';
 
 /** Azure DevOps' Entra resource ID, used to request a token from the Azure CLI. */
 export const AZURE_DEVOPS_RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
@@ -32,6 +33,7 @@ const WORK_ITEM_FIELDS = [
   'System.WorkItemType',
   'System.State',
   'System.TeamProject',
+  'System.AssignedTo',
   'System.CreatedDate',
   'Microsoft.VSTS.Common.ActivatedDate',
   'Microsoft.VSTS.Common.ResolvedDate',
@@ -71,12 +73,22 @@ function firstLine(value) {
 // ---------------------------------------------------------------- GitHub ---
 
 const ISSUE_TYPE = 'issueType { name }';
+const ASSIGNMENT_FIELDS = `assignees(first: 20) { totalCount nodes { login } }
+  timelineItems(first: 100, itemTypes: [ASSIGNED_EVENT, UNASSIGNED_EVENT]) {
+    pageInfo { hasNextPage }
+    nodes {
+      __typename
+      ... on AssignedEvent { createdAt assignee { __typename ... on User { login } ... on Bot { login } } }
+      ... on UnassignedEvent { createdAt assignee { __typename ... on User { login } ... on Bot { login } } }
+    }
+  }`;
 
 function prFields(issueType) {
   return `number state isDraft createdAt mergedAt closedAt headRefName baseRefName reviewDecision
+    author { login __typename }
     reviews(first: 50) { totalCount nodes { state submittedAt } }
     commits(first: 100) { totalCount nodes { commit { oid committedDate } } }
-    closingIssuesReferences(first: 10) { nodes { number state stateReason createdAt closedAt repository { nameWithOwner } ${issueType ? ISSUE_TYPE : ''} } }`;
+    closingIssuesReferences(first: 10) { nodes { number state stateReason createdAt closedAt repository { nameWithOwner } ${issueType ? ISSUE_TYPE : ''} ${ASSIGNMENT_FIELDS} } }`;
 }
 
 /** One GraphQL document per repository batch. Values are variables, never interpolated. */
@@ -92,7 +104,7 @@ export function githubQuery(lookups, { issueType = true } = {}) {
       return `${l.alias}: pullRequests(headRefName: $${l.alias}, first: 5, orderBy: { field: CREATED_AT, direction: DESC }) { totalCount nodes { ${prFields(issueType)} } }`;
     }
     vars.push(`$${l.alias}: Int!`);
-    return `${l.alias}: issueOrPullRequest(number: $${l.alias}) { __typename ... on Issue { number state stateReason createdAt closedAt ${issueType ? ISSUE_TYPE : ''} } }`;
+    return `${l.alias}: issueOrPullRequest(number: $${l.alias}) { __typename ... on Issue { number state stateReason createdAt closedAt ${issueType ? ISSUE_TYPE : ''} ${ASSIGNMENT_FIELDS} } }`;
   });
   return `query(${vars.join(', ')}) { repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`;
 }
@@ -104,7 +116,7 @@ function githubArgs(repository, lookups, issueType) {
   return args;
 }
 
-function issueFrom(node) {
+function issueFrom(node, pickup, checkedAt) {
   if (!node || node.__typename !== 'Issue') return { found: false };
   return {
     found: true,
@@ -114,6 +126,35 @@ function issueFrom(node) {
     createdAt: date(node.createdAt),
     closedAt: date(node.closedAt),
     type: text(node.issueType?.name, 64),
+    ...githubAssignments(node, pickup, checkedAt),
+  };
+}
+
+export function githubAssignments(node, pickup, checkedAt) {
+  const current = (node.assignees?.nodes ?? []).map((a) => githubActor(a?.login)).filter(Boolean);
+  const events = node.timelineItems?.nodes;
+  const complete = node.timelineItems?.pageInfo?.hasNextPage === false && Array.isArray(events);
+  const at = Date.parse(pickup ?? '');
+  const assignees = new Map();
+  let valid = complete && Number.isFinite(at);
+  for (const event of events ?? []) {
+    const actor = githubActor(event?.assignee?.login, event?.assignee?.__typename);
+    const time = Date.parse(event?.createdAt ?? '');
+    if (!actor || !Number.isFinite(time) || !['AssignedEvent', 'UnassignedEvent'].includes(event.__typename)) {
+      valid = false;
+      continue;
+    }
+    if (time <= at) {
+      if (event.__typename === 'AssignedEvent') assignees.set(actor.key, actor);
+      else assignees.delete(actor.key);
+    }
+  }
+  return {
+    assignees: current,
+    assigneesAtStart: valid ? [...assignees.values()] : [],
+    assignmentAt: valid ? date(pickup) : null,
+    assignmentCheckedAt: date(checkedAt),
+    assignmentStatus: valid ? 'history' : complete ? 'unknown' : 'history unavailable or truncated',
   };
 }
 
@@ -121,6 +162,7 @@ export function prFrom(node) {
   if (!node || !Number.isInteger(node.number)) return null;
   return {
     number: node.number,
+    author: githubActor(node.author?.login, node.author?.__typename),
     state: word(node.state),
     isDraft: node.isDraft === true,
     createdAt: date(node.createdAt),
@@ -155,6 +197,7 @@ export function prFrom(node) {
         closedAt: date(i.closedAt),
         repository: text(i.repository?.nameWithOwner, 140),
         type: text(i.issueType?.name, 64),
+        assignment: { assignees: i.assignees, timelineItems: i.timelineItems },
       })),
   };
 }
@@ -247,10 +290,16 @@ async function verifyGitHub(cycles, { run, env, now }) {
       const recorded = plan.prs.map((l) => prFrom(data[l.alias])).filter(Boolean);
       const matching = new Map([...onBranch, ...recorded.filter((pr) => pr.headRefName === cycle.branch)].map((pr) => [pr.number, pr]));
       const issues = {};
-      for (const { id, lookup } of plan.issues) issues[id] = issueFrom(data[lookup.alias]);
+      const checkedAt = new Date(now).toISOString();
+      for (const { id, lookup } of plan.issues) issues[id] = issueFrom(data[lookup.alias], cycle.first, checkedAt);
+      const chosen = choosePullRequest([...matching.values()], cycle, now);
+      if (chosen) chosen.closingIssues = chosen.closingIssues.map(({ assignment, ...issue }) => ({
+        ...issue, ...githubAssignments(assignment ?? {}, cycle.first, checkedAt),
+      }));
       results[cycle.key] = {
         github: true,
-        pullRequest: choosePullRequest([...matching.values()], cycle, now),
+        activityFirst: cycle.first,
+        pullRequest: chosen,
         candidates: matching.size,
         mentioned: recorded.filter((pr) => pr.headRefName !== cycle.branch).map((pr) => ({ number: pr.number, headRefName: pr.headRefName })),
         issues,
@@ -358,10 +407,15 @@ async function azureGet(fetchImpl, url, authorization) {
     await res.body?.cancel?.();
     throw new Error(`Azure DevOps request failed (HTTP ${res.status})`);
   }
-  return JSON.parse(await readBounded(res));
+  const body = await readBounded(res);
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error('Azure DevOps returned invalid JSON.');
+  }
 }
 
-async function verifyBoards(ids, { organization, run, fetch: fetchImpl, env, home, platform }) {
+async function verifyBoards(ids, { organization, run, fetch: fetchImpl, env, home, platform, cycles, now }) {
   const org = normalizeOrganization(organization ?? '') ?? configuredOrganization({ env, home });
   if (!ids.length) return { status: 'skipped', reason: 'No branch follows the AB123 convention.', organization: org, checked: 0, items: {} };
   if (!org) {
@@ -377,6 +431,8 @@ async function verifyBoards(ids, { organization, run, fetch: fetchImpl, env, hom
   if (!auth.header) return { status: 'unavailable', reason: auth.reason, organization: org, checked: 0, items: {} };
 
   const items = {};
+  const snapshots = {};
+  const warnings = [];
   try {
     const wanted = ids.slice(0, MAX_WORK_ITEMS);
     const url = `${org}/_apis/wit/workitems?ids=${wanted.join(',')}&fields=${WORK_ITEM_FIELDS.join(',')}&errorPolicy=omit&api-version=7.1`;
@@ -394,6 +450,8 @@ async function verifyBoards(ids, { organization, run, fetch: fetchImpl, env, hom
         type,
         state: text(f['System.State'], 64),
         category: null,
+        assignees: [boardsActor(f['System.AssignedTo'], org)].filter(Boolean),
+        assignmentCheckedAt: new Date(now).toISOString(),
         createdAt: date(f['System.CreatedDate']),
         activatedAt: date(f['Microsoft.VSTS.Common.ActivatedDate']),
         resolvedAt: date(f['Microsoft.VSTS.Common.ResolvedDate']),
@@ -413,15 +471,52 @@ async function verifyBoards(ids, { organization, run, fetch: fetchImpl, env, hom
         stateCategories.set(key, new Map((states?.value ?? []).map((s) => [s?.name, text(s?.category, 32)])));
       } catch (err) {
         if (err.auth) throw err;
+        warnings.push('Some work-item state categories could not be read.');
       }
     }
     for (const item of Object.values(items)) {
       if (item.found) item.category = stateCategories.get(`${item.project}\u0000${item.type}`)?.get(item.state) ?? null;
     }
+    // fields + asOf avoids the content-bearing revision/history endpoints.
+    // Snapshot at first AI activity: never backdate the current assignee.
+    const times = new Map();
+    for (const cycle of cycles.slice(0, MAX_VERIFY_CYCLES)) {
+      const at = date(cycle.first);
+      const id = cycle.convention.id;
+      if (!at || !items[id]?.found) continue;
+      const group = times.get(at) ?? [];
+      group.push({ key: cycle.key, id });
+      times.set(at, group);
+    }
+    const groups = [...times.entries()];
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(4, groups.length) }, async () => {
+      while (cursor < groups.length) {
+        const [at, group] = groups[cursor++];
+        const snapshotIds = [...new Set(group.map((c) => c.id))];
+        try {
+          const past = await azureGet(fetchImpl,
+            `${org}/_apis/wit/workitems?ids=${snapshotIds.join(',')}&fields=System.Id,System.AssignedTo&asOf=${encodeURIComponent(at)}&errorPolicy=omit&api-version=7.1`,
+            auth.header);
+          if (!Array.isArray(past?.value)) throw new Error('Invalid assignment snapshot.');
+          const rows = new Map(past.value.map((row) => [row.id, row]));
+          for (const { key, id } of group) {
+            const row = rows.get(id);
+            snapshots[key] = {
+              assigneesAtStart: row ? [boardsActor(row.fields?.['System.AssignedTo'], org)].filter(Boolean) : [],
+              assignmentAt: at,
+              assignmentStatus: row ? 'snapshot at pickup' : 'not present at pickup',
+            };
+          }
+        } catch {
+          warnings.push('Some historical assignments could not be read; current assignees are not used as historical owners.');
+        }
+      }
+    }));
   } catch (err) {
     return { status: 'error', reason: err instanceof Error ? err.message : String(err), organization: org, checked: 0, items: {} };
   }
-  return { status: 'ok', reason: null, organization: org, checked: Object.keys(items).length, items };
+  return { status: warnings.length ? 'partial' : 'ok', reason: [...new Set(warnings)].join(' ') || null, organization: org, checked: Object.keys(items).length, items, snapshots };
 }
 
 // ------------------------------------------------------------ entry point ---
@@ -452,14 +547,18 @@ export async function verifyRecipe(recipe, options = {}) {
 
   const boardsCycles = cycles.filter((c) => c.convention?.provider === 'azure-boards').slice(0, MAX_WORK_ITEMS);
   const ids = [...new Set(boardsCycles.map((c) => c.convention.id))];
-  const boards = await verifyBoards(ids, { organization, run, fetch: fetchImpl, env, home, platform });
+  const boards = await verifyBoards(ids, { organization, run, fetch: fetchImpl, env, home, platform, cycles: boardsCycles, now });
 
   const result = {};
   for (const [key, value] of Object.entries(github.cycles)) result[key] = value;
   for (const cycle of boardsCycles) {
     const item = boards.items[cycle.convention.id];
     if (!item) continue;
-    result[cycle.key] = { ...(result[cycle.key] ?? { github: false }), workItems: { [cycle.convention.id]: item } };
+    result[cycle.key] = {
+      ...(result[cycle.key] ?? { github: false }),
+      activityFirst: cycle.first,
+      workItems: { [cycle.convention.id]: { ...item, ...(boards.snapshots?.[cycle.key] ?? { assignmentStatus: 'history unavailable' }) } },
+    };
   }
 
   return {

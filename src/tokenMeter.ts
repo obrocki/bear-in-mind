@@ -44,7 +44,7 @@ interface Ledger {
 interface StoredUsage {
   metrics: Ledger;
   traces: Ledger;
-  /** Copilot-harness (Agent Host) model calls seen in no Local-harness source. */
+  /** Copilot Agent Host harness (Agent Host) model calls seen in no Local harness source. */
   harness: Ledger;
   manual: Ledger;
   credits: number;
@@ -57,8 +57,8 @@ function ledger(value?: Partial<Ledger>): Ledger {
 }
 
 /**
- * Metrics and Local-harness spans describe overlapping calls: never add them or
- * rebase on idle. Copilot-harness calls never reach the Local metric feed, so
+ * Metrics and Local harness spans describe overlapping calls: never add them or
+ * rebase on idle. Copilot Agent Host harness calls never reach the Local metric feed, so
  * their ledger is added to the reconciled Local figure rather than hidden by it.
  */
 export class TokenMeter implements vscode.Disposable {

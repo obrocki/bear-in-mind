@@ -18,7 +18,7 @@ then press `F5` for an Extension Development Host.
 | `src/api.ts`, `src/extension.ts` | Public contract, shared reporting adapter, activation and commands. |
 | `src/tokenMeter.ts` | Persisted ledgers, reconciliation and ice health. |
 | `src/chatWatcher.ts`, `src/otelWatcher.ts` | Transcript/feed I/O, baselines and trace-store queries. |
-| `src/agentHost.ts` | VS Code Agent Host (Copilot harness) store location and the connect decision for its DB mode. |
+| `src/agentHost.ts` | Copilot Agent Host harness store location and the connect decision for its DB mode. |
 | `src/accountUsage.ts`, `src/sqlite.ts` | Authenticated GitHub quota lookup and shared runtime read-only SQLite support. |
 | `src/otelParse.ts`, `src/spanUsage.ts`, `src/otelSummary.ts`, `src/climate.ts` | Pure metric/span parsing, aggregation, session comparison, dashboard snapshots and the habitat's model climate. |
 | `.github/extensions/ai-attribution/lib/tokenCoverage.cjs` / `.d.cts` | Shared token reporting/paired-count logic, bundled into the typed extension and used directly by the build-free canvas. |
@@ -83,7 +83,7 @@ dependencies; reload extensions in the app after editing. Its tests run with
   `process.user.name` or `host.name`, which are a device, not an account. Leave
   unlinked calls as *no user identity* rather than guessing.
   Select optional `agent-traces.db` columns defensively; older stores lack them.
-- `agent-host-traces.db` (VS Code Agent Host, Copilot harness) shares the trace
+- `agent-host-traces.db` (VS Code Copilot Agent Host harness) shares the trace
   store schema but also holds Claude and Codex traces. Read only traces with a
   `github.copilot.*` attribute, merge by span ID with the other sources, and let
   non-GenAI ancestors (the host's session anchor) pass through when classifying
@@ -137,10 +137,24 @@ dependencies; reload extensions in the app after editing. Its tests run with
   source, never summed. Recorded references keep only numbers of the session's
   own repository and commit IDs; summaries and free text are never read.
   Unknown steps stay unknown until verified. Verification runs only on request,
-  sends only recorded identifiers, never selects titles, descriptions, commit
-  messages, comments or logins, passes GitHub values as GraphQL variables and
+  sends work identifiers and first-activity times, never selects titles,
+  descriptions, commit messages, comments or email fields, passes GitHub values as GraphQL variables and
   keeps Azure DevOps tokens in memory. `lib/convention.mjs` and the
   self-contained `hooks/commit-msg` must parse branches identically.
+- Recipe keeps the native consumer (`user.name`), historical/current work-item
+  assignee and PR author as separate roles. Native consumption wins over owner
+  inference; conflicting owners stay unattributed. Never backdate the current
+  assignee. Azure Boards IDs are organization-qualified and link to GitHub only
+  through explicit panel-scoped mappings, never matching names or email.
+  Per-source measured, inferred and unattributed balances must conserve all
+  reported credits, including no-repository usage and cycles outside the display cap.
+- Recipe billing is a separate explicit read of one completed UTC day. Preserve
+  paying account, user and product filters, API units, model/SKU and retrieval
+  time. Compare native consumers only; never promote owner inference to billing.
+  Keep gross, discounts and net distinct. No PR/session IDs exist in billing:
+  work amounts are estimated shares with an unallocated remainder. Skip allocation
+  for a model when captured credits exceed billed credits. Fail on unsupported
+  units; failed reads clear old reports and never return raw CLI errors.
 
 Extend regression tests for accounting changes. The OTel fixture was generated
 using the SDK and Copilot-compatible exporters; preserve those record shapes.
@@ -161,6 +175,10 @@ Run `npm run media` after artwork changes. The HTML screenshot harness mirrors
 webview markup and must stay in sync. `tools/dashboard.html?waiting` previews a
 connected feed without quality signals. See [tools/README.md](tools/README.md).
 Committed screenshots use invented repositories, users and organizations only.
+Use plain English for canvas labels and explanations. Keep exact API keys,
+settings, commands and internal IDs unchanged in setup or technical details.
+Call the VS Code sources **Local harness** and **Copilot Agent Host harness**.
+The shared labels live in `ui/format.mjs`; source IDs and settings do not change.
 `npm run media:canvas` points store discovery at an empty sandbox and fails if a
 source resolves outside its synthetic fixtures; Recipe verification there uses
 canned answers, never the network.

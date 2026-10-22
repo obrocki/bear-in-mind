@@ -9,6 +9,7 @@
 // Credits stay per source and are never summed across sources.
 
 import { branchName, parseBranchWorkItem } from './convention.mjs';
+import { telemetryActor, ownershipFor, attributeUsage, developerReport, validateIdentityLinks } from './actors.mjs';
 
 export const RECIPE_STEPS = ['workItem', 'branch', 'aiWork', 'commits', 'pullRequest', 'review', 'close'];
 const STEP_PHASE = {
@@ -66,6 +67,29 @@ function earliest(map, key, at) {
   if (known === undefined || (Number.isFinite(at) && (!Number.isFinite(known) || at < known))) map.set(key, at);
 }
 
+function usageTally() {
+  return { calls: 0, creditedCalls: 0, nano: 0, actors: new Map() };
+}
+
+function addUsage(tally, actor, nano, credited) {
+  tally.calls += 1;
+  tally.creditedCalls += credited ? 1 : 0;
+  tally.nano += credited ? nano : 0;
+  const key = actor?.key ?? '';
+  const part = tally.actors.get(key) ?? { actor, calls: 0, creditedCalls: 0, nano: 0 };
+  part.calls += 1;
+  part.creditedCalls += credited ? 1 : 0;
+  part.nano += credited ? nano : 0;
+  tally.actors.set(key, part);
+}
+
+function usageView(tally) {
+  return {
+    calls: tally.calls, creditedCalls: tally.creditedCalls, credits: credits(tally.nano),
+    actors: [...tally.actors.values()].map(({ nano, ...actor }) => ({ ...actor, credits: actor.creditedCalls ? credits(nano) : null })),
+  };
+}
+
 // ------------------------------------------------------------- collector ---
 
 /** Accumulates local evidence per (repository, branch) while coverage scans its stores. */
@@ -74,6 +98,7 @@ export class CycleCollector {
     this.cycles = new Map();
     this.unlinked = new Map();
     this.droppedRefs = 0;
+    this.billingUsage = new Map();
   }
 
   #key(repository, branch) {
@@ -102,20 +127,26 @@ export class CycleCollector {
   }
 
   /** One model call. Calls without a repository are tallied as unlinked AI work. */
-  addCall(source, { repository, branch, commit, session, at, nano = 0, credited = false }) {
+  addCall(source, { repository, branch, commit, session, at, user, model, nano = 0, credited = false }) {
+    const actor = telemetryActor(user);
+    const day = Number.isFinite(at) && at > 0 ? iso(at).slice(0, 10) : null;
+    const modelName = typeof model === 'string' && model.length <= 128 && !/[\u0000-\u001f\u007f]/.test(model) ? model.trim() || null : null;
+    const cycleKey = repository ? `${repository}#${branchName(branch) ?? ''}` : null;
+    const key = JSON.stringify([source, actor?.key ?? null, day, modelName, cycleKey]);
+    const billing = this.billingUsage.get(key) ?? { source, actor, day, model: modelName, cycleKey, calls: 0, creditedCalls: 0, nano: 0 };
+    billing.calls += 1;
+    billing.creditedCalls += credited ? 1 : 0;
+    billing.nano += credited ? nano : 0;
+    this.billingUsage.set(key, billing);
     if (!repository) {
-      const u = this.unlinked.get(source) ?? { calls: 0, creditedCalls: 0, nano: 0 };
-      u.calls += 1;
-      u.creditedCalls += credited ? 1 : 0;
-      u.nano += nano;
+      const u = this.unlinked.get(source) ?? usageTally();
+      addUsage(u, actor, nano, credited);
       this.unlinked.set(source, u);
       return;
     }
     const cycle = this.#cycle(repository, branchName(branch));
-    const s = cycle.sources.get(source) ?? { sessions: new Set(), calls: 0, creditedCalls: 0, nano: 0 };
-    s.calls += 1;
-    s.creditedCalls += credited ? 1 : 0;
-    s.nano += nano;
+    const s = cycle.sources.get(source) ?? { ...usageTally(), sessions: new Set() };
+    addUsage(s, actor, nano, credited);
     if (session) s.sessions.add(String(session));
     cycle.sources.set(source, s);
     if (Number.isFinite(at) && at > 0) {
@@ -164,13 +195,13 @@ export function buildRecipe(collector, { generatedAt, window } = {}) {
   return {
     generatedAt,
     window,
+    billingUsage: [...collector.billingUsage.values()].map(({ nano, ...row }) => ({ ...row, credits: credits(nano) })),
     truncated: Math.max(0, all.length - MAX_CYCLES),
     droppedRefs: collector.droppedRefs,
+    omitted: all.slice(MAX_CYCLES).flatMap((cycle) => [...cycle.sources.entries()].map(([id, s]) => ({ id, ...usageView(s) }))),
     unlinked: [...collector.unlinked.entries()].map(([id, u]) => ({
       id,
-      calls: u.calls,
-      creditedCalls: u.creditedCalls,
-      credits: credits(u.nano),
+      ...usageView(u),
     })),
     cycles: all.slice(0, MAX_CYCLES).map((c) => ({
       key: `${c.repository}#${c.branch ?? ''}`,
@@ -183,9 +214,7 @@ export function buildRecipe(collector, { generatedAt, window } = {}) {
       sources: [...c.sources.entries()].map(([id, s]) => ({
         id,
         sessions: s.sessions.size,
-        calls: s.calls,
-        creditedCalls: s.creditedCalls,
-        credits: credits(s.nano),
+        ...usageView(s),
       })),
       hours: [...c.hours.entries()]
         .sort((a, b) => a[0] - b[0])
@@ -284,6 +313,11 @@ function workItemsFor(cycle, checked) {
       state: verified?.state ?? null,
       category: verified?.category ?? null,
       stateReason: verified?.stateReason ?? null,
+      assignees: verified?.assignees ?? [],
+      assigneesAtStart: verified?.assigneesAtStart ?? [],
+      assignmentAt: verified?.assignmentAt ?? null,
+      assignmentCheckedAt: verified?.assignmentCheckedAt ?? null,
+      assignmentStatus: verified?.assignmentStatus ?? null,
       createdAt: verified?.createdAt ?? null,
       activatedAt: verified?.activatedAt ?? null,
       closedAt: verified?.closedAt ?? verified?.resolvedAt ?? null,
@@ -309,35 +343,34 @@ function cycleSteps(cycle, checked, workItems) {
     : step('no', null, null, workItems.length ? `${workItems.map((w) => w.reference).join(', ')} not found` : 'No work item linked');
 
   steps.branch = cycle.branch
-    ? step('yes', 'observed', cycle.first, cycle.convention ? `Follows the convention (${cycle.convention.reference})` : 'Does not follow the convention')
+    ? step('yes', 'observed', cycle.first, cycle.convention ? `Branch names work item ${cycle.convention.reference}` : 'No work-item number in the branch name')
     : step('no', null, null, 'No branch recorded');
 
-  const calls = cycle.sources.reduce((n, s) => n + s.calls, 0);
-  steps.aiWork = step('yes', 'observed', cycle.first, `${calls} model call${calls === 1 ? '' : 's'} across ${cycle.sources.length} source${cycle.sources.length === 1 ? '' : 's'}`);
+  steps.aiWork = step('yes', 'observed', cycle.first, `AI requests recorded in ${cycle.sources.length} source${cycle.sources.length === 1 ? '' : 's'}; totals stay separate`);
 
   const prCommits = pr?.commits?.total ?? 0;
   const headMoves = Math.max(0, cycle.heads.length - 1);
   if (pr && prCommits > 0) steps.commits = step('yes', 'verified', pr.commits.items[0]?.at ?? null, `${prCommits} commit${prCommits === 1 ? '' : 's'} on the PR`);
   else if (cycle.commits.length) steps.commits = step('yes', 'recorded', cycle.commits[0].at, `${cycle.commits.length} recorded commit${cycle.commits.length === 1 ? '' : 's'}`);
-  else if (headMoves) steps.commits = step('yes', 'observed', cycle.heads[1].at, `Head moved ${headMoves} time${headMoves === 1 ? '' : 's'} during AI work`);
+  else if (headMoves) steps.commits = step('yes', 'observed', cycle.heads[1].at, `The branch's recorded commit changed ${headMoves} time${headMoves === 1 ? '' : 's'} during AI work`);
   else if (pr) steps.commits = step('no', 'verified', null, 'The PR has no commits');
-  else steps.commits = step('unknown', null, null, github && !verifiedGithub ? 'Verify to read commits from the PR' : 'No commits recorded locally');
+  else steps.commits = step('unknown', null, null, github && !verifiedGithub ? 'Check delivery to load pull request commits' : 'No commits recorded locally');
 
   const mentioned = checked?.mentioned ?? [];
   if (pr) steps.pullRequest = step('yes', 'verified', pr.createdAt, `#${pr.number} (${pr.isDraft ? 'draft' : pr.state.toLowerCase()})${checked.candidates > 1 ? `, ${checked.candidates} PRs on this branch` : ''}`);
   else if (verifiedGithub) {
-    steps.pullRequest = step('no', mentioned.length ? 'verified' : null, null, mentioned.length ? `Referenced ${mentioned.map((p) => `#${p.number}`).join(', ')} on another branch` : 'No PR for this branch');
+    steps.pullRequest = step('no', mentioned.length ? 'verified' : null, null, mentioned.length ? `Mentioned ${mentioned.map((p) => `#${p.number}`).join(', ')} on another branch` : 'No pull request for this branch');
   } else if (cycle.pullRequests.length) {
     steps.pullRequest = step('yes', 'recorded', cycle.pullRequests[0].at, cycle.pullRequests.map((p) => `#${p.number}`).join(', '));
-  } else steps.pullRequest = step('unknown', null, null, github ? 'Verify to find the PR' : 'Only github.com repositories can be verified');
+  } else steps.pullRequest = step('unknown', null, null, github ? 'Check delivery to find the pull request' : 'Only github.com repositories can be checked online');
 
   if (pr) {
     const reviews = pr.reviews?.items ?? [];
     steps.review = (pr.reviews?.total ?? 0) > 0
       ? step('yes', 'verified', minIso(reviews.map((r) => r.at)), `${pr.reviews.total} review${pr.reviews.total === 1 ? '' : 's'}${pr.reviewDecision ? ` · ${pr.reviewDecision.toLowerCase().replace(/_/g, ' ')}` : ''}`)
       : step('no', 'verified', null, 'No reviews');
-  } else if (steps.pullRequest.state === 'no') steps.review = step('no', null, null, 'No PR');
-  else steps.review = step('unknown', null, null, 'Verify to read reviews');
+  } else if (steps.pullRequest.state === 'no') steps.review = step('no', null, null, 'No pull request');
+  else steps.review = step('unknown', null, null, 'Check delivery to load reviews');
 
   if (pr) {
     const merged = pr.state === 'MERGED';
@@ -348,8 +381,8 @@ function cycleSteps(cycle, checked, workItems) {
     else if (open.length) steps.close = step('no', 'verified', null, `Merged; ${open.map((w) => `${w.reference} ${w.state ?? 'open'}`).join(', ')}`);
     else if (unchecked.length) steps.close = step('unknown', 'verified', pr.mergedAt, `Merged; ${unchecked.map((w) => w.reference).join(', ')} not verified`);
     else steps.close = step('yes', 'verified', maxIso([pr.mergedAt, ...items.map((w) => w.closedAt)]), items.length ? `Merged; ${items.map((w) => w.reference).join(', ')} closed` : 'Merged; no work item to close');
-  } else if (steps.pullRequest.state === 'no') steps.close = step('no', null, null, 'No PR');
-  else steps.close = step('unknown', null, null, 'Verify to read merge and closure');
+  } else if (steps.pullRequest.state === 'no') steps.close = step('no', null, null, 'No pull request');
+  else steps.close = step('unknown', null, null, 'Check delivery to load merge and work-item status');
 
   return steps;
 }
@@ -412,12 +445,15 @@ function sourceCredits(cycles) {
  * The Recipe view model. `verification` is verify.mjs output or null; cycles
  * it did not cover stay unverified, and unknown steps stay unknown, not zero.
  */
-export function recipeView(recipe, verification = null) {
+export function recipeView(recipe, verification = null, { identityLinks = [] } = {}) {
+  const links = validateIdentityLinks(identityLinks);
   const cycles = (recipe?.cycles ?? []).map((cycle) => {
-    const checked = verification?.cycles?.[cycle.key] ?? null;
+    const candidate = verification?.cycles?.[cycle.key] ?? null;
+    const checked = candidate?.activityFirst && candidate.activityFirst !== cycle.first ? null : candidate;
     const workItems = workItemsFor(cycle, checked);
     const steps = cycleSteps(cycle, checked, workItems);
     const pr = checked?.pullRequest ?? null;
+    const ownership = ownershipFor(workItems, pr, links);
     let strict = 0;
     for (const id of RECIPE_STEPS) {
       if (steps[id].state !== 'yes') break;
@@ -436,6 +472,8 @@ export function recipeView(recipe, verification = null) {
       first: cycle.first,
       last: cycle.last,
       sources: cycle.sources,
+      ownership,
+      attribution: attributeUsage(cycle.sources, ownership, links),
       verified: Boolean(checked?.github),
       workItems,
       pullRequest: pr,
@@ -498,6 +536,7 @@ export function recipeView(recipe, verification = null) {
       droppedRefs: recipe?.droppedRefs ?? 0,
       unlinked: recipe?.unlinked ?? [],
     },
+    developers: developerReport(cycles, [...(recipe?.unlinked ?? []), ...(recipe?.omitted ?? [])], links),
     stations,
     adherence: {
       cycles: cycles.length,

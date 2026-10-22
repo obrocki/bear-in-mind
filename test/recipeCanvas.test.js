@@ -185,11 +185,13 @@ function createStores(dir) {
     attr.run(id, 'github.copilot.git.repository', 'https://github.com/octo/web');
     attr.run(id, 'github.copilot.git.branch', 'alex/AB123-checkout');
     attr.run(id, 'github.copilot.git.commit_sha', commit);
+    attr.run(id, 'user.name', id === 'a1' ? 'alex' : 'blair');
   }
   span.run('c1', 't-a1', 'chat', Date.parse(at(8)) + 1000, 'vs-1');
   attr.run('c1', 'copilot_chat.copilot_usage_nano_aiu', String(5 * NANO));
   span.run('c2', 't-a2', 'chat', Date.parse(at(6)) + 1000, 'vs-1');
   attr.run('c2', 'copilot_chat.copilot_usage_nano_aiu', String(1 * NANO));
+  traces.exec("UPDATE spans SET response_model = 'm' WHERE operation_name = 'chat'");
   traces.close();
   return { sessionStorePath, tracesDbPath };
 }
@@ -212,6 +214,9 @@ it('local recipe: one cycle per repository branch, credits per source and never 
   assert.deepEqual(web.pullRequests.map((p) => p.number), [128]);
   assert.deepEqual(web.commits.map((c) => c.sha), ['a1b2c3d']);
   assert.deepEqual(web.heads.map((c) => c.sha), ['aaaaaaa', 'bbbbbbb']);
+  assert.deepEqual(web.sources.find((s) => s.id === 'traces').actors.map((a) => [a.actor.key, a.credits]), [
+    ['github:alex', 5], ['github:blair', 1],
+  ], 'Recipe preserves the call-time user context, including account switches');
   assert.deepEqual(web.issues, [], 'other-repository and free-text references are dropped');
   assert.equal(recipe.droppedRefs, 2);
   assert.deepEqual(recipe.unlinked.map((u) => [u.id, u.calls]), [['sessionStore', 1]]);
@@ -251,7 +256,7 @@ it('recipe view without verification: unknown stays unknown, convention is count
   assert.equal(view.kpis.medianOpenToMergeHours, null, 'not measured is not zero');
 });
 
-const FORBIDDEN = /\b(title|body|bodyText|message|messageHeadline|comments|author|login|description)\b/;
+const FORBIDDEN = /\b(title|body|bodyText|message|messageHeadline|comments|description|email)\b/;
 
 function fakeGh(responses, calls) {
   return async (command, args) => {
@@ -259,7 +264,7 @@ function fakeGh(responses, calls) {
     if (command !== 'gh') return { code: 1, missing: true, stdout: '', stderr: '' };
     const query = args[args.indexOf('-f') + 1];
     assert.match(query, /^query=/);
-    assert.doesNotMatch(query, FORBIDDEN, 'never requests content or identities');
+    assert.doesNotMatch(query, FORBIDDEN, 'only account/assignment metadata, never content or email');
     const value = (name) => args.find((a, i) => ['-f', '-F'].includes(args[i - 1]) && a.startsWith(`${name}=`))?.slice(name.length + 1);
     const repo = responses[`${value('owner')}/${value('name')}`];
     if (!repo) return { code: 1, missing: false, stdout: JSON.stringify({ data: { repository: null }, errors: [{ type: 'NOT_FOUND' }] }), stderr: '' };
@@ -431,11 +436,20 @@ it('canvas server: recipe and verify routes, with the same origin check', async 
         verified.push(options);
         return { verified: true };
       },
+      identityLinks: async (links) => {
+        const { validateIdentityLinks } = await load('actors.mjs');
+        return { links: validateIdentityLinks(links) };
+      },
+      billing: async (scope) => {
+        const { billingScope } = await load('billing.mjs');
+        return { scope: billingScope(scope, Date.UTC(2026, 9, 22)) };
+      },
       getView: () => 'recipe',
       setView: (v) => v,
       windowDays: () => 30,
     },
   });
+
   t.after(() => server.close());
   const port = Number(new URL(server.url).port);
   assert.equal((await request(port, { pathname: '/recipe.mjs' })).status, 200);
@@ -443,4 +457,70 @@ it('canvas server: recipe and verify routes, with the same origin check', async 
   assert.deepEqual(JSON.parse((await request(port, { method: 'POST', pathname: '/api/recipe/verify', body: { azureDevOpsOrg: 'contoso' } })).body), { verified: true });
   assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/verify', origin: 'https://evil.example', body: {} })).status, 403);
   assert.deepEqual(verified, [{ azureDevOpsOrg: 'contoso' }]);
+  const links = [{ boardsKey: 'boards:https://dev.azure.com/contoso:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', githubLogin: 'alex' }];
+  assert.deepEqual(JSON.parse((await request(port, { method: 'POST', pathname: '/api/recipe/identity-links', body: { links } })).body), { links });
+  assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/identity-links', origin: 'https://evil.example', body: { links } })).status, 403);
+  assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/identity-links', body: { links: 'invalid' } })).status, 500);
+  const scope = { level: 'organization', account: 'contoso', user: 'alex', day: '2026-10-20' };
+  assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/billing', body: scope })).status, 200);
+  assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/billing', origin: 'https://evil.example', body: scope })).status, 403);
+  assert.equal((await request(port, { method: 'POST', pathname: '/api/recipe/billing', body: { ...scope, day: 'invalid' } })).status, 500);
+  assert.equal((await request(port, { pathname: '/research.md' })).status, 404, 'Research is inline, not a download');
+});
+
+it('canvas wiring exposes filtered developer reports and identity links through SDK actions', async (t) => {
+  const dir = tempDir(t);
+  const paths = createStores(dir);
+  const slot = `__recipeCanvas${Date.now()}`;
+  const stub = `data:text/javascript;base64,${Buffer.from(`
+    export const createCanvas = (canvas) => canvas;
+    export const joinSession = async (options) => { globalThis[${JSON.stringify(slot)}] = options.canvases[0]; };
+    export class CanvasError extends Error {}
+  `).toString('base64')}`;
+  const billingStub = `data:text/javascript;base64,${Buffer.from(`
+    import { billingScope, parseBillingReport, billingView } from ${JSON.stringify(pathToFileURL(path.join(extensionDir, 'lib', 'billing.mjs')).href)};
+    export { billingView };
+    export async function fetchBilling(input) {
+      const scope = billingScope(input, Date.UTC(2026, 9, 22));
+      if (scope.account === 'denied') return {status:'error', scope, reason:'Billing access denied.'};
+      const [year,month,day] = scope.day.split('-').map(Number);
+      return parseBillingReport({timePeriod:{year,month,day}, user:scope.user, organization:scope.account,
+        usageItems:[{product:'Copilot',sku:'credits',model:'m',unitType:'AI credits',pricePerUnit:.01,
+          grossQuantity:10,grossAmount:.1,discountQuantity:0,discountAmount:0,netQuantity:10,netAmount:.1}]},
+        scope, new Date(Date.UTC(2026,9,22)).toISOString());
+    }
+  `).toString('base64')}`;
+  const source = fs.readFileSync(path.join(extensionDir, 'extension.mjs'), 'utf8')
+    .replace("from '@github/copilot-sdk/extension'", `from '${stub}'`)
+    .replace("from './lib/billing.mjs'", `from '${billingStub}'`)
+    .replace(/from '(\.\/[^']+)'/g, (_, file) => `from '${pathToFileURL(path.resolve(extensionDir, file)).href}'`);
+  await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+  const canvas = globalThis[slot];
+  delete globalThis[slot];
+  assert.ok(canvas.inputSchema.properties.identityLinks);
+  assert.ok(canvas.actions.some((action) => action.name === 'reconcile_recipe_billing'));
+  const instanceId = 'actors-test';
+  t.after(() => canvas.onClose({ instanceId }));
+  const opened = await canvas.open({ instanceId, input: {
+    view: 'recipe', windowDays: 0, ...paths, agentHostTracesDbPath: path.join(dir, 'absent.db'),
+  } });
+  assert.match(opened.url, /^http:\/\/127\.0\.0\.1:\d+/);
+  const action = (name, input) => canvas.actions.find((a) => a.name === name).handler({ instanceId, input });
+  const report = await action('get_recipe', { sourceId: 'traces', actorKey: 'github:alex' });
+  assert.equal(report.billing.status, 'disconnected', 'opening/reading Recipe does not fetch billing');
+  await assert.rejects(action('reconcile_recipe_billing', { level: 'organization', account: 'bad/path', user: 'alex', day: 'invalid' }));
+  assert.equal((await action('get_recipe', {})).billing.status, 'disconnected', 'a rejected read cannot expose a stale report');
+  assert.equal(report.developers.sources.length, 1);
+  assert.equal(report.developers.sources[0].summary.measured.credits, 5);
+  assert.equal(report.developers.sources[0].summary.work[0].repository, 'octo/web');
+  const billing = await action('reconcile_recipe_billing', { level: 'organization', account: 'contoso', user: 'alex', day: '2026-10-12' });
+  assert.equal(billing.billing.status, 'ok');
+  assert.equal(billing.billing.sources.find((row) => row.sourceId === 'traces').observed, 5);
+  const denied = await action('reconcile_recipe_billing', { level: 'organization', account: 'denied', user: 'alex', day: '2026-10-12' });
+  assert.equal(denied.billing.status, 'error');
+  assert.equal(denied.billing.items, undefined, 'a failed billing request clears the previous report');
+  const link = { boardsKey: 'boards:https://dev.azure.com/contoso:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', githubLogin: 'alex' };
+  const mapped = await action('set_recipe_identity_links', { links: [link] });
+  assert.deepEqual(mapped.developers.identityLinks, [link]);
+  await assert.rejects(action('set_recipe_identity_links', { links: [{ boardsKey: 'display name', githubLogin: 'alex' }] }));
 });

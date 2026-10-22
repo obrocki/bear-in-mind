@@ -16,7 +16,7 @@ Bear in Mind meters local files:
 - The configured Copilot OpenTelemetry JSON-lines feed and read-only
   `agent-traces.db`, for metrics, timings and outcome labels.
 - VS Code's read-only Agent Host store `<userData>/agent-host/otel/agent-host-traces.db`
-  (VS Code 1.141+), for the same span metadata from Copilot-harness chats. Only
+  (VS Code 1.141+), for the same span metadata from Copilot Agent Host harness chats. Only
   Copilot runtime traces are used; Claude and Codex harness traces in the same
   store are skipped.
 
@@ -55,6 +55,24 @@ account changes; stale/reset quotas cannot drive the account gauge.
 The connection opt-in is saved separately from the GitHub authentication grant.
 The optional `@iceberg` participant sends its chat request through VS Code's
 language-model API, like other chat participants.
+
+The optional AI attribution canvas reads local usage and `user.name` metadata.
+Its Recipe **Verify** button explicitly requests GitHub PR authors, issue
+assignment events and Azure Boards assignment snapshots. Requests send work
+identifiers and first-activity timestamps, never local usage totals or chat
+content. GitHub login names and Azure Boards account IDs/display names are
+retained in memory; email fields, titles, descriptions, commit messages and
+comments are not requested. Azure Boards identity objects may include contact
+metadata in their responses; it is discarded, retaining only ID and display name.
+Azure DevOps credentials stay in memory and are
+never returned or logged. Cross-provider identity links are explicit and
+panel-scoped, not written into the repository or user settings.
+Recipe **Read billing** is a separate explicit network action through `gh`.
+It sends the selected paying-account level/slug, GitHub login, Copilot product
+and completed UTC day to GitHub's AI-credit billing API. It does not send local
+credits, work allocations or transcripts. Only the scoped report's model/SKU,
+units, prices, quantities and amounts are retained in panel memory. Failed
+requests clear the previous report and do not expose raw command output.
 
 Usage ledgers, bounded overlap evidence and file cursors are saved in VS Code's
 local global state. **Connect Copilot Telemetry** also changes the selected Copilot

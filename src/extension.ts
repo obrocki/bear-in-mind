@@ -326,7 +326,7 @@ async function connectTelemetry(
 
   const traceStore = {
     label: 'Local trace store',
-    detail: 'Cost and speed, with exact session timings, for Local and Copilot-harness chats. Runs alongside any collector you already use.',
+    detail: 'Cost and speed, with exact session timings, for Local harness and Copilot Agent Host harness chats. Runs alongside any collector you already use.',
     id: 'sqlite' as const
   };
   const fileFeed = {
@@ -524,7 +524,7 @@ async function connectTelemetry(
     }
   }
 
-  // The Copilot harness (VS Code 1.141+) runs in the Agent Host, whose own
+  // The Copilot Agent Host harness (VS Code 1.141+) has its own
   // pipeline never reaches agent-traces.db. Its trace store is additive too,
   // except that protobuf and gRPC traces would stop reaching a collector.
   let harness: 'on' | 'already' | 'collector' | undefined;
@@ -533,7 +533,7 @@ async function connectTelemetry(
     const known = agentHost.inspect(AGENT_HOST_DB_KEY);
     const setting = `${AGENT_HOST_SECTION}.${AGENT_HOST_DB_KEY}`;
     if (known?.defaultValue === undefined) {
-      output.appendLine(`[iceberg] ${setting} is not a setting in this VS Code build; Copilot-harness chats are not recorded.`);
+      output.appendLine(`[iceberg] ${setting} is not a setting in this VS Code build; Copilot Agent Host harness chats are not recorded.`);
     } else if (agentHost.get<boolean>(AGENT_HOST_DB_KEY) === true) {
       harness = 'already';
     } else if (!agentHostDbKeepsExporter({
@@ -585,10 +585,10 @@ async function connectTelemetry(
   // The Agent Host reads its settings only when it starts, and outlives window reloads.
   const harnessNote =
     harness === 'on'
-      ? ' Copilot-harness chats are recorded once the Agent Host restarts: quit and reopen VS Code, or run ' +
-        'Developer: Restart Local Agent Host, which interrupts running Copilot-harness chats.'
+      ? ' Copilot Agent Host harness chats are recorded once the Agent Host restarts: quit and reopen VS Code, or run ' +
+        'Developer: Restart Local Agent Host, which interrupts running Copilot Agent Host harness chats.'
       : harness === 'collector'
-        ? ' Copilot-harness chats are not recorded: their trace store would stop protobuf or gRPC traces reaching your collector.'
+        ? ' Copilot Agent Host harness chats are not recorded: their trace store would stop protobuf or gRPC traces reaching your collector.'
         : '';
   const choice = await vscode.window.showInformationMessage(
     `Copilot telemetry connected${note}. Reload so Copilot Chat picks up the change, then send a chat ` +
@@ -815,7 +815,7 @@ function showDiagnostics(otel: OtelWatcher, meter: TokenMeter, output: vscode.Ou
   output.appendLine(`  file feed           ${feed.jsonlPath ?? '(not configured)'}`);
   output.appendLine(`  trace store         ${feed.sqlitePath ?? '(not found)'}`);
   output.appendLine(
-    `  copilot harness     ${feed.agentHostPath ?? '(no agent-host-traces.db)'}` +
+    `  Copilot Agent Host harness  ${feed.agentHostPath ?? '(no agent-host-traces.db)'}` +
       (feed.agentHostPath && !feed.agentHostActive ? ' · no Copilot runtime spans in the last 7 days' : '')
   );
   // Already redacted by `health()`, which is the single place that touches the

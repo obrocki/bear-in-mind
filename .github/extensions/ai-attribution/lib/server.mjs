@@ -52,6 +52,8 @@ async function readJson(req) {
  *     model(): Promise<unknown>, research(): Promise<string>,
  *     coverage(): Promise<unknown>, refresh(windowDays?: number): Promise<unknown>,
  *     recipe?(): Promise<unknown>, verify?(options: { azureDevOpsOrg?: string }): Promise<unknown>,
+ *     identityLinks?(links: unknown): Promise<unknown>,
+ *     billing?(scope: unknown): Promise<unknown>,
  *     getView(): string, setView(view: string): string, windowDays(): number,
  *   },
  * }} options
@@ -124,6 +126,16 @@ export async function startCanvasServer({ uiDir, api }) {
         const body = await readJson(req);
         const org = typeof body.azureDevOpsOrg === 'string' ? body.azureDevOpsOrg.slice(0, 200) : undefined;
         send(res, 200, await api.verify({ azureDevOpsOrg: org }));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/recipe/identity-links' && api.identityLinks) {
+        const body = await readJson(req);
+        send(res, 200, await api.identityLinks(body.links));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/recipe/billing' && api.billing) {
+        const body = await readJson(req);
+        send(res, 200, await api.billing(body));
         return;
       }
       if (req.method === 'POST' && url.pathname === '/api/view') {

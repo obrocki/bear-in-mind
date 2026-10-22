@@ -136,7 +136,7 @@ The dashboard and Copilot report different units and scopes:
 | --- | --- |
 | Copilot account usage and allowance | GitHub quota API values across sessions and surfaces, with reported plan and reset date. Requires authorized GitHub sign-in; unofficial API, not an invoice. |
 | Copilot **Session Cost** | Compare with transcript credits for the same session. Uses VS Code's `max(sum(turn credits), reported session credits)` formula and includes existing history. |
-| Local tokens | Persisted metric/span usage since the meter start, reconciled by per-dimension maximum, plus Copilot-harness calls only the Agent Host recorded and labeled manual reports. Not a session or billing-period total. |
+| Local tokens | Persisted metric/span usage since the meter start, reconciled by per-dimension maximum, plus Copilot Agent Host harness calls only the Agent Host recorded and labeled manual reports. Not a session or billing-period total. |
 | Trace credits | Reported on unique model-call spans. Coverage is shown; missing credits are unknown. Diagnostics only, never added to transcript credits or the meter. |
 | Gauge with All sessions | Remaining account allowance from GitHub, kept separate from local tokens and credits. Pooled/unlimited plans have no percentage denominator. |
 | Context Window and selected-session gauge | The native window includes prompt and completion tokens against the selected model's full window. The selected-session gauge uses a trace's reported prompt allowance, not that full window. |
@@ -202,18 +202,18 @@ then send a chat request. Allow time for the export to arrive.
 
 | Source | Provides | Exporter impact |
 | --- | --- | --- |
-| Local trace store (`agent-traces.db`, plus `agent-host-traces.db` for the Copilot harness) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch and user, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
+| Local trace store (`agent-traces.db`, plus `agent-host-traces.db` for the Copilot Agent Host harness) | Model-call tokens, optional credits, exact timings, reported prompt limits, session repository/branch and user, callers, reasoning effort and tool-span status. | Runs alongside an existing OTLP collector. |
 | JSON-lines file feed | Token metrics, quality signals and (in current Copilot) serialized spans with session details. | **Replaces the OTLP exporter.** The command warns first. |
 | Both | All available signals. | Same replacement caveat as the file feed. |
 
-VS Code 1.141+ can run chats in the **Copilot harness**, which is becoming the
+VS Code 1.141+ can run chats in the **Copilot Agent Host harness**, which is becoming the
 default. Its telemetry comes from VS Code's Agent Host, not Copilot Chat, so
 choosing the trace store also turns on the Agent Host's local store
 (`chat.agentHost.otel.dbSpanExporter.enabled`). Connect skips this when the
 Agent Host already exports traces over OTLP protobuf or gRPC, because its store
 would keep them from that collector. The Agent Host reads the setting only when
 it starts: quit and reopen VS Code, or run **Developer: Restart Local Agent
-Host**, which interrupts running Copilot-harness chats.
+Host**, which interrupts running Copilot Agent Host harness chats.
 
 Bear in Mind reads only Copilot runtime traces from that store (spans stamped
 with `github.copilot.*`), not Claude or Codex harness sessions. Calls recorded
@@ -253,7 +253,7 @@ prompt says so. If replacing a collector fails, Connect leaves identity capture
 off. `COPILOT_OTEL_CAPTURE_IDENTITY` outranks the setting, so when it is set
 Connect does not offer the choice. An organisation policy
 (`CopilotOtelCaptureIdentity`) overrides both. The setting covers only the Local
-chat harness; Copilot-harness sessions get identity only through managed
+chat harness; Copilot Agent Host harness sessions get identity only through managed
 `telemetry.capture.identity` (VS Code 1.141+), and only when the bundled runtime
 adds `user.name`. **Iceberg: Telemetry
 Diagnostics** shows whether capture is requested and how many retained calls

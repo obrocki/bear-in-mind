@@ -65,7 +65,7 @@ export interface OtelUsageDelta {
   input: number;
   output: number;
   requests: number;
-  /** `harness`: Copilot-harness calls seen only in the Agent Host store. */
+  /** `harness`: Copilot Agent Host harness calls seen only in the Agent Host store. */
   source?: 'traces' | 'harness';
   /**
    * Usage already charged to the harness ledger whose call a Local source has
@@ -121,10 +121,10 @@ interface PersistedState {
  *
  * - **The JSONL file feed** carries metrics, log events and current serialized
  *   spans. Legacy SDK v2 exports can contain empty `{}` span records instead.
- * - **`agent-traces.db`** carries completed Local-harness spans and their
+ * - **`agent-traces.db`** carries completed Local harness spans and their
  *   attributes. Read metadata only and merge by span ID so file/SQLite copies
  *   count just once.
- * - **`agent-host-traces.db`** carries Copilot-harness spans from VS Code's
+ * - **`agent-host-traces.db`** carries Copilot Agent Host harness spans from VS Code's
  *   Agent Host (1.141+), when its DB mode is on. Same schema; only Copilot
  *   runtime traces are read, and they merge by span ID with the others.
  *
@@ -868,7 +868,7 @@ export class OtelWatcher implements vscode.Disposable {
     // Copilot gives the environment variable precedence over the user setting.
     const identityCapture = identityCaptureOverride() ??
       this.copilotConfig.get<boolean>('captureIdentity', false) === true;
-    // Only VS Code builds with the Copilot harness register this setting.
+    // Only VS Code builds with the Copilot Agent Host harness register this setting.
     const agentHostAvailable = this.agentHostConfig.inspect?.(AGENT_HOST_DB_KEY)?.defaultValue !== undefined;
 
     const notes = [...this.notes];
@@ -885,8 +885,8 @@ export class OtelWatcher implements vscode.Disposable {
       notes.push(
         agentHostStoreOn
           ? 'The Agent Host trace store is on but has not written yet. It starts after the Agent Host restarts; ' +
-            'Copilot-harness chats are counted from then.'
-          : `No agent-host-traces.db found — Copilot-harness chats are read only when ${AGENT_HOST_SECTION}.${AGENT_HOST_DB_KEY} ` +
+            'Copilot Agent Host harness chats are counted from then.'
+          : `No agent-host-traces.db found — Copilot Agent Host harness chats are read only when ${AGENT_HOST_SECTION}.${AGENT_HOST_DB_KEY} ` +
             'is on. Connect can turn it on.'
       );
     }
