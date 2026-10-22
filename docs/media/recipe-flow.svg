@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title desc" data-recipe-story="true">
+    <title id="title">An ordered development cycle with a separate final billing check</title>
+    <desc id="desc">Synthetic example. Seven delivery steps run left to right in date order. A mocked billing read follows visually; its work cost is an estimate, not a per-pull-request invoice.</desc>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #1f2328; font-size: 14px; }
+      .heading { font-size: 26px; font-weight: 600; }
+      .muted, .detail { fill: #59636e; }
+      .tag, .phase { font-size: 12px; font-weight: 600; letter-spacing: .6px; }
+      .card { stroke: #d1d9e0; stroke-width: 1.2; fill: #fff; }
+      .card.work { fill: #f6f0ff; } .card.ai { fill: #fff4e8; } .card.delivery { fill: #ecf8f0; }
+      .number.work { fill: #8250df; } .number.ai { fill: #a34c00; } .number.delivery { fill: #1a7f37; }
+      .number-label { fill: #fff; font-weight: 600; }
+      .step-title { font-size: 16px; font-weight: 600; }
+      .date { font-size: 18px; font-weight: 600; }
+      .arrow { fill: none; stroke: #59636e; stroke-width: 1.5; }
+      .billing { fill: #eef6ff; stroke: #0969da; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      .bill-link { fill: none; stroke: #0969da; stroke-width: 1.5; stroke-dasharray: 3 3; }
+      .summary { fill: #f6f8fa; stroke: #d1d9e0; }
+      .formula { font-size: 16px; font-weight: 600; }
+      .small { fill: #59636e; font-size: 12px; }
+    </style>
+    <rect width="1440" height="560" fill="#fff"/>
+    <text x="24" y="40" class="heading">One ordered cycle, from work to the bill</text>
+    <text x="1240" y="36" class="tag">SYNTHETIC EXAMPLE</text>
+    <text x="24" y="72" class="muted">contoso/api  |  mona/61-rate-limits  |  2026 - all dates UTC</text>
+    <text x="24" y="112" class="muted">Seven delivery steps. Billing is a separate check, not an eighth completion step.</text>
+    <text x="38" y="152" class="phase">START WITH WORK</text>
+    <text x="382" y="152" class="phase">AI-ASSISTED WORK</text>
+    <text x="726" y="152" class="phase">DELIVER THE CHANGE</text>
+    <text x="1248" y="152" class="phase">SEPARATE CHECK</text>
+    <g data-story-step="workItem">
+      <rect x="24" y="170" width="158" height="188" rx="12" class="card work"/>
+      <circle cx="49" cy="201" r="14" class="number work"/>
+      <text x="45" y="206" class="number-label">1</text>
+      <text x="38" y="243" class="step-title">Work item</text>
+      <text x="38" y="272" class="detail">#61</text>
+      <text x="38" y="328" class="date">14 Oct</text>
+    </g><g data-story-step="branch">
+      <rect x="196" y="170" width="158" height="188" rx="12" class="card work"/>
+      <circle cx="221" cy="201" r="14" class="number work"/>
+      <text x="217" y="206" class="number-label">2</text>
+      <text x="210" y="243" class="step-title">Branch seen</text>
+      <text x="210" y="272" class="detail">Branch recorded</text>
+      <text x="210" y="328" class="date">16 Oct</text>
+    </g><g data-story-step="aiWork">
+      <rect x="368" y="170" width="158" height="188" rx="12" class="card ai"/>
+      <circle cx="393" cy="201" r="14" class="number ai"/>
+      <text x="389" y="206" class="number-label">3</text>
+      <text x="382" y="243" class="step-title">AI work</text>
+      <text x="382" y="272" class="detail">Usage recorded</text>
+      <text x="382" y="328" class="date">16 Oct</text>
+    </g><g data-story-step="commits">
+      <rect x="540" y="170" width="158" height="188" rx="12" class="card ai"/>
+      <circle cx="565" cy="201" r="14" class="number ai"/>
+      <text x="561" y="206" class="number-label">4</text>
+      <text x="554" y="243" class="step-title">Commits</text>
+      <text x="554" y="272" class="detail">2 commits</text>
+      <text x="554" y="328" class="date">17 Oct</text>
+    </g><g data-story-step="pullRequest">
+      <rect x="712" y="170" width="158" height="188" rx="12" class="card delivery"/>
+      <circle cx="737" cy="201" r="14" class="number delivery"/>
+      <text x="733" y="206" class="number-label">5</text>
+      <text x="726" y="243" class="step-title">Pull request</text>
+      <text x="726" y="272" class="detail">PR #90 opened</text>
+      <text x="726" y="328" class="date">19 Oct</text>
+    </g><g data-story-step="review">
+      <rect x="884" y="170" width="158" height="188" rx="12" class="card delivery"/>
+      <circle cx="909" cy="201" r="14" class="number delivery"/>
+      <text x="905" y="206" class="number-label">6</text>
+      <text x="898" y="243" class="step-title">Review</text>
+      <text x="898" y="272" class="detail">Review submitted</text>
+      <text x="898" y="328" class="date">20 Oct</text>
+    </g><g data-story-step="close">
+      <rect x="1056" y="170" width="158" height="188" rx="12" class="card delivery"/>
+      <circle cx="1081" cy="201" r="14" class="number delivery"/>
+      <text x="1077" y="206" class="number-label">7</text>
+      <text x="1070" y="243" class="step-title">Merge &amp; close</text>
+      <text x="1070" y="272" class="detail">PR and item closed</text>
+      <text x="1070" y="328" class="date">21 Oct</text>
+    </g><path d="M184 264 H193 l-4 -4 m4 4 l-4 4" class="arrow"/><path d="M356 264 H365 l-4 -4 m4 4 l-4 4" class="arrow"/><path d="M528 264 H537 l-4 -4 m4 4 l-4 4" class="arrow"/><path d="M700 264 H709 l-4 -4 m4 4 l-4 4" class="arrow"/><path d="M872 264 H881 l-4 -4 m4 4 l-4 4" class="arrow"/><path d="M1044 264 H1053 l-4 -4 m4 4 l-4 4" class="arrow"/>
+    <g data-story-billing="true">
+      <path d="M1218 264 H1238" class="bill-link"/>
+      <rect x="1242" y="170" width="174" height="188" rx="12" class="billing"/>
+      <text x="1256" y="205" class="tag">MOCK API READ</text>
+      <text x="1256" y="243" class="step-title">Billing checked</text>
+      <text x="1256" y="272" class="detail">Estimated share</text>
+      <text x="1256" y="296" class="formula">0.0285</text>
+      <text x="1256" y="328" class="date">22 Oct</text>
+    </g>
+    <rect x="24" y="390" width="1392" height="132" rx="12" class="summary"/>
+    <text x="44" y="418" class="step-title">Report for 18 Oct, read after delivery on 22 Oct</text>
+    <text x="44" y="446" class="detail">octocat  |  VS Code · Local harness  |  gpt-5  |  only this source, account, UTC day and model</text>
+    <text x="44" y="475" class="formula">5.7 recorded credits / 8 billed credits x 0.04 charge after discounts = 0.0285 estimated work cost</text>
+    <text x="44" y="503" class="detail">Sources are not summed. Unmatched charges stay unassigned. The API supplies no currency; this is not an invoice for the PR.</text>
+    <text x="24" y="547" class="small">Branch seen means first recorded context, not proof of branch creation. Billing does not extend delivery time or have to wait for merge.</text>
+  </svg>

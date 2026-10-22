@@ -22,9 +22,22 @@ To rebuild one screenshot: `npm run media:shots -- dashboard-waiting.png`.
 Canvas shots start the real AI attribution canvas server, load synthetic SQLite
 stores, and can be rebuilt one at a time, for example:
 `npm run media:canvas -- canvas-coverage.png`.
+`npm run media:canvas -- recipe-flow.png` generates the README's ordered
+walkthrough as both SVG and PNG. `recipe-story.js` derives its dates and estimated
+cost from the same verified synthetic cycle and mocked billing response as the
+canvas, rather than maintaining a second story. It is an illustration, not a
+live-canvas screenshot or a new API action.
+Fixtures and the browser clock are fixed at 22 October 2026. Checks require
+delivery steps in order, commits before the example PRs, review before merge and
+closure after merge. The final billing card uses the report's read date, not the
+earlier day being billed, and stays outside delivery counts and timings.
+`node --test test/recipeStory.test.js` checks ordering, missing-data failures,
+the calculated share and escaped labels; browser checks reject clipped cards.
 The canvas harness also verifies live system theme changes, body-injected host
 tokens, explicit Light/Dark overrides and body-text contrast of at least 4.5:1.
 Main-view copy is also checked for unexplained codes and specialist terms.
+Every tab checks for a single experimental-use footer outside the changing panel,
+with theme-matching text and background. Complete-page previews include it.
 Overview checks the mission/map/measurements order and the source connections,
 including that the bill feeds a separate comparison rather than the delivery flow.
 It includes light and dark shared-surface filters; it never reads live stores.
@@ -35,7 +48,7 @@ Recipe checks developer/source filters, usage versus ownership and explicit
 provider identity link/remove. Its account identities and API responses are synthetic.
 Billing exercises the real client with an injected synthetic `gh` response:
 explicit submission, native-user/day/model scope, amount precision and estimated
-estimates. The setup preview expands the prerequisites/permissions checklist.
+work costs. The setup preview expands the prerequisites/permissions checklist.
 Dashboard shots include `dashboard-light.png`, both high-contrast variants and
 `dashboard-sdk.png`. They emulate VS Code's body classes/semantic tokens, check
 body-text contrast and verify that SVG paints follow live theme changes without

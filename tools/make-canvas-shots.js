@@ -14,14 +14,16 @@ const WORK = path.join(ROOT, '.canvas-shot-work');
 const PORT = Number(process.env.CDP_PORT || 0);
 const NANO = 1_000_000_000;
 const DAY = 86_400_000;
+const SNAPSHOT_NOW = Date.UTC(2026, 9, 22, 12);
 
 const SHOTS = [
   {
     file: 'canvas-outcomes.png',
     view: 'outcomes',
     w: 1280,
-    h: 1240,
+    h: 1340,
     dsf: 1,
+    footer: true,
     ready: "document.querySelector('.overview-map svg') && document.querySelector('.outcome-kpis .ratio-bar')",
   },
   {
@@ -112,11 +114,19 @@ const SHOTS = [
     prepare: "document.querySelector('[data-detail=\"recipe-setup\"]').open = true",
   },
   {
+    file: 'recipe-flow.png',
+    story: true,
+    w: 1440,
+    h: 560,
+    dsf: 2,
+  },
+  {
     file: 'canvas-gaps.png',
     view: 'gaps',
     w: 1280,
     h: 900,
     dsf: 1,
+    footer: true,
     ready: "document.querySelector('[data-detail^=\"gap-\"]')",
   },
   {
@@ -125,6 +135,7 @@ const SHOTS = [
     w: 1280,
     h: 900,
     dsf: 1,
+    footer: true,
     ready: "document.querySelector('.research-summary tbody')",
   },
 ];
@@ -174,6 +185,10 @@ function nano(credits) {
   return Math.round(credits * NANO);
 }
 
+function sha(seed) {
+  return seed.repeat(40).slice(0, 40);
+}
+
 function createSessionStore(file, now) {
   const db = new DatabaseSync(file);
   db.exec(`
@@ -190,27 +205,27 @@ function createSessionStore(file, now) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   [
-    ['cli-web-pr', 'https://github.com/contoso/web-app.git', 'mona/AB1234-checkout-flow', 'Checkout flow PR'],
-    ['app-api-pr', 'contoso/api', 'mona/52-token-refresh', 'API auth fix'],
-    ['cli-tools-issue', 'https://github.com/fabrikam/tools.git', 'main', 'Tooling issue triage'],
-    ['cloud-web-repo', 'contoso/web-app', 'experiment/pricing', 'Repository-only exploration'],
-    ['cli-unlinked', null, null, 'General coding Q&A'],
-    ['app-web-docs', 'contoso/web-app', 'mona/AB1250-docs-refresh', 'Docs refresh'],
-    ['cli-api-limits', 'contoso/api', 'mona/61-rate-limits', 'Rate limits'],
-  ].forEach(([id, repo, branch, summary], i) => {
-    session.run(id, '', repo, 'worktree', branch, summary, iso(now, 18 - i, 9), iso(now, 2 + i, 16));
+    ['cli-web-pr', 'https://github.com/contoso/web-app.git', 'mona/AB1234-checkout-flow', 'Checkout flow PR', 27, 16],
+    ['app-api-pr', 'contoso/api', 'mona/52-token-refresh', 'API auth fix', 17, 9],
+    ['cli-tools-issue', 'https://github.com/fabrikam/tools.git', 'main', 'Tooling issue triage', 13, 2],
+    ['cloud-web-repo', 'contoso/web-app', 'experiment/pricing', 'Repository-only exploration', 7, 3],
+    ['cli-unlinked', null, null, 'General coding Q&A', 3, 2],
+    ['app-web-docs', 'contoso/web-app', 'mona/AB1250-docs-refresh', 'Docs refresh', 6, 2],
+    ['cli-api-limits', 'contoso/api', 'mona/61-rate-limits', 'Rate limits', 6, 1],
+  ].forEach(([id, repo, branch, summary, start, end]) => {
+    session.run(id, '', repo, 'worktree', branch, summary, iso(now, start, 9), iso(now, end, 10));
   });
 
   const ref = db.prepare('INSERT INTO session_refs (session_id, ref_type, ref_value, turn_index, created_at) VALUES (?, ?, ?, ?, ?)');
   [
-    ['cli-web-pr', 'pr', '128', 7],
-    ['cli-web-pr', 'commit', 'a1b2c3d', 8],
-    ['cli-web-pr', 'issue', '44', 9],
-    ['app-api-pr', 'pr', '87', 5],
-    ['app-api-pr', 'commit', 'd4e5f6a', 6],
-    ['cli-tools-issue', 'issue', '19', 3],
-    ['cli-tools-issue', 'commit', 'c0ffee1', 4],
-  ].forEach(([sessionId, type, value, turn], i) => ref.run(sessionId, type, value, turn, iso(now, 12 - i, 12)));
+    ['cli-web-pr', 'issue', '44', 0, 27, 9],
+    ['cli-web-pr', 'commit', sha('e5'), 4, 23, 13],
+    ['cli-web-pr', 'pr', '128', 7, 22, 16],
+    ['app-api-pr', 'commit', sha('a3'), 4, 16, 12],
+    ['app-api-pr', 'pr', '87', 5, 15, 16],
+    ['cli-tools-issue', 'issue', '19', 0, 13, 9],
+    ['cli-tools-issue', 'commit', sha('c0ffee1'), 4, 8, 10],
+  ].forEach(([sessionId, type, value, turn, day, hour]) => ref.run(sessionId, type, value, turn, iso(now, day, hour)));
 
   const usage = db.prepare(
     `INSERT INTO assistant_usage_events (session_id, turn_index, agent_id, model, input_tokens, output_tokens,
@@ -220,7 +235,7 @@ function createSessionStore(file, now) {
   [
     ['cli-web-pr', 1, null, 'claude-sonnet-4.5', 11800, 1280, 6200, 500, 900, 7.6, 'user', 'high', 27, 9],
     ['cli-web-pr', 2, 'sub-review', 'gpt-5-mini', 4200, 620, 1100, 90, 180, 1.4, 'sub-agent', 'low', 26, 15],
-    ['cli-web-pr', 3, null, 'gpt-5', 8600, 910, 2500, 220, 640, 5.2, 'agent', 'medium', 20, 11],
+    ['cli-web-pr', 3, null, 'gpt-5', 8600, 910, 2500, 220, 640, 5.2, 'agent', 'medium', 24, 11],
     ['app-api-pr', 1, null, 'gpt-5', 9600, 1100, 3100, 350, 700, 6.1, 'agent', 'high', 17, 14],
     ['app-api-pr', 2, 'sub-tests', 'gpt-5-mini', 3800, 500, 800, 80, 140, 1.1, 'sub-agent', 'low', 16, 10],
     ['app-api-pr', 3, null, 'claude-sonnet-4.5', 7200, 760, 1900, 200, 420, 4.3, 'user', 'medium', 10, 16],
@@ -320,12 +335,12 @@ function createTracesStore(file, now) {
     conversation: 'conv-web',
     chatSession: 'chat-web',
     user: 'octocat',
-    commit: '5e1f0aa',
+    commit: sha('5e1f0aa'),
   });
   addAgent('agent-web-2', 'trace-web-2', ms(now, 5, 14), 'https://github.com/contoso/web-app.git', 'mona/AB1250-docs-refresh', {
     chatSession: 'chat-web',
     user: 'octocat',
-    commit: '7c2d9e1',
+    commit: sha('f6'),
   });
   addChat('chat-web-1', 'trace-web', ms(now, 6, 9, 5), {
     agent: 'panel/editAgent',
@@ -380,7 +395,7 @@ function createTracesStore(file, now) {
   });
 
   addAgent('agent-tools', 'trace-tools', ms(now, 2, 11), 'https://github.com/fabrikam/tools.git', 'main', {
-    commit: 'c0ffee1',
+    commit: sha('c0ffee1'),
   });
   addChat('chat-tools-1', 'trace-tools', ms(now, 2, 11, 5), {
     agent: 'GitHub Copilot Chat',
@@ -442,7 +457,6 @@ function createFixtures(runDir, now) {
  */
 function syntheticForges(now) {
   const at = (daysAgo, hour = 10) => iso(now, daysAgo, hour);
-  const sha = (seed) => seed.repeat(40).slice(0, 40);
   const assignments = (login, days) => ({
     assignees: { totalCount: 1, nodes: [{ login }] },
     timelineItems: { pageInfo: { hasNextPage: false }, nodes: [
@@ -480,7 +494,7 @@ function syntheticForges(now) {
         pr(128, 'mona/AB1234-checkout-flow', {
           state: 'MERGED', created: 22, merged: 16,
           reviews: [['CHANGES_REQUESTED', 21], ['APPROVED', 18]],
-          commits: [['a1', 26], ['b2', 24], ['c3', 23], ['d4', 21], ['e5', 19]],
+          commits: [['a1', 26], ['b2', 25], ['c3', 24], ['d4', 23], ['e5', 23]],
         }),
       ] },
       'pr:128': null,
@@ -490,7 +504,7 @@ function syntheticForges(now) {
         pr(131, 'mona/AB1250-docs-refresh', {
           state: 'OPEN', created: 3,
           reviews: [['CHANGES_REQUESTED', 2]],
-          commits: [['f6', 5], ['a7', 4], ['b8', 3], ['c9', 2]],
+          commits: [['f6', 5], ['a7', 4], ['b8', 3], ['c9', 3]],
         }),
       ] },
     },
@@ -499,16 +513,17 @@ function syntheticForges(now) {
         pr(87, 'mona/52-token-refresh', {
           state: 'MERGED', created: 15, merged: 9,
           reviews: [['APPROVED', 11]],
-          commits: [['d0', 17], ['e1', 16], ['f2', 15], ['a3', 11]],
+          commits: [['d0', 16], ['e1', 16], ['f2', 16], ['a3', 16]],
           closing: [{ number: 52, state: 'CLOSED', stateReason: 'COMPLETED', createdAt: at(19, 9), closedAt: at(9, 11), repository: { nameWithOwner: 'contoso/api' }, issueType: { name: 'Bug' } }],
         }),
       ] },
       'pr:87': null,
       'issue:52': issue(52, 'CLOSED', 'Bug', 19, 9),
       'branch:mona/61-rate-limits': { totalCount: 1, nodes: [
-        pr(90, 'mona/61-rate-limits', { state: 'OPEN', created: 2, commits: [['b4', 5], ['c5', 3]] }),
+        pr(90, 'mona/61-rate-limits', { state: 'MERGED', created: 3, merged: 1,
+          reviews: [['APPROVED', 2]], commits: [['b4', 5], ['c5', 3]] }),
       ] },
-      'issue:61': issue(61, 'OPEN', 'Feature', 8),
+      'issue:61': issue(61, 'CLOSED', 'Feature', 8, 1),
     },
     'fabrikam/tools': {
       'branch:main': { totalCount: 0, nodes: [] },
@@ -602,7 +617,7 @@ async function evaluate(ws, sessionId, expression) {
 async function waitForRender(ws, sessionId, ready) {
   const expression = `(() => {
     if (document.readyState !== 'complete') return false;
-    const text = document.body.innerText || '';
+    const text = document.body?.innerText || '';
     if (/Loading…|Failed to load|Could not render|Coverage failed/.test(text)) return false;
     return Boolean(${ready});
   })()`;
@@ -617,6 +632,22 @@ async function waitForRender(ws, sessionId, ready) {
 const WORD_BUDGETS = { outcomes: 260, recipe: 600, surfaces: 300, intersection: 200, model: 150, gaps: 140, coverage: 250, research: 300 };
 
 async function verifyCompactView(ws, sessionId, view) {
+  const warning = await evaluate(ws, sessionId, `(() => {
+    const notes = document.querySelectorAll('footer.experimental-note');
+    const note = notes[0];
+    const main = document.getElementById('view');
+    const theme = note && getComputedStyle(note);
+    const body = getComputedStyle(document.body);
+    return { count: notes.length, role: note?.getAttribute('role'), text: note?.textContent,
+      afterPanel: Boolean(note && main.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING),
+      usesTheme: theme?.color === body.color && theme?.backgroundColor === body.backgroundColor };
+  })()`);
+  assert.equal(warning.count, 1, `${view}: one shared experimental warning`);
+  assert.equal(warning.role, 'note', 'the footer is informative, not a repeatedly announced alert');
+  assert.ok(warning.afterPanel && warning.usesTheme, 'the warning follows the tab and respects the active theme');
+  for (const phrase of ['Experimental research tool.', 'incomplete or inaccurate', 'billing', 'savings claims or individual performance decisions']) {
+    assert.ok(warning.text.includes(phrase), `${view}: experimental use explains ${phrase}`);
+  }
   const visibleText = await evaluate(ws, sessionId, "document.getElementById('view').innerText");
   const words = visibleText.trim().split(/\s+/).length;
   assert.doesNotMatch(visibleText, /\b(?:T[0-3]|native|deterministic|provenance|unattributed|reconciliation|canonical|grain|ledger|surfaces|initiator|consumer|baseline|new runtime)\b/i,
@@ -881,6 +912,34 @@ async function verifyThemes(ws, sessionId) {
   console.log('Theme checks passed: system changes, body-injected host tokens, explicit overrides and text contrast >= 4.5:1.');
 }
 
+function verifyFixtureChronology(view, steps, now) {
+  for (const cycle of view.cycles) {
+    let previous = -Infinity;
+    for (const { id } of steps) {
+      const step = cycle.steps[id];
+      if (step.state !== 'yes') continue;
+      const at = Date.parse(step.at);
+      assert.ok(Number.isFinite(at) && at >= previous && at <= now, `${cycle.branch}: ${id} must follow the previous step`);
+      previous = at;
+    }
+    const pr = cycle.pullRequest;
+    if (!pr) continue;
+    for (const commit of pr.commits.items) {
+      assert.ok(commit.at >= cycle.first && commit.at <= pr.createdAt, `${cycle.branch}: the linear example commits follow AI work and precede the PR`);
+    }
+    for (const review of pr.reviews.items) {
+      assert.ok(review.at >= pr.createdAt && (!pr.mergedAt || review.at <= pr.mergedAt), `${cycle.branch}: review follows the PR and precedes merge`);
+    }
+    for (const item of cycle.workItems.filter((item) => item.closed)) {
+      assert.ok(!pr.mergedAt || item.closedAt >= pr.mergedAt, `${cycle.branch}: work closes after merge`);
+    }
+    if (cycle.steps.close.state === 'yes') {
+      assert.ok(cycle.last <= cycle.steps.close.at, `${cycle.branch}: the completed example has no activity after closure`);
+    }
+  }
+  console.log('Synthetic cycle chronology passed: delivery steps, commits, reviews, merge and closure.');
+}
+
 async function startServer(paths, now, display = { verified: true, billing: false }) {
   const [{ startCanvasServer }, { computeCoverage, withoutRecipe }, { loadModel, loadResearch }, { recipeView }, { verifyRecipe }, { fetchBilling, billingView }] = await Promise.all([
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'server.mjs')).href),
@@ -925,6 +984,7 @@ async function startServer(paths, now, display = { verified: true, billing: fals
     return recipe();
   };
   await verify();
+  verifyFixtureChronology(await recipe(), (await loadModel()).recipe.steps, now);
   return startCanvasServer({
     uiDir: path.join(EXTENSION_DIR, 'ui'),
     api: {
@@ -968,7 +1028,7 @@ async function startServer(paths, now, display = { verified: true, billing: fals
       verify,
       getView: () => view,
       setView: (next) => {
-        if (SHOTS.some((shot) => shot.view === next) || ['gaps', 'research'].includes(next)) view = next;
+        if (SHOTS.some((shot) => !shot.story && shot.view === next)) view = next;
         return view;
       },
       windowDays: () => windowDays,
@@ -985,12 +1045,58 @@ async function setServerView(serverUrl, view) {
   if (!res.ok) throw new Error(`Could not set view ${view}: ${res.status}`);
 }
 
+async function captureRecipeStory(ws, sessionId, serverUrl, shot, now) {
+  const { buildRecipeStory, renderRecipeStory } = require('./recipe-story');
+  const [response, modelResponse, { sourceLabels }] = await Promise.all([
+    fetch(new URL('/api/recipe/billing', serverUrl), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: 'organization', account: 'contoso', user: 'octocat', day: iso(now, 4).slice(0, 10) }),
+    }),
+    fetch(new URL('/api/model', serverUrl)),
+    import(pathToFileURL(path.join(EXTENSION_DIR, 'ui', 'format.mjs')).href),
+  ]);
+  assert.ok(response.ok && modelResponse.ok, 'load the same synthetic cycle, model and billing response as the canvas');
+  const [view, model] = await Promise.all([response.json(), modelResponse.json()]);
+  const story = buildRecipeStory(view, {
+    branch: 'mona/61-rate-limits', steps: model.recipe.steps,
+    sourceId: 'traces', sourceLabel: sourceLabels.traces,
+  });
+  const svg = renderRecipeStory(story);
+  fs.writeFileSync(path.join(OUT, shot.file.replace(/\.png$/, '.svg')), svg);
+  await send(ws, 'Emulation.setDeviceMetricsOverride',
+    { width: shot.w, height: shot.h, deviceScaleFactor: shot.dsf, mobile: false }, sessionId);
+  await send(ws, 'Page.navigate', { url: `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}` }, sessionId);
+  await waitForRender(ws, sessionId, "document.querySelector('svg[data-recipe-story]')");
+  await evaluate(ws, sessionId, 'document.fonts.ready.then(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+  const picture = await evaluate(ws, sessionId, `(() => {
+    const cards = [...document.querySelectorAll('[data-story-step], [data-story-billing]')].map((group) => {
+      const box = group.querySelector('rect').getBBox();
+      return { id: group.dataset.storyStep ?? 'billing', x: box.x, right: box.x + box.width,
+        fits: [...group.querySelectorAll('text')].every((text) => {
+          const b = text.getBBox();
+          return b.x >= box.x && b.x + b.width <= box.x + box.width;
+        }) };
+    });
+    return { cards, allTextFits: [...document.querySelectorAll('text')].every((text) => {
+      const b = text.getBBox();
+      return b.x >= 0 && b.x + b.width <= 1440 && b.y >= 0 && b.y + b.height <= 560;
+    }) };
+  })()`);
+  assert.deepEqual(picture.cards.map((card) => card.id), [...model.recipe.steps.map((step) => step.id), 'billing']);
+  assert.ok(picture.allTextFits && picture.cards.every((card, i) => card.fits && (!i || card.x > picture.cards[i - 1].right)),
+    'ordered cards, dates and labels must not overlap or clip');
+  const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
+  const out = path.join(OUT, shot.file);
+  fs.writeFileSync(out, Buffer.from(data, 'base64'));
+  console.log(`${rel(out)}  ${shot.w * shot.dsf}x${shot.h * shot.dsf}  ordered steps + separate mocked billing check`);
+}
+
 (async () => {
   fs.mkdirSync(OUT, { recursive: true });
   fs.mkdirSync(WORK, { recursive: true });
   const runDir = fs.mkdtempSync(path.join(WORK, 'run-'));
   const profile = fs.mkdtempSync(path.join(runDir, 'profile-'));
-  const now = Date.now();
+  const now = SNAPSHOT_NOW;
   let browser;
   let ws;
   let server;
@@ -1030,9 +1136,11 @@ async function setServerView(serverUrl, view) {
     const { sessionId } = await send(ws, 'Target.attachToTarget', { targetId, flatten: true });
     await send(ws, 'Page.enable', {}, sessionId);
     await send(ws, 'Runtime.enable', {}, sessionId);
+    await send(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: `Date.now = () => ${now};` }, sessionId);
 
     let themesVerified = false;
-    for (const shot of shots) {
+    const uiShots = shots.filter((shot) => !shot.story);
+    for (const shot of uiShots) {
       display.verified = shot.verified !== false;
       display.billing = false;
       await setServerView(server.url, shot.view);
@@ -1065,6 +1173,10 @@ async function setServerView(serverUrl, view) {
         const el = document.querySelector(${JSON.stringify(shot.focus)});
         window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - document.querySelector('.top').offsetHeight - 16));
       })()`);
+      if (shot.footer) {
+        assert.ok(await evaluate(ws, sessionId, `document.querySelector('.experimental-note').getBoundingClientRect().bottom <= ${shot.h}`),
+          `${shot.file}: the experimental footer must be visible in the complete-page preview`);
+      }
       const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       const buf = Buffer.from(data, 'base64');
       const out = path.join(OUT, shot.file);
@@ -1072,13 +1184,17 @@ async function setServerView(serverUrl, view) {
       console.log(`${rel(out)}  ${shot.w * shot.dsf}x${shot.h * shot.dsf}  ${(buf.length / 1024).toFixed(1)} kB`);
       await verifyNarrowView(ws, sessionId, shot.view);
     }
-    await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').focus()");
-    for (const [key, expected] of [['Home', 'outcomes'], ['ArrowRight', 'recipe'], ['End', 'research']]) {
-      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key }, sessionId);
-      await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }, sessionId);
-      assert.equal(await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').dataset.view"), expected);
+    if (uiShots.length) {
+      await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').focus()");
+      for (const [key, expected] of [['Home', 'outcomes'], ['ArrowRight', 'recipe'], ['End', 'research']]) {
+        await send(ws, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key }, sessionId);
+        await send(ws, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }, sessionId);
+        assert.equal(await evaluate(ws, sessionId, "document.querySelector('[role=\"tab\"][aria-selected=\"true\"]').dataset.view"), expected);
+      }
+      console.log('Compact views passed: word budgets, keyboard disclosures and tabs, retained evidence, narrow layouts.');
     }
-    console.log('Compact views passed: word budgets, keyboard disclosures and tabs, retained evidence, narrow layouts.');
+    display.verified = true;
+    for (const shot of shots.filter((shot) => shot.story)) await captureRecipeStory(ws, sessionId, server.url, shot, now);
   } finally {
     if (ws) {
       await send(ws, 'Browser.close').catch(() => {});
