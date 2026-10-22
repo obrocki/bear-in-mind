@@ -190,6 +190,18 @@ main {
   max-width: 1400px;
 }
 
+.experimental-note {
+  max-width: 1360px;
+  margin: 0 20px 20px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  border-left: 3px solid var(--yellow);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 20px;
+}
+
 .lede {
   font-size: 15px;
   line-height: 22px;

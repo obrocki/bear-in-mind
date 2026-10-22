@@ -15,6 +15,15 @@ const model = JSON.parse(
 );
 const NANO = 1_000_000_000;
 
+it('canvas shell keeps one experimental-use warning outside the changing tab panel', () => {
+  const html = fs.readFileSync(path.join(extensionDir, 'ui', 'index.html'), 'utf8');
+  assert.equal((html.match(/class="experimental-note"/g) ?? []).length, 1);
+  assert.match(html, /<\/main>\s*<footer class="experimental-note" role="note"/);
+  for (const phrase of ['Experimental research tool.', 'incomplete or inaccurate', 'billing', 'savings claims or individual performance decisions']) {
+    assert.ok(html.includes(phrase), phrase);
+  }
+});
+
 function tempDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-attribution-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

@@ -177,6 +177,9 @@ connected feed without quality signals. See [tools/README.md](tools/README.md).
 Committed screenshots use invented repositories, users and organizations only.
 Use plain English for canvas labels and explanations. Keep exact API keys,
 settings, commands and internal IDs unchanged in setup or technical details.
+Keep one experimental-use footer outside the changing tab panel so every view
+retains the warning. README flow illustrations come from the screenshot fixtures;
+their deliberately linear ordering must not constrain real delivery histories.
 Call the VS Code sources **Local harness** and **Copilot Agent Host harness**.
 The shared labels live in `ui/format.mjs`; source IDs and settings do not change.
 `npm run media:canvas` points store discovery at an empty sandbox and fails if a

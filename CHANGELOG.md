@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Experimental-use warning:** every canvas tab has the same footer explaining
+  that results may be incomplete or inaccurate and are not a sole basis for
+  billing, savings claims or individual performance decisions.
+- **Ordered README example:** a generated, synthetic work-to-billing illustration
+  with seven chronological delivery steps and a separate final mocked billing
+  check. Shared screenshot fixtures now have consistent dates and ordering checks;
+  live API behavior is unchanged.
 - **Overview at a glance:** mission statement and a hybrid source-to-Recipe map,
   showing people/usage records, delivered work and the separate bill comparison.
   Local measurements follow the map rather than serving as the page's mission.

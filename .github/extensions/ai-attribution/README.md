@@ -28,6 +28,9 @@ Labels use plain English; exact API fields and settings appear in setup or
 technical details. Short summaries first; expand a cell, card or section for the full evidence.
 Expanders support the keyboard and retain their state while the panel updates.
 Missing values stay unknown, and source errors remain visible.
+Every tab ends with a shared experimental-use warning: results may be incomplete
+or inaccurate and must not be used alone for billing, savings claims or
+individual performance decisions.
 
 | Tab | Shows |
 | --- | --- |
@@ -148,7 +151,14 @@ affect the credit breakdown; lifecycle and timelines retain all work in the wind
 | Method | AI work, commits | Sessions, model calls and reported credits per source; recorded commits; VS Code head commits moving | PR commit IDs and dates |
 | Serve | Pull request, review, merge and close | `session_refs` PR | PR by number or head branch, reviews, merge, closing issues and work-item closure |
 
-![Recipe overview, developer attribution and cycle timelines using synthetic data](../../../docs/media/canvas-recipe.png)
+This README-only illustration uses the same synthetic cycle and billing response
+as the canvas previews. The seven delivery steps run left to right, followed
+visually by a separate mocked billing check and its estimated work cost.
+
+![Ordered synthetic cycle from work item to merge and closure, followed by a separate mocked billing check](../../../docs/media/recipe-flow.png)
+
+[Full canvas preview](../../../docs/media/canvas-recipe.png). The illustration is
+not a live-canvas screenshot and does not trigger real API calls.
 
 The **recipe strip** draws a band per step: the solid core counts cycles that
 followed the recipe in order up to that step, the lighter band counts cycles
