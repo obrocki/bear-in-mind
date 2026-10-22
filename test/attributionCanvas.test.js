@@ -38,7 +38,8 @@ it('model spec: every concept covers every surface with a known availability', (
   }
 });
 
-it('model spec: outcomes, gaps, tiers and sources are well formed', () => {
+it('model spec: outcomes, gaps, link methods and sources are well formed', () => {
+  assert.equal(model.schemaVersion, 2);
   const surfaces = new Set(model.surfaces.map((s) => s.id));
   const liveMetrics = new Set([
     'creditsToPrShare',
@@ -57,9 +58,11 @@ it('model spec: outcomes, gaps, tiers and sources are well formed', () => {
     for (const s of gap.surfaces) assert.ok(surfaces.has(s), `${gap.id}: ${s}`);
   }
   assert.deepEqual(
-    model.tiers.map((t) => t.id),
-    ['T0', 'T1', 'T2', 'T3', 'U'],
+    model.linkMethods.map((method) => method.id),
+    ['tool-provided-link', 'exact-match', 'likely-match', 'estimated-share', 'not-linked'],
   );
+  assert.equal(model.tiers, undefined);
+  assert.doesNotMatch(JSON.stringify(model), /\bT[0-3]\b|"tier"\s*:/, 'descriptive methods replace the research-only codes everywhere in the model');
   for (const v of model.verification) assert.ok(['verified', 'unverified'].includes(v.status), v.claim);
   for (const source of model.sources) assert.match(source.url, /^https:\/\//, source.title);
   const entities = new Set(model.entities.map((e) => e.id));
@@ -100,7 +103,7 @@ it('model distinguishes organisation aggregates, self-reported completion and bi
   assert.match(model.reconciliation.source, /ai_credit\/usage/);
   assert.match(model.reconciliation.grain, /preserve the request filters/);
   assert.match(model.reconciliation.requirements.join(' '), /gross.*discount.*net/);
-  assert.match(model.reconciliation.allocationPolicy, /T3.*not measured/);
+  assert.match(model.reconciliation.allocationPolicy, /Estimated work cost.*not measured/);
   assert.equal(model.verification.find((v) => v.claim === '--max-ai-credits and /limits exist').status, 'verified');
   assert.equal(model.verification.find((v) => v.claim.includes('limits reset grain')).status, 'unverified');
   const actor = model.entities.find((e) => e.id === 'actor');
@@ -173,9 +176,30 @@ it('token formatting distinguishes unknown and measured zero', async () => {
   assert.equal(formatTokens(null), '—');
   assert.equal(formatTokens(undefined), '—');
   assert.equal(formatTokens(0), '0');
-  assert.equal(coverageText({ reportedCalls: 0, share: 0 }, 3), '0 / 3 calls (0%)');
-  assert.equal(coverageText({ reportedCalls: 1, share: 1 / 3 }, 3), '1 / 3 calls (33%)');
+  assert.equal(coverageText({ reportedCalls: 0, share: 0 }, 3), '0 / 3 requests (0%)');
+  assert.equal(coverageText({ reportedCalls: 1, share: 1 / 3 }, 3), '1 / 3 requests (33%)');
   assert.equal(coverageText(undefined, 3), 'Not measured');
+});
+
+it('harness names are shared by source reports and canvas labels without changing source IDs or database names', async (t) => {
+  const { sourceLabels } = await import(pathToFileURL(path.join(extensionDir, 'ui', 'format.mjs')));
+  assert.deepEqual(sourceLabels, {
+    sessionStore: 'Copilot CLI / app',
+    traces: 'VS Code · Local harness',
+    agentHost: 'VS Code · Copilot Agent Host harness',
+  });
+  const { computeCoverage } = await load('coverage.mjs');
+  const dir = tempDir(t);
+  const paths = {
+    sessionStorePath: path.join(dir, 'session-store.db'),
+    tracesDbPath: path.join(dir, 'agent-traces.db'),
+    agentHostTracesDbPath: path.join(dir, 'agent-host-traces.db'),
+  };
+  const coverage = await computeCoverage({ ...paths, env: {}, home: dir, platform: 'linux' });
+  assert.deepEqual(coverage.sources.map(({ id, label }) => [id, label]), Object.entries(sourceLabels));
+  assert.deepEqual(coverage.sources.map(({ path: file }) => path.basename(file)), [
+    'session-store.db', 'agent-traces.db', 'agent-host-traces.db',
+  ]);
 });
 
 it('normalises repository identifiers and drops credentials', async () => {
@@ -829,7 +853,7 @@ it('canvas does not link a different native chat through a shared conversation o
   assert.equal(result.tokenCoverage.cacheWriteTokens.reportedCalls, 1);
 });
 
-it('Copilot harness: reads only Copilot runtime traces from agent-host-traces.db, with per-turn credits', async (t) => {
+it('Copilot Agent Host harness: reads only Copilot runtime traces from agent-host-traces.db, with per-turn credits', async (t) => {
   const { DatabaseSync } = require('node:sqlite');
   const { computeCoverage, findAgentHostTracesDb, vscodeUserDataDirs } = await load('coverage.mjs');
   const dir = tempDir(t);

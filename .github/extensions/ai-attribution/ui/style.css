@@ -197,6 +197,75 @@ main {
   margin: 0 0 16px;
 }
 
+.recipe-headline {
+  margin: 0 0 16px;
+  font-size: var(--text-title-medium, 20px);
+  line-height: var(--leading-title-medium, 28px);
+}
+.overview-title {
+  margin: 0 0 8px;
+  font-size: var(--text-title-medium, 20px);
+  line-height: var(--leading-title-medium, 28px);
+}
+.overview-mission {
+  max-width: 1000px;
+}
+.overview-map {
+  margin: 0 0 20px;
+  overflow-x: auto;
+}
+.overview-map svg {
+  display: block;
+  width: 100%;
+  min-width: 1000px;
+}
+.overview-group {
+  fill: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.overview-edge {
+  stroke: var(--orange);
+  stroke-width: 1.5;
+  fill: none;
+}
+.overview-edge.requested {
+  stroke: var(--blue);
+  stroke-dasharray: 5 4;
+}
+#overview-arrow path {
+  fill: var(--muted);
+}
+.overview-node rect {
+  fill: var(--bg);
+  stroke: var(--border);
+}
+.overview-node.requested rect {
+  stroke: var(--blue);
+  stroke-dasharray: 5 4;
+}
+.overview-node.recipe rect {
+  fill: color-mix(in srgb, var(--orange) 6%, var(--bg));
+  stroke: var(--orange);
+}
+.overview-node.answer rect {
+  fill: var(--surface);
+}
+.overview-node-title {
+  fill: var(--fg);
+  font-size: 15px;
+  font-weight: 600;
+}
+.overview-node-detail {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.overview-step {
+  fill: var(--fg);
+  font-size: 14px;
+}
+
 .grid {
   display: grid;
   gap: 12px;
@@ -611,6 +680,18 @@ th.num {
 .recipe-strip .band-serve rect {
   fill: color-mix(in srgb, var(--green) 6%, transparent);
 }
+.recipe-strip .band-billing > rect {
+  fill: color-mix(in srgb, var(--blue) 6%, transparent);
+}
+.recipe-strip .billing-connector {
+  stroke: var(--blue);
+  stroke-width: 2;
+  stroke-dasharray: 4 4;
+  fill: none;
+}
+.recipe-strip .billing-endpoint .station-ring {
+  stroke: var(--blue);
+}
 .recipe-strip .band-label {
   font-size: 13px;
   font-weight: 700;
@@ -852,6 +933,7 @@ table.compact td {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
+  max-width: 100%;
 }
 .src {
   font-size: 11px;
@@ -859,7 +941,9 @@ table.compact td {
   padding: 0 7px;
   line-height: 18px;
   border: 1px solid var(--border);
-  white-space: nowrap;
+  white-space: normal;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 .src-sessionStore {
@@ -1107,9 +1191,99 @@ table.compact td {
   margin: 4px 0 2px;
   padding: 8px 0 0;
   border-top: 1px dashed var(--border);
+}
+.recipe-steps {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 8px 16px;
+}
+.actor-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.actor-roles .chip {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.developer-report {
+  margin: 12px 0;
+}
+.developer-report .toolbar h3 {
+  margin: 0 12px 0 0;
+}
+.developer-report select,
+.developer-report input {
+  max-width: 100%;
+  min-width: 0;
+}
+.actor-balance {
+  display: flex;
+  align-items: baseline;
+  gap: 8px 24px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.actor-balance > strong {
+  font-size: 24px;
+}
+.actor-credit-bar {
+  display: flex;
+  height: 10px;
+  background: var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.actor-credit-bar .measured {
+  background: var(--green);
+}
+.actor-credit-bar .inferred {
+  background: var(--yellow);
+}
+.actor-credit-bar .unattributed {
+  background: var(--muted);
+}
+.actor-work .mono {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.recipe-handoffs {
+  display: grid;
+  gap: 12px;
+  padding-left: 24px;
+}
+.handoff-card {
+  padding: 10px 12px;
+  border-left: 2px solid var(--orange);
+  background: var(--surface);
+}
+.billing-handoff {
+  margin: 12px 0 12px 24px;
+  border-left-color: var(--blue);
+}
+.handoff-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.handoff-title h3 {
+  margin: 0;
+}
+.handoff-card p {
+  margin: 6px 0 0;
+}
+.developer-report .more {
+  margin-top: 8px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 8px;
 }
 .rc-step {
   display: grid;
@@ -1169,6 +1343,12 @@ table.compact td {
 }
 .disclosure .mono {
   overflow-wrap: anywhere;
+}
+.disclosure .toolbar > *,
+.disclosure select,
+.disclosure input {
+  max-width: 100%;
+  min-width: 0;
 }
 .disclosure pre {
   overflow-x: auto;
@@ -1329,7 +1509,7 @@ table.compact td {
   fill: var(--muted);
   font-size: 11px;
 }
-.tier-cards {
+.link-methods {
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
 }
 .coverage-sources {
@@ -1356,6 +1536,42 @@ table.compact td {
   margin-left: 6px;
   font-variant-numeric: tabular-nums;
 }
+.billing-panel {
+  margin: 16px 0;
+}
+.billing-stats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 14px 0;
+}
+.billing-form {
+  align-items: end;
+  margin: 12px 0;
+}
+.billing-field {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+.billing-field input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+.billing-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.node-billing_reconciliation rect,
+.node-work_allocation rect {
+  stroke: var(--blue);
+}
 .recipe-toolbar .status-chip {
   max-width: 100%;
   white-space: normal;
@@ -1379,7 +1595,7 @@ table.compact td {
     overflow-x: auto;
   }
   .recipe-strip > svg {
-    min-width: 850px;
+    min-width: 1180px;
   }
 }
 @media (max-width: 480px) {
@@ -1394,6 +1610,9 @@ table.compact td {
     gap: 2px;
   }
   .recipe-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .billing-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .lane {

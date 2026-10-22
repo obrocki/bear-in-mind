@@ -10,6 +10,9 @@ import { EXTENSION_DIR, MODEL_SECTIONS, loadModel, loadResearch } from './lib/mo
 import { recipeView } from './lib/recipe.mjs';
 import { startCanvasServer } from './lib/server.mjs';
 import { verifyRecipe } from './lib/verify.mjs';
+import { validateIdentityLinks } from './lib/actors.mjs';
+import { fetchBilling, billingView } from './lib/billing.mjs';
+import { sourceLabels as SOURCE_NAMES } from './ui/format.mjs';
 
 const VIEWS = ['outcomes', 'recipe', 'surfaces', 'intersection', 'model', 'gaps', 'coverage', 'research'];
 const DEFAULT_WINDOW_DAYS = 30;
@@ -62,7 +65,6 @@ function summarize(coverage) {
   };
 }
 
-const SOURCE_NAMES = { sessionStore: 'CLI/app', traces: 'VS Code', agentHost: 'VS Code Copilot harness' };
 
 function statusLine(coverage) {
   const window = coverage.window.days ? `${coverage.window.days}-day window` : 'All history';
@@ -84,7 +86,30 @@ function instanceFor(ctx) {
 }
 
 async function recipeFor(instance) {
-  return recipeView((await coverageFor(instance.options)).recipe, instance.verification);
+  const recipe = (await coverageFor(instance.options)).recipe;
+  return {
+    ...recipeView(recipe, instance.verification, { identityLinks: instance.identityLinks }),
+    billing: billingView(instance.billing, recipe),
+  };
+}
+
+async function readBilling(instance, scope) {
+  if (instance.readingBilling) throw new CanvasError('busy', 'A billing request is already running.');
+  instance.readingBilling = true;
+  instance.billing = null;
+  try {
+    instance.billing = await fetchBilling(scope);
+    instance.server.broadcast('recipe', {});
+    return recipeFor(instance);
+  } finally {
+    instance.readingBilling = false;
+  }
+}
+
+async function setIdentityLinks(instance, links) {
+  instance.identityLinks = validateIdentityLinks(links);
+  instance.server.broadcast('recipe', {});
+  return recipeFor(instance);
 }
 
 /** Explicit network step: asks GitHub and Azure Boards about the cycles already found locally. */
@@ -103,8 +128,26 @@ async function verifyInstance(instance, organization) {
   return recipeFor(instance);
 }
 
-function summarizeRecipe(view) {
+function summarizeRecipe(view, filter = {}) {
+  const developerSources = view.developers.sources
+    .filter((source) => !filter.sourceId || source.id === filter.sourceId)
+    .map((source) => {
+      const owned = filter.perspective === 'ownership';
+      const selected = filter.actorKey === '__unknown' ? source[owned ? 'unowned' : 'unknown'] :
+        filter.actorKey ? source.actors.find((actor) => actor.key === filter.actorKey)?.[owned ? 'ownership' : 'usage'] :
+          owned ? source.ownership : source;
+      return { id: source.id, summary: selected ? {
+        total: selected.total, measured: selected.measured, inferred: selected.inferred, unattributed: selected.unattributed,
+        work: selected.work.map((row) => {
+          const cycle = view.cycles.find((c) => c.key === row.cycleKey);
+          return { ...row, repository: cycle?.repository ?? null, branch: cycle?.branch ?? null,
+            workItems: cycle?.workItems.map((w) => w.reference) ?? [], pullRequest: cycle?.pullRequest?.number ?? null };
+        }),
+      } : null };
+    });
   return {
+    billing: view.billing,
+    developers: { actors: view.developers.actors, identityLinks: view.developers.identityLinks, sources: developerSources, perspective: filter.perspective ?? 'usage' },
     verification: view.verification,
     totals: view.totals,
     stations: view.stations.map(({ id, any, strict, unknown }) => ({ id, any, strict, unknown })),
@@ -114,6 +157,7 @@ function summarizeRecipe(view) {
       repository: c.repository,
       branch: c.branch,
       workItems: c.workItems.map((w) => w.reference),
+      ownership: c.ownership,
       pullRequest: c.pullRequest?.number ?? null,
       reached: c.reached,
       steps: Object.fromEntries(Object.entries(c.steps).map(([id, s]) => [id, s.state])),
@@ -130,6 +174,9 @@ async function openInstance(ctx) {
       options: { windowDays: DEFAULT_WINDOW_DAYS },
       verification: null,
       verifying: null,
+      identityLinks: [],
+      billing: null,
+      readingBilling: false,
     };
     instance.server = await startCanvasServer({
       uiDir: UI_DIR,
@@ -145,6 +192,8 @@ async function openInstance(ctx) {
         },
         recipe: () => recipeFor(instance),
         verify: ({ azureDevOpsOrg } = {}) => verifyInstance(instance, azureDevOpsOrg),
+        identityLinks: (links) => setIdentityLinks(instance, links),
+        billing: (scope) => readBilling(instance, scope),
         getView: () => instance.view,
         setView: (view) => {
           if (VIEWS.includes(view)) instance.view = view;
@@ -163,6 +212,7 @@ async function openInstance(ctx) {
   if (input.tracesDbPath !== undefined) options.tracesDbPath = input.tracesDbPath || undefined;
   if (input.agentHostTracesDbPath !== undefined) options.agentHostTracesDbPath = input.agentHostTracesDbPath || undefined;
   if (input.azureDevOpsOrg !== undefined) options.azureDevOpsOrg = input.azureDevOpsOrg || undefined;
+  if (input.identityLinks !== undefined) instance.identityLinks = validateIdentityLinks(input.identityLinks);
   instance.options = options;
 
   // Every open recomputes, so a reopened panel never shows a stale snapshot;
@@ -200,12 +250,20 @@ await joinSession({
           tracesDbPath: { type: 'string', description: "Override for VS Code's agent-traces.db." },
           agentHostTracesDbPath: {
             type: 'string',
-            description: "Override for VS Code's Copilot-harness agent-host-traces.db.",
+            description: "Override for VS Code's Copilot Agent Host harness agent-host-traces.db.",
           },
           azureDevOpsOrg: {
             type: 'string',
             description:
               'Azure DevOps organization for Recipe verification (name, https://dev.azure.com/<org> or https://<org>.visualstudio.com). Defaults to az devops configure.',
+          },
+          identityLinks: {
+            type: 'array', maxItems: 32,
+            description: 'Explicit Azure Boards account-key to GitHub-login links. No display-name matching.',
+            items: {
+              type: 'object', additionalProperties: false, required: ['boardsKey', 'githubLogin'],
+              properties: { boardsKey: { type: 'string' }, githubLogin: { type: 'string' } },
+            },
           },
         },
       },
@@ -251,10 +309,35 @@ await joinSession({
           handler: async (ctx) => withoutRecipe(await coverageFor(instanceFor(ctx).options)),
         },
         {
+          name: 'reconcile_recipe_billing',
+          description: 'Explicitly read one completed UTC day of GitHub Copilot AI-credit billing for a user and paying account. Compare native captured consumption per source; work amounts are estimated allocations, never PR invoices.',
+          inputSchema: {
+            type: 'object', additionalProperties: false, required: ['level', 'account', 'user', 'day'],
+            properties: {
+              level: { type: 'string', enum: ['organization', 'enterprise', 'user'] },
+              account: { type: 'string' }, user: { type: 'string' },
+              day: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+            },
+          },
+          handler: async (ctx) => summarizeRecipe(await readBilling(instanceFor(ctx), ctx.input)),
+        },
+        {
           name: 'get_recipe',
-          description: 'Return the Recipe summary: cycle stations, KPIs, branch-convention adherence and the latest cycles.',
-          inputSchema: { type: 'object', additionalProperties: false, properties: {} },
-          handler: async (ctx) => summarizeRecipe(await recipeFor(instanceFor(ctx))),
+          description: 'Return Recipe and developer credit attribution. Filter by actorKey/sourceId; usage separates measured from inferred, ownership shows all contributors to owned work.',
+          inputSchema: { type: 'object', additionalProperties: false, properties: {
+            actorKey: { type: 'string' }, sourceId: { type: 'string', enum: ['sessionStore', 'traces', 'agentHost'] },
+            perspective: { type: 'string', enum: ['usage', 'ownership'] },
+          } },
+          handler: async (ctx) => summarizeRecipe(await recipeFor(instanceFor(ctx)), ctx.input ?? {}),
+        },
+        {
+          name: 'set_recipe_identity_links',
+          description: 'Set explicit Azure Boards account-key to GitHub-login links for this panel. Never infer them from names or emails.',
+          inputSchema: { type: 'object', additionalProperties: false, required: ['links'], properties: {
+            links: { type: 'array', maxItems: 32, items: { type: 'object', additionalProperties: false, required: ['boardsKey', 'githubLogin'],
+              properties: { boardsKey: { type: 'string' }, githubLogin: { type: 'string' } } } },
+          } },
+          handler: async (ctx) => summarizeRecipe(await setIdentityLinks(instanceFor(ctx), ctx.input.links)),
         },
         {
           name: 'verify_recipe',

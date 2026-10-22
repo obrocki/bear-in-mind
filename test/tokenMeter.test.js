@@ -120,7 +120,7 @@ it('reconciles each dimension independently without changing the split', (t) => 
   assert.equal(meter.snapshot().output, 20);
 });
 
-it('adds Copilot-harness calls to the reconciled Local figure and keeps them out of drift', (t) => {
+it('adds Copilot Agent Host harness calls to the reconciled Local figure and keeps them out of drift', (t) => {
   const { meter, store } = fixture(t);
   meter.observe('otel', 1000000, 1000, 0);
   meter.observe('traces', 400000, 400, 1);

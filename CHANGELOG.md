@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **Overview at a glance:** mission statement and a hybrid source-to-Recipe map,
+  showing people/usage records, delivered work and the separate bill comparison.
+  Local measurements follow the map rather than serving as the page's mission.
+- **Simple work-link labels:** removed research-only codes from the canvas,
+  model, estimated-cost report metadata and documentation. Model schema 2
+  uses descriptive link methods instead.
+- **Harness names:** consistently distinguish the VS Code Local harness from
+  the Copilot Agent Host harness in the canvas, diagnostics, dashboard and docs.
+  Source IDs, settings and database names are unchanged.
+- **Plain-English canvas:** clearer tab names, account/usage labels and billing
+  explanations. Technical field names, commands and API IDs are unchanged.
+  A browser check guards against unexplained jargon in the main views.
+- **Billing and setup in Recipe:** explicit one-day GitHub AI-credit reports,
+  per-source native-user/model comparison and clearly labelled work estimates with
+  unmatched balances. The data model now draws the parallel billing lane.
+  **Setup & permissions** is the single checklist for stores, identity,
+  branch/commit conventions, API access and assumptions.
+- **Essentials-only canvas:** shared concepts move into a Surfaces filter;
+  duplicated KPI, ingredient, relationship and surface panels are removed.
+  Research summarizes findings and limits inline instead of duplicating every
+  tab or requiring a download. Estimated work cost uses a plain-language label.
+- **Recipe developer attribution:** connects captured `user.name` to work,
+  GitHub assignees/PR authors and Azure Boards assignees at first AI activity.
+  Filter by developer and source; measured consumption, inferred ownership
+  proxies and unattributed credits stay separate. Work-ownership mode includes
+  other contributors without calling their usage personal consumption.
+  Cross-provider account links are explicit and panel-scoped.
+
 - **AI attribution canvas: Recipe tab.** One AI-assisted delivery cycle per
   repository branch, from work item to merged pull request: ingredients (GitHub
   issue or Azure Boards work item, branch), method (AI sessions, credits,
@@ -15,7 +43,7 @@
   hook adds the matching `Refs:` trailer. Canvas screenshots now read only
   sandboxed synthetic stores.
 - **Tighter attribution tabs:** shorter summaries, compact coverage bars,
-  an entity diagram and expandable evidence across all eight views.
+  an entity diagram and expandable evidence across the views.
   Recipe keeps its full lifecycle with fewer KPI cards; Research becomes a
   section index. Keyboard controls, narrow layouts and visible-copy budgets
   are checked by the synthetic screenshot harness.
@@ -38,14 +66,14 @@
 
 - Refreshed the attribution research and canvas model to 19 October 2026:
   per-session cloud agent AI credits (Agent Tasks REST, preview), VS Code's
-  Copilot-harness Agent Host telemetry, managed OTel identity capture, the
+  Copilot Agent Host harness Agent Host telemetry, managed OTel identity capture, the
   usage-metrics agent undercount, and OTel GenAI metric and token-breakdown
   changes. Local measurements were re-run, and the research preamble is now a
   last-updated date.
-- README: Copilot-harness sessions get identity only through managed
+- README: Copilot Agent Host harness sessions get identity only through managed
   `telemetry.capture.identity`. The Marketplace listing is live, so the install
   section no longer treats it as pending.
-- Copilot-harness chats (VS Code 1.141+) are now metered. Bear in Mind reads
+- Copilot Agent Host harness chats (VS Code 1.141+) are now metered. Bear in Mind reads
   the Agent Host trace store (`agent-host-traces.db`), using only Copilot runtime
   traces, merged by span ID. Calls only the Agent Host recorded go to their own
   meter ledger, added to the reconciled Local figure and kept out of drift.
@@ -57,7 +85,7 @@
   unless a protobuf or gRPC collector would stop receiving its traces.
   **Restore Defaults** puts it back. Diagnostics show the store's path and
   activity.
-- The AI attribution canvas adds a VS Code Copilot harness source with
+- The AI attribution canvas adds a VS Code Copilot Agent Host harness source with
   per-turn credits.
 
 ## 0.6.5

@@ -20,9 +20,9 @@ const SHOTS = [
     file: 'canvas-outcomes.png',
     view: 'outcomes',
     w: 1280,
-    h: 980,
+    h: 1240,
     dsf: 1,
-    ready: "document.querySelector('.outcome-kpis .ratio-bar') && document.body.innerText.includes('Credits with a PR reference')",
+    ready: "document.querySelector('.overview-map svg') && document.querySelector('.outcome-kpis .ratio-bar')",
   },
   {
     file: 'canvas-coverage.png',
@@ -38,7 +38,7 @@ const SHOTS = [
     w: 1280,
     h: 900,
     dsf: 1,
-    ready: "document.body.innerText.includes('What each surface emits') && document.querySelector('table.matrix')",
+    ready: "document.body.innerText.includes('What each Copilot tool or report provides') && document.querySelector('table.matrix')",
   },
   {
     file: 'canvas-intersection.png',
@@ -61,15 +61,15 @@ const SHOTS = [
     file: 'canvas-model.png',
     view: 'model',
     w: 1280,
-    h: 1000,
+    h: 1150,
     dsf: 1,
-    ready: "document.querySelector('.model-graph svg') && document.querySelector('.tier-cards')",
+    ready: "document.querySelector('.model-graph svg') && document.querySelector('.link-methods')",
   },
   {
     file: 'canvas-recipe.png',
     view: 'recipe',
     w: 1440,
-    h: 1750,
+    h: 2150,
     dsf: 1,
     ready: "document.querySelector('.recipe-strip svg') && document.querySelectorAll('.lane').length >= 6 && document.body.innerText.includes('Azure Boards: connected')",
     prepare: "document.querySelector('.lane-meta').click()",
@@ -81,7 +81,35 @@ const SHOTS = [
     w: 1440,
     h: 1180,
     dsf: 1,
-    ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Local evidence only')",
+    ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Local records only')",
+  },
+  {
+    file: 'canvas-recipe-developer.png',
+    view: 'recipe',
+    w: 1280,
+    h: 1000,
+    dsf: 1,
+    focus: '.developer-report',
+    ready: "document.querySelector('.developer-report') && document.body.innerText.includes('Azure Boards: connected')",
+    prepare: "(() => { const el = document.querySelector('[aria-label=\"Developer\"]'); el.value = 'github:octocat'; el.dispatchEvent(new Event('change')); })()",
+  },
+  {
+    file: 'canvas-recipe-billing.png',
+    view: 'recipe',
+    billing: true,
+    w: 1440,
+    h: 1900,
+    dsf: 1,
+    ready: "document.querySelector('.billing-panel form') && document.body.innerText.includes('Azure Boards: connected')",
+  },
+  {
+    file: 'canvas-recipe-setup.png',
+    view: 'recipe',
+    w: 1280,
+    h: 1500,
+    dsf: 1,
+    ready: "document.querySelector('[data-detail=\"recipe-setup\"]')",
+    prepare: "document.querySelector('[data-detail=\"recipe-setup\"]').open = true",
   },
   {
     file: 'canvas-gaps.png',
@@ -89,7 +117,7 @@ const SHOTS = [
     w: 1280,
     h: 900,
     dsf: 1,
-    ready: "document.querySelector('[data-detail=\"verification-status\"]')",
+    ready: "document.querySelector('[data-detail^=\"gap-\"]')",
   },
   {
     file: 'canvas-research.png',
@@ -97,7 +125,7 @@ const SHOTS = [
     w: 1280,
     h: 900,
     dsf: 1,
-    ready: "document.querySelector('.research-index .disclosure')",
+    ready: "document.querySelector('.research-summary tbody')",
   },
 ];
 
@@ -415,10 +443,17 @@ function createFixtures(runDir, now) {
 function syntheticForges(now) {
   const at = (daysAgo, hour = 10) => iso(now, daysAgo, hour);
   const sha = (seed) => seed.repeat(40).slice(0, 40);
+  const assignments = (login, days) => ({
+    assignees: { totalCount: 1, nodes: [{ login }] },
+    timelineItems: { pageInfo: { hasNextPage: false }, nodes: [
+      { __typename: 'AssignedEvent', createdAt: at(days, 8), assignee: { login, __typename: 'User' } },
+    ] },
+  });
   const pr = (number, branch, { state, created, merged = null, reviews = [], commits = [], closing = [] }) => ({
     number,
     state,
     isDraft: false,
+    author: { login: number === 90 ? 'river-demo' : 'octocat', __typename: 'User' },
     createdAt: at(created, 15),
     mergedAt: merged === null ? null : at(merged, 11),
     closedAt: merged === null ? null : at(merged, 11),
@@ -427,7 +462,7 @@ function syntheticForges(now) {
     reviewDecision: reviews.at(-1)?.[0] ?? null,
     reviews: { totalCount: reviews.length, nodes: reviews.map(([s, d]) => ({ state: s, submittedAt: at(d, 16) })) },
     commits: { totalCount: commits.length, nodes: commits.map(([seed, d], i) => ({ commit: { oid: sha(seed), committedDate: at(d, 9 + i) } })) },
-    closingIssuesReferences: { nodes: closing },
+    closingIssuesReferences: { nodes: closing.map((item) => ({ ...item, ...assignments('octocat', 30) })) },
   });
   const issue = (number, state, type, created, closed = null) => ({
     __typename: 'Issue',
@@ -437,6 +472,7 @@ function syntheticForges(now) {
     createdAt: at(created, 9),
     closedAt: closed === null ? null : at(closed, 12),
     issueType: { name: type },
+    ...assignments(number === 61 ? 'river-demo' : 'octocat', created),
   });
   const github = {
     'contoso/web-app': {
@@ -500,8 +536,10 @@ function syntheticForges(now) {
   };
 
   const workItems = {
-    1234: { 'System.WorkItemType': 'User Story', 'System.State': 'Closed', 'System.TeamProject': 'Web', 'System.CreatedDate': at(35), 'Microsoft.VSTS.Common.ActivatedDate': at(27, 8), 'Microsoft.VSTS.Common.ClosedDate': at(15, 13) },
-    1250: { 'System.WorkItemType': 'Task', 'System.State': 'Active', 'System.TeamProject': 'Web', 'System.CreatedDate': at(9), 'Microsoft.VSTS.Common.ActivatedDate': at(6, 8) },
+    1234: { 'System.WorkItemType': 'User Story', 'System.State': 'Closed', 'System.TeamProject': 'Web', 'System.CreatedDate': at(35), 'Microsoft.VSTS.Common.ActivatedDate': at(27, 8), 'Microsoft.VSTS.Common.ClosedDate': at(15, 13),
+      'System.AssignedTo': { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', displayName: 'Mona Example' } },
+    1250: { 'System.WorkItemType': 'Task', 'System.State': 'Active', 'System.TeamProject': 'Web', 'System.CreatedDate': at(9), 'Microsoft.VSTS.Common.ActivatedDate': at(6, 8),
+      'System.AssignedTo': { id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', displayName: 'Mona Example' } },
   };
   const states = [
     { name: 'New', category: 'Proposed' },
@@ -576,21 +614,24 @@ async function waitForRender(ws, sessionId, ready) {
   throw new Error(`canvas did not finish rendering; saw: ${text}`);
 }
 
-const WORD_BUDGETS = { outcomes: 200, recipe: 600, surfaces: 300, intersection: 180, model: 130, gaps: 180, coverage: 280, research: 130 };
+const WORD_BUDGETS = { outcomes: 260, recipe: 600, surfaces: 300, intersection: 200, model: 150, gaps: 140, coverage: 250, research: 300 };
 
 async function verifyCompactView(ws, sessionId, view) {
-  const words = await evaluate(ws, sessionId, "document.getElementById('view').innerText.trim().split(/\\s+/).length");
+  const visibleText = await evaluate(ws, sessionId, "document.getElementById('view').innerText");
+  const words = visibleText.trim().split(/\s+/).length;
+  assert.doesNotMatch(visibleText, /\b(?:T[0-3]|native|deterministic|provenance|unattributed|reconciliation|canonical|grain|ledger|surfaces|initiator|consumer|baseline|new runtime)\b/i,
+    `${view}: default copy uses plain English; technical identifiers belong in details`);
   assert.ok(words <= WORD_BUDGETS[view], `${view}: ${words} visible words exceeds ${WORD_BUDGETS[view]}`);
   console.log(`${view}: ${words}/${WORD_BUDGETS[view]} visible words`);
   const detail = {
-    outcomes: ['roi-contract', 'incremental cost'],
-    recipe: ['recipe-privacy', 'Titles'],
+    outcomes: null,
+    recipe: ['recipe-setup', 'Work Items (Read)'],
     surfaces: ['cell-time-vscode', 'span start_time'],
-    intersection: ['matrix-guide', 'Missing and unverified'],
-    model: ['accounting-rules', 'Count each model call once'],
-    gaps: ['verification-status', 'verified'],
-    coverage: ['tokens-sessionStore', 'Reported subtotals'],
-    research: ['research-0', 'Decision: proceed'],
+    intersection: ['matrix-guide', 'not reported or not checked'],
+    model: ['accounting-rules', 'Count each AI request once'],
+    gaps: ['gap-no-pr-locally', 'What to do'],
+    coverage: ['tokens-sessionStore', 'Tokens are pieces of text'],
+    research: ['research-sources', 'Billing usage'],
   }[view];
   if (detail) {
     const selector = `[data-detail="${detail[0]}"]`;
@@ -614,16 +655,98 @@ async function verifyCompactView(ws, sessionId, view) {
     await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
   }
   if (view === 'model') {
-    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-node').length"), 8);
-    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-graph .edge').length"), 8);
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-node').length"), 10);
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.model-graph .edge').length"), 12);
+    assert.ok(await evaluate(ws, sessionId, "[...document.querySelectorAll('.model-graph .edge')].every(el => el.getAttribute('d'))"), 'all canonical relationships are drawn');
+    assert.equal(await evaluate(ws, sessionId, "document.querySelector('[data-entity=\"work_allocation\"] .node-label').textContent"), 'Estimated work cost');
+    const methods = await evaluate(ws, sessionId, "[...document.querySelectorAll('.link-methods .card')].map(el => ({label: el.querySelector('h3').textContent, text: el.textContent}))");
+    assert.deepEqual(methods.map((method) => method.label), ['Tool-provided link', 'Exact match', 'Likely match', 'Estimated share', 'Not linked']);
+    assert.ok(methods.every((method) => !/\bT[0-3]\b/.test(method.text)), 'no research-only codes remain in expanded method descriptions');
+  }
+  if (view === 'recipe') {
+    assert.equal(await evaluate(ws, sessionId, "document.querySelector('[aria-label=\"Usage source\"] option[value=\"traces\"]').textContent"), 'VS Code · Local harness');
+    assert.equal(await evaluate(ws, sessionId, "document.querySelector('h2.recipe-headline')?.textContent"),
+      "What work is behind this developer's AI credits?");
+    const structure = await evaluate(ws, sessionId, `(() => {
+      const lifecycle = document.querySelector('.recipe-strip');
+      const developer = document.querySelector('.developer-report');
+      const guide = document.querySelector('[data-detail="recipe-guide"]');
+      return {
+        lifecycleFirst: Boolean(lifecycle.compareDocumentPosition(developer) & Node.DOCUMENT_POSITION_FOLLOWING),
+        guideNext: developer.nextElementSibling === guide,
+        timingsNext: guide.nextElementSibling === document.querySelector('.timing-row'),
+        billingSeparate: !guide.querySelector('[data-handoff="billing"]')?.closest('ol'),
+        steps: [...guide.querySelectorAll('[data-handoff]')].map((step) => ({
+          id: step.dataset.handoff,
+          hasHandoff: step.textContent.includes('Handoff:'),
+          hasAssumption: step.textContent.includes('Assumption:'),
+        })),
+      };
+    })()`);
+    assert.ok(structure.lifecycleFirst && structure.guideNext, 'Recipe order: Lifecycle, Developer, Reading the flow');
+    assert.ok(structure.timingsNext, 'Median cycle times follow the handoffs and assumptions guide');
+    assert.deepEqual(structure.steps.map((step) => step.id), ['workItem', 'branch', 'aiWork', 'commits', 'pullRequest', 'review', 'close', 'billing']);
+    assert.ok(structure.billingSeparate, 'the billing guide is separate from the seven delivery handoffs');
+    assert.ok(structure.steps.every((step) => step.hasHandoff && step.hasAssumption), 'every step explains its handoff and assumption');
+    const billingGuide = await evaluate(ws, sessionId, "document.querySelector('[data-handoff=\"billing\"]').textContent");
+    for (const point of ['Read billing', 'completed UTC day', 'exact model', 'one source at a time', 'does not wait for merge', 'charge after discounts', 'Unknown users', 'exceeds billed usage']) {
+      assert.ok(billingGuide.includes(point), `billing handoff explains ${point}`);
+    }
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.recipe-strip [data-step]').length"), 7, 'billing does not add an eighth delivery funnel stage');
+    assert.ok(await evaluate(ws, sessionId, `(() => {
+      const billing = document.querySelector('.recipe-strip [data-billing-checkpoint]');
+      return billing.textContent.includes('Compare usage and bill') &&
+        billing.textContent.includes('Separate from delivery') &&
+        billing.textContent.includes('Not a bill for each change');
+    })()`), 'billing follows delivery visually as a separate checkpoint');
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.recipe-kpis, .adherence, .pantry, [data-detail=\"recipe-surfaces\"]').length"), 0, 'duplicate KPI/ingredient/matrix panels are removed');
   }
   if (view === 'outcomes') {
     assert.ok(await evaluate(ws, sessionId, "document.querySelector('.ratio-bar.unknown[aria-label=\"Not measured\"]') !== null"), 'missing is not a zero bar');
+    const graph = await evaluate(ws, sessionId, `(() => {
+      const map = document.querySelector('.overview-map');
+      return {
+        missionFirst: Boolean(document.querySelector('.overview-mission').compareDocumentPosition(map) & Node.DOCUMENT_POSITION_FOLLOWING),
+        measurementsAfter: Boolean(map.compareDocumentPosition(document.querySelector('.outcome-kpis')) & Node.DOCUMENT_POSITION_FOLLOWING),
+        nodes: [...map.querySelectorAll('[data-overview-node]')].map(el => el.dataset.overviewNode),
+        connections: [...map.querySelectorAll('[data-overview-from]')].map(el => ({
+          from: el.dataset.overviewFrom, to: el.dataset.overviewTo, requested: el.classList.contains('requested'),
+        })),
+        caption: map.querySelector('figcaption').textContent,
+      };
+    })()`);
+    assert.ok(graph.missionFirst && graph.measurementsAfter, 'Overview leads with the mission/map, not the narrower measurement question');
+    assert.deepEqual(graph.nodes, ['source-sessionStore', 'source-traces', 'source-agentHost', 'usage', 'recipe', 'work-platforms', 'billing', 'work-summary', 'delivery-summary', 'billing-summary']);
+    for (const source of ['source-sessionStore', 'source-traces', 'source-agentHost']) {
+      assert.ok(graph.connections.some(edge => edge.from === source && edge.to === 'usage' && !edge.requested));
+    }
+    assert.ok(graph.connections.some(edge => edge.from === 'work-platforms' && edge.to === 'recipe' && edge.requested));
+    assert.ok(graph.connections.some(edge => edge.from === 'billing' && edge.to === 'billing-summary' && edge.requested));
+    assert.ok(!graph.connections.some(edge => edge.from === 'billing' && edge.to === 'recipe'), 'billing stays separate from delivery');
+    assert.match(graph.caption, /may not be recording data/);
   }
   if (view === 'coverage') {
+    assert.ok(visibleText.includes('VS Code · Local harness') && visibleText.includes('VS Code · Copilot Agent Host harness'), 'both harness sources use their explicit names');
     assert.ok(await evaluate(ws, sessionId, "document.querySelector('.not-emitted .bar.unknown') !== null"), 'unavailable stages have a dashed empty bar');
     assert.ok(await evaluate(ws, sessionId, "document.getElementById('view').innerText.includes('No agent-host-traces.db')"), 'source failures stay visible');
   }
+  if (view === 'research') {
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.research-summary tbody tr').length"), 5);
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('#view a[download], #view a[href=\"/research.md\"]').length"), 0);
+    const text = await evaluate(ws, sessionId, "document.getElementById('view').innerText");
+    for (const finding of ['captured account', 'no PR/session billing IDs', 'Estimated work cost', 'stay separate', 'without AI']) {
+      assert.ok(text.includes(finding), `research summary explains ${finding} inline`);
+    }
+  }
+  if (view === 'surfaces' || view === 'intersection') {
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('[aria-label=\"Which data to show\"] button').length"), 2);
+    await evaluate(ws, sessionId, "document.querySelector('[data-focus-key=\"scope-true\"]').click()");
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('table.matrix .concept').length"), 9);
+    await evaluate(ws, sessionId, "document.querySelector('[data-focus-key=\"scope-false\"]').click()");
+    assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('table.matrix .concept').length"), 23);
+    if (view === 'intersection') await evaluate(ws, sessionId, "document.querySelector('[data-focus-key=\"scope-true\"]').click()");
+  }
+  assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('[role=\"tab\"][data-view=\"intersection\"]').length"), 0, 'shared concepts are a Surfaces filter, not a duplicate tab');
 }
 
 async function verifyNarrowView(ws, sessionId, view) {
@@ -636,6 +759,73 @@ async function verifyNarrowView(ws, sessionId, view) {
   }
   await evaluate(ws, sessionId, "document.querySelectorAll('#view details').forEach((el) => { el.open = false; })");
   await evaluate(ws, sessionId, 'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+}
+
+async function verifyDeveloperFilters(ws, sessionId) {
+  const select = (label, value) => evaluate(ws, sessionId, `(() => {
+    const el = document.querySelector('[aria-label="${label}"]');
+    el.focus(); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event('change'));
+  })()`);
+  const balance = () => evaluate(ws, sessionId, "document.querySelector('.actor-balance > strong').textContent");
+  await select('Usage source', 'traces');
+  await select('Developer', 'github:octocat');
+  assert.equal(await balance(), '19.8 credits', 'measured and inferred usage is selectable by developer');
+  assert.equal(await evaluate(ws, sessionId, 'document.activeElement.dataset.focusKey'), 'developer-actor');
+  await select('Show usage or owned work', 'ownership');
+  assert.equal(await balance(), '13.2 credits', 'ownership excludes work owned by another developer');
+  assert.ok(await evaluate(ws, sessionId, "document.querySelector('.developer-report').innerText.includes('not just this person')"));
+  await select('Show usage or owned work', 'usage');
+  await select('Usage source', 'sessionStore');
+  assert.equal(await balance(), '16.2 credits', 'unlinked provider identities are not guessed');
+  await evaluate(ws, sessionId, `(() => {
+    document.querySelector('[data-detail="recipe-setup"]').open = true;
+    document.querySelector('[data-detail="identity-links"]').open = true;
+    document.querySelector('[aria-label="GitHub login"]').value = 'octocat';
+    document.querySelector('[data-detail="identity-links"] form').requestSubmit();
+  })()`);
+  await waitForRender(ws, sessionId, "document.querySelector('.actor-balance > strong').textContent === '34.1 credits'");
+  assert.equal(await balance(), '34.1 credits', 'an explicit provider link resolves ambiguous owners without adding duplicate usage');
+  await evaluate(ws, sessionId, "document.querySelector('[data-detail=\"identity-links\"] li button').click()");
+  await waitForRender(ws, sessionId, "document.querySelector('.actor-balance > strong').textContent === '16.2 credits'");
+  await select('Developer', '');
+  await select('Usage source', 'traces');
+  await evaluate(ws, sessionId, "document.querySelector('[data-detail=\"identity-links\"]').open = false");
+  await evaluate(ws, sessionId, "document.querySelector('[data-detail=\"recipe-setup\"]').open = false");
+  console.log('Developer filters passed: per-source balances, ownership/consumption separation and explicit identity link/remove.');
+}
+
+async function verifyBillingUI(ws, sessionId, day) {
+  await evaluate(ws, sessionId, `(() => {
+    const user = document.querySelector('[aria-label="Developer"]');
+    user.value = 'github:octocat'; user.dispatchEvent(new Event('change'));
+    const form = document.querySelector('.billing-form');
+    form.querySelector('[name="account"]').value = 'contoso';
+    form.querySelector('[name="user"]').value = 'octocat';
+    form.querySelector('[name="day"]').value = ${JSON.stringify(day)};
+    form.requestSubmit();
+  })()`);
+  await waitForRender(ws, sessionId, "document.querySelector('.billing-stats') && document.body.innerText.includes('Billed credits not matched here:')");
+  const values = await evaluate(ws, sessionId, "[...document.querySelectorAll('.billing-stats .value')].map(el => el.textContent)");
+  assert.deepEqual(values.slice(0, 3), ['10', '5.7', '4.3'], 'billing compares one source/day/native user, not all history');
+  assert.equal(values[3], '0.06', 'amount precision does not round small billed values to zero or a tenth');
+  assert.ok(await evaluate(ws, sessionId, "document.querySelector('[data-billing-checkpoint]').textContent.includes('Report loaded')"), 'the ribbon billing checkpoint reflects the explicit read');
+  const detail = await evaluate(ws, sessionId, "document.querySelector('[data-detail=\"billing-detail\"]').textContent");
+  assert.ok(detail.includes('Estimated work cost') && detail.includes('model'), 'work shares are explicitly estimates');
+  await evaluate(ws, sessionId, `(() => {
+    const form = document.querySelector('.billing-form');
+    form.querySelector('[name="account"]').value = 'denied';
+    form.requestSubmit();
+  })()`);
+  await waitForRender(ws, sessionId, "document.querySelector('.billing-panel [role=\"alert\"]')?.textContent.includes('Billing access denied')");
+  assert.equal(await evaluate(ws, sessionId, "document.querySelectorAll('.billing-stats').length"), 0, 'a failed read removes the previous billing values');
+  assert.ok(await evaluate(ws, sessionId, "document.querySelector('[data-billing-checkpoint]').textContent.includes('Read failed')"), 'the ribbon cannot remain loading/successful after an error');
+  await evaluate(ws, sessionId, `(() => {
+    const form = document.querySelector('.billing-form');
+    form.querySelector('[name="account"]').value = 'contoso';
+    form.requestSubmit();
+  })()`);
+  await waitForRender(ws, sessionId, "document.querySelector('.billing-stats') && document.body.innerText.includes('Billed credits not matched here:')");
+  console.log('Billing UI passed: explicit read, scoped comparison and estimated work shares.');
 }
 
 async function verifyThemes(ws, sessionId) {
@@ -691,18 +881,21 @@ async function verifyThemes(ws, sessionId) {
   console.log('Theme checks passed: system changes, body-injected host tokens, explicit overrides and text contrast >= 4.5:1.');
 }
 
-async function startServer(paths, now, display = { verified: true }) {
-  const [{ startCanvasServer }, { computeCoverage, withoutRecipe }, { loadModel, loadResearch }, { recipeView }, { verifyRecipe }] = await Promise.all([
+async function startServer(paths, now, display = { verified: true, billing: false }) {
+  const [{ startCanvasServer }, { computeCoverage, withoutRecipe }, { loadModel, loadResearch }, { recipeView }, { verifyRecipe }, { fetchBilling, billingView }] = await Promise.all([
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'server.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'coverage.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'model.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'recipe.mjs')).href),
     import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'verify.mjs')).href),
+    import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'billing.mjs')).href),
   ]);
   let view = 'outcomes';
   let windowDays = 30;
   let cachedCoverage;
   let verification = null;
+  let identityLinks = [];
+  let billing = null;
   const displayCoverage = (coverage) => ({
     ...withoutRecipe(coverage),
     sources: coverage.sources.map((source) => ({
@@ -723,9 +916,13 @@ async function startServer(paths, now, display = { verified: true }) {
     }
     return cachedCoverage;
   };
+  const recipe = async () => ({
+    ...recipeView((await coverage()).recipe, display.verified ? verification : null, { identityLinks }),
+    billing: billingView(display.billing ? billing : null, (await coverage()).recipe),
+  });
   const verify = async () => {
     verification = await verifyRecipe((await coverage()).recipe, { ...syntheticForges(now), now, home: sandbox, platform: 'linux' });
-    return recipeView((await coverage()).recipe, verification);
+    return recipe();
   };
   await verify();
   return startCanvasServer({
@@ -739,7 +936,35 @@ async function startServer(paths, now, display = { verified: true }) {
         cachedCoverage = null;
         return displayCoverage(await coverage());
       },
-      recipe: async () => recipeView((await coverage()).recipe, display.verified ? verification : null),
+      recipe,
+      identityLinks: async (links) => {
+        const { validateIdentityLinks } = await import(pathToFileURL(path.join(EXTENSION_DIR, 'lib', 'actors.mjs')).href);
+        identityLinks = validateIdentityLinks(links);
+        return recipe();
+      },
+      billing: async (scope) => {
+        display.billing = true;
+        billing = await fetchBilling(scope, {
+          now, env: {},
+          run: async (command, args) => {
+            assert.equal(command, 'gh');
+            if (args.includes('/organizations/denied/settings/billing/ai_credit/usage')) return { code: 1, stderr: 'HTTP 403 synthetic-secret-must-not-display' };
+            assert.ok(args.includes('/organizations/contoso/settings/billing/ai_credit/usage'));
+            assert.ok(args.includes('user=octocat'));
+            const [year, month, day] = scope.day.split('-').map(Number);
+            return { code: 0, stdout: JSON.stringify({
+              timePeriod: { year, month, day }, organization: 'contoso', user: 'octocat', product: 'Copilot',
+              usageItems: [
+                { product: 'Copilot', sku: 'AI credits', model: 'gpt-5', unitType: 'AI credits', pricePerUnit: 0.01,
+                  grossQuantity: 8, grossAmount: 0.08, discountQuantity: 4, discountAmount: 0.04, netQuantity: 4, netAmount: 0.04 },
+                { product: 'Copilot', sku: 'AI credits', model: 'gpt-5-mini', unitType: 'AI credits', pricePerUnit: 0.01,
+                  grossQuantity: 2, grossAmount: 0.02, discountQuantity: 0, discountAmount: 0, netQuantity: 2, netAmount: 0.02 },
+              ],
+            }) };
+          },
+        });
+        return recipe();
+      },
       verify,
       getView: () => view,
       setView: (next) => {
@@ -771,7 +996,7 @@ async function setServerView(serverUrl, view) {
   let server;
   try {
     const fixtures = createFixtures(runDir, now);
-    const display = { verified: true };
+    const display = { verified: true, billing: false };
     server = await startServer(fixtures, now, display);
     browser = spawn(
       findBrowser(),
@@ -809,6 +1034,7 @@ async function setServerView(serverUrl, view) {
     let themesVerified = false;
     for (const shot of shots) {
       display.verified = shot.verified !== false;
+      display.billing = false;
       await setServerView(server.url, shot.view);
       await send(
         ws,
@@ -819,6 +1045,8 @@ async function setServerView(serverUrl, view) {
       await send(ws, 'Page.navigate', { url: server.url }, sessionId);
       await waitForRender(ws, sessionId, shot.ready);
       await verifyCompactView(ws, sessionId, shot.view);
+      if (shot.file === 'canvas-recipe.png') await verifyDeveloperFilters(ws, sessionId);
+      if (shot.billing) await verifyBillingUI(ws, sessionId, iso(now, 4).slice(0, 10));
       if (!themesVerified) {
         await verifyThemes(ws, sessionId);
         themesVerified = true;
@@ -833,6 +1061,10 @@ async function setServerView(serverUrl, view) {
       }
       if (shot.prepare) await evaluate(ws, sessionId, shot.prepare);
       await evaluate(ws, sessionId, 'document.activeElement.blur(); window.scrollTo(0, 0)');
+      if (shot.focus) await evaluate(ws, sessionId, `(() => {
+        const el = document.querySelector(${JSON.stringify(shot.focus)});
+        window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.scrollY - document.querySelector('.top').offsetHeight - 16));
+      })()`);
       const { data } = await send(ws, 'Page.captureScreenshot', { format: 'png', fromSurface: true }, sessionId);
       const buf = Buffer.from(data, 'base64');
       const out = path.join(OUT, shot.file);
