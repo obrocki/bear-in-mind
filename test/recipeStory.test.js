@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { it } = require('node:test');
 const { buildRecipeStory, renderRecipeStory } = require('../tools/recipe-story');
 
@@ -11,6 +13,22 @@ const options = {
   sourceId: 'traces',
   sourceLabel: 'VS Code \u00b7 Local harness',
 };
+
+it('README story: both READMEs embed the generated PNG accepted by Marketplace packaging', () => {
+  const root = path.resolve(__dirname, '..');
+  for (const readme of [
+    path.join(root, 'README.md'),
+    path.join(root, '.github', 'extensions', 'ai-attribution', 'README.md'),
+  ]) {
+    const markdown = fs.readFileSync(readme, 'utf8');
+    const images = [...markdown.matchAll(/!\[[^\]]*\]\(([^)\s]*recipe-flow\.\w+)\)/g)].map((match) => match[1]);
+    assert.ok(images.length, `${readme}: keep the generated flow illustration`);
+    for (const image of images) {
+      assert.equal(path.extname(image), '.png', `${readme}: vsce rejects the SVG illustration`);
+      assert.ok(fs.existsSync(path.resolve(path.dirname(readme), ...image.split('/'))), 'the embedded PNG must exist');
+    }
+  }
+});
 
 function fixture() {
   return {

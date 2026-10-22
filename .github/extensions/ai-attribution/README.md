@@ -155,7 +155,7 @@ This README-only illustration uses the same synthetic cycle and billing response
 as the canvas previews. The seven delivery steps run left to right, followed
 visually by a separate mocked billing check and its estimated work cost.
 
-![Ordered synthetic cycle from work item to merge and closure, followed by a separate mocked billing check](../../../docs/media/recipe-flow.svg)
+![Ordered synthetic cycle from work item to merge and closure, followed by a separate mocked billing check](../../../docs/media/recipe-flow.png)
 
 [Full canvas preview](../../../docs/media/canvas-recipe.png). The illustration is
 not a live-canvas screenshot and does not trigger real API calls.

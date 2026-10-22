@@ -377,7 +377,7 @@ monetary return.
 An ordered, invented work-to-billing example illustrates the model, not live
 account data. Billing is a separate check; work costs are estimated.
 
-![Seven ordered delivery steps with a separate final mocked billing check](docs/media/recipe-flow.svg)
+![Seven ordered delivery steps with a separate final mocked billing check](docs/media/recipe-flow.png)
 
 ## Development
 

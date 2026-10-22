@@ -23,7 +23,8 @@ Canvas shots start the real AI attribution canvas server, load synthetic SQLite
 stores, and can be rebuilt one at a time, for example:
 `npm run media:canvas -- canvas-coverage.png`.
 `npm run media:canvas -- recipe-flow.png` generates the README's ordered
-walkthrough as both SVG and PNG. `recipe-story.js` derives its dates and estimated
+walkthrough as both SVG and PNG. The READMEs embed the PNG because Marketplace
+packaging rejects the SVG image. `recipe-story.js` derives its dates and estimated
 cost from the same verified synthetic cycle and mocked billing response as the
 canvas, rather than maintaining a second story. It is an illustration, not a
 live-canvas screenshot or a new API action.
