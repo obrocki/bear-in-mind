@@ -47,9 +47,16 @@ navigation, disclosure state/focus after rendering, full evidence access and
 390px layouts. Gaps and Research have their own synthetic previews.
 Recipe checks developer/source filters, usage versus ownership and explicit
 provider identity link/remove. Its account identities and API responses are synthetic.
+`canvas-recipe-credits.png` focuses on rounded right-hand AIC totals with compact
+individual attribution. Checks preserve source/identity splits and owner-estimate
+labels, reject duplicate middle panels and invented cloud totals, and verify
+font sizes, rounded-rectangle corners and narrow layouts.
 Billing exercises the real client with an injected synthetic `gh` response:
 explicit submission, native-user/day/model scope, amount precision and estimated
-work costs. The setup preview expands the prerequisites/permissions checklist.
+work costs. The setup preview expands the flow-conventions/access checklist.
+Setup checks pin the work-item/branch/session/hook/PR conventions, read access
+and Personal-versus-organization billing scope; runtime-version advice stays out
+of the end-to-end checklist.
 Dashboard shots include `dashboard-light.png`, both high-contrast variants and
 `dashboard-sdk.png`. They emulate VS Code's body classes/semantic tokens, check
 body-text contrast and verify that SVG paints follow live theme changes without

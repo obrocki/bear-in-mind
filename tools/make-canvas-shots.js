@@ -86,6 +86,16 @@ const SHOTS = [
     ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Local records only')",
   },
   {
+    file: 'canvas-recipe-credits.png',
+    view: 'recipe',
+    w: 1440,
+    h: 1020,
+    dsf: 1,
+    focus: '.lane.open',
+    ready: "document.querySelector('.recipe-strip svg') && document.body.innerText.includes('Azure Boards: connected')",
+    prepare: "document.querySelector('.lane-meta').click()",
+  },
+  {
     file: 'canvas-recipe-developer.png',
     view: 'recipe',
     w: 1280,
@@ -695,6 +705,19 @@ async function verifyCompactView(ws, sessionId, view) {
     assert.ok(methods.every((method) => !/\bT[0-3]\b/.test(method.text)), 'no research-only codes remain in expanded method descriptions');
   }
   if (view === 'recipe') {
+    const setup = await evaluate(ws, sessionId, `(() => {
+      const section = document.querySelector('[data-detail="recipe-setup"]');
+      return { steps: [...section.querySelectorAll('[data-setup-step]')].map(row => row.dataset.setupStep), text: section.textContent };
+    })()`);
+    assert.deepEqual(setup.steps, ['workItem', 'branch', 'commitLinks', 'identity', 'delivery', 'billingAccount', 'billingMatch'],
+      'setup follows work-item, branch/session, commit/PR, identity, delivery and billing configuration');
+    assert.doesNotMatch(setup.text, /\bNode\b|runtime version|prerequisite/i, 'setup focuses on flow conventions, not runtime prerequisites');
+    for (const point of ['assign it before AI work', 'alex/123-feature', 'alex/AB123-feature', 'immediately after the last slash',
+      'Start the AI session in that repository', 'Refs: #123', 'Refs: AB#123', 'Closes #123', 'preserve existing hooks',
+      'Work Items (Read)', 'Choose Personal', 'actual account paying', 'Do not enter a personal username as an organization',
+      'completed UTC day', 'exact model', 'not owner estimates']) {
+      assert.ok(setup.text.includes(point), `setup explains ${point}`);
+    }
     assert.equal(await evaluate(ws, sessionId, "document.querySelector('[aria-label=\"Usage source\"] option[value=\"traces\"]').textContent"), 'VS Code · Local harness');
     assert.equal(await evaluate(ws, sessionId, "document.querySelector('h2.recipe-headline')?.textContent"),
       "What work is behind this developer's AI credits?");
@@ -857,6 +880,44 @@ async function verifyBillingUI(ws, sessionId, day) {
   })()`);
   await waitForRender(ws, sessionId, "document.querySelector('.billing-stats') && document.body.innerText.includes('Billed credits not matched here:')");
   console.log('Billing UI passed: explicit read, scoped comparison and estimated work shares.');
+}
+
+async function verifyCycleCredits(ws, sessionId) {
+  const values = await evaluate(ws, sessionId, `(() => {
+    const lane = [...document.querySelectorAll('.lane')].find(el => el.querySelector('.branch')?.textContent === 'mona/61-rate-limits');
+    if (!lane) throw new Error('Synthetic multi-source cycle missing');
+    lane.querySelector('.lane-meta').click();
+    const expanded = [...document.querySelectorAll('.lane.open')].find(el => el.querySelector('.branch')?.textContent === 'mona/61-rate-limits');
+    return {
+      sources: [...expanded.querySelectorAll('.lane-side .src')].map(el => ({
+        source: el.dataset.cycleCreditSource,
+        actor: el.querySelector('.source-credit-person').dataset.cycleCreditActor,
+        method: el.querySelector('.source-credit-person').dataset.creditMethod,
+        credits: el.querySelector('.source-credit-value').textContent,
+        fontSize: parseFloat(getComputedStyle(el.querySelector('.source-credit-value')).fontSize),
+        radius: parseFloat(getComputedStyle(el).borderTopLeftRadius),
+      })),
+      duplicatePanels: expanded.querySelectorAll('.cycle-credit-report, .cycle-credit-grid, .cycle-credit-card').length,
+      legacyCreditChips: expanded.querySelectorAll('.actor-roles .chip.inferred, .actor-roles .chip.measured').length,
+      commitLabels: [...expanded.querySelectorAll('.rc-head strong')].map(el => el.textContent),
+      cloud: expanded.querySelector('[data-cloud-review-credits]').textContent,
+    };
+  })()`);
+  assert.deepEqual(values.sources.map(({ actor, source, method, credits }) => ({ actor, source, method, credits })), [
+    { actor: 'github:river-demo', source: 'sessionStore', method: 'inferred', credits: '5' },
+    { actor: 'github:octocat', source: 'traces', method: 'measured', credits: '7' },
+  ], 'cycle fields show the existing individual/source splits, not their combined sum');
+  assert.ok(values.sources.every(source => source.fontSize >= 20 && source.radius >= 4 && source.radius <= 12),
+    'larger source totals have rounded rectangle corners instead of pill ends');
+  assert.equal(values.duplicatePanels, 0, 'the expanded cycle has no duplicate credit panel in the middle');
+  assert.equal(values.legacyCreditChips, 0, 'prominent fields replace the small credit chips rather than duplicate them');
+  assert.ok(values.commitLabels.includes('Commit'));
+  assert.ok(!values.commitLabels.some(label => /commit, commit/i.test(label)));
+  assert.match(values.cloud, /not recorded; no combined local\/cloud total/);
+  await send(ws, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false }, sessionId);
+  assert.ok(await evaluate(ws, sessionId, 'document.documentElement.scrollWidth <= 391'), 'expanded credit fields fit a narrow page');
+  await evaluate(ws, sessionId, `document.querySelector('.lane.open .lane-meta').click()`);
+  console.log('Cycle credit fields passed: rounded source totals, compact attribution, rounded rectangles and no duplicate credit panel.');
 }
 
 async function verifyThemes(ws, sessionId) {
@@ -1153,7 +1214,12 @@ async function captureRecipeStory(ws, sessionId, serverUrl, shot, now) {
       await send(ws, 'Page.navigate', { url: server.url }, sessionId);
       await waitForRender(ws, sessionId, shot.ready);
       await verifyCompactView(ws, sessionId, shot.view);
-      if (shot.file === 'canvas-recipe.png') await verifyDeveloperFilters(ws, sessionId);
+      if (shot.file === 'canvas-recipe.png') {
+        await verifyDeveloperFilters(ws, sessionId);
+        await verifyCycleCredits(ws, sessionId);
+        await send(ws, 'Emulation.setDeviceMetricsOverride',
+          { width: shot.w, height: shot.h, deviceScaleFactor: shot.dsf, mobile: false }, sessionId);
+      }
       if (shot.billing) await verifyBillingUI(ws, sessionId, iso(now, 4).slice(0, 10));
       if (!themesVerified) {
         await verifyThemes(ws, sessionId);

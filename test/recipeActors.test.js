@@ -62,6 +62,17 @@ it('developer report answers the 400k question without combining sources or repl
   assert.equal(view.developers.sources.find((s) => s.id === 'sessionStore').total.credits, 200000, 'the second source stays separate');
 });
 
+it('cycle AIC readouts round to whole credits while preserving small, zero and unknown distinctions', async () => {
+  const { formatCycleCredits } = await import(pathToFileURL(path.join(lib, '..', 'ui', 'recipe.mjs')).href);
+  assert.equal(formatCycleCredits(4.123456), '4');
+  assert.equal(formatCycleCredits(3.654321), '4');
+  assert.equal(formatCycleCredits(9876.54321), new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(9877));
+  assert.equal(formatCycleCredits(0.000001), '<1');
+  assert.equal(formatCycleCredits(0), '0');
+  assert.equal(formatCycleCredits(null), '—');
+  assert.equal(formatCycleCredits(undefined), '—');
+});
+
 it('case-insensitive login joins do not use branch names, device identities, emails or matching display names', async () => {
   const { telemetryActor, githubActor, boardsActor, ownershipFor, validateIdentityLinks } = await load('actors.mjs');
   assert.equal(telemetryActor('Alex').key, githubActor('alex').key);
