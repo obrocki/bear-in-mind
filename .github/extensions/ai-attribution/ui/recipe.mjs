@@ -40,13 +40,30 @@ export function formatHours(hours) {
 const when = (value) => (value ? fmtStamp.format(new Date(value)) : '—');
 const badge = (kind, text) => h('span', { class: `badge ${kind}` }, text ?? kind);
 
-function sourceChips(sources, title = (x) => `${x.calls} requests · ${x.creditedCalls} with credit counts`) {
+export function formatCycleCredits(credits) {
+  if (credits === null || credits === undefined) return '—';
+  return credits > 0 && credits < 1 ? '<1' : fmtInt.format(credits);
+}
+
+function sourceChips(sources, attribution, expanded) {
   return h(
     'span',
     { class: 'source-chips' },
-    sources.map((x) =>
-      h('span', { class: `src src-${x.id}`, title: title(x) }, `${SOURCE_SHORT[x.id] ?? x.id} ${fmtCredits.format(x.credits)} credits`),
-    ),
+    sources.map((source) => {
+      const people = attribution.filter((entry) => entry.source === source.id);
+      return h('span', { class: `src src-${source.id}`, 'data-cycle-credit-source': source.id,
+        title: `${source.calls} requests · ${source.creditedCalls} with credit counts · ${formatCycleCredits(source.creditedCalls ? source.credits : null)} AIC (rounded AI credits used, not money)` },
+        h('span', {}, SOURCE_SHORT[source.id] ?? source.id),
+        h('span', { class: 'source-credit-amount' },
+          h('strong', { class: 'source-credit-value' }, formatCycleCredits(source.creditedCalls ? source.credits : null)),
+          h('span', {}, 'AIC')),
+        expanded ? people.map((entry) => h('span', { class: 'source-credit-person',
+          'data-cycle-credit-actor': entry.actor?.key ?? '__unknown', 'data-credit-method': entry.method },
+          `${entry.actor?.label ?? 'Account unknown'}${entry.actor?.bot ? ' (agent)' : ''} · `,
+          people.length > 1 ? `${formatCycleCredits(entry.credits)} AIC · ` : '',
+          usageLabels[entry.method])) : null,
+      );
+    }),
   );
 }
 
@@ -383,7 +400,7 @@ function laneTrack(cycle) {
           if (v <= 0) return null;
           const hgt = Math.max(1.5, ((LANE.barBase - LANE.barTop) * v) / max);
           const w = Math.max(1, (binWidth - 1) / sources.length);
-          return s('rect', { x: LANE.left + i * binWidth + j * w, y: LANE.barBase - hgt, width: w, height: hgt, class: `bar src-${id}` }, s('title', {}, `${SOURCE_SHORT[id] ?? id}: ${fmtCredits.format(v)} credits`));
+          return s('rect', { x: LANE.left + i * binWidth + j * w, y: LANE.barBase - hgt, width: w, height: hgt, class: `bar src-${id}` }, s('title', {}, `${SOURCE_SHORT[id] ?? id}: ${formatCycleCredits(v)} AIC`));
         }),
       )
     : [];
@@ -410,8 +427,6 @@ function recipeCard(cycle, model) {
     h('div', { class: 'actor-roles' },
       ...cycle.ownership.roles.map((role) => h('span', { class: 'chip', title: `${role.identity.key} · ${role.at ?? 'date unknown'}` },
         `${{ 'PR author': 'Pull request author', 'Assigned at pickup': 'Assigned at first AI use' }[role.role] ?? role.role}: ${role.actor.label}${role.reference ? ` · ${role.reference}` : ''}`)),
-      ...cycle.attribution.map((entry) => h('span', { class: `chip ${entry.method}` },
-        `${entry.actor?.label ?? 'Account unknown'} · ${creditValue(entry)} credits · ${usageLabels[entry.method]} · ${SOURCE_SHORT[entry.source]}`)),
     ),
     h('ol', { class: 'recipe-steps' },
     Object.entries(cycle.steps).map(([id, st]) => {
@@ -429,6 +444,8 @@ function recipeCard(cycle, model) {
         ),
       );
     })),
+    h('p', { class: 'small muted', 'data-cloud-review-credits': 'true' },
+      'AIC means AI credits used, not money. Owner estimates are not proof of personal consumption. Cloud-review AIC is not recorded; no combined local/cloud total.'),
   );
 }
 
@@ -476,7 +493,7 @@ function lanes(view, model, ui) {
           h('span', { class: 'lead', title: cycle.leadTimeHours === null ? 'Recipe steps done, in any order' : 'Pickup → merged and work item closed' },
             cycle.leadTimeHours === null ? `${Object.values(cycle.steps).filter((x) => x.state === 'yes').length}/7 steps` : formatHours(cycle.leadTimeHours)),
           h('span', { class: 'small muted' }, cycle.span.start ? `${fmtDay.format(new Date(cycle.span.start))} → ${fmtDay.format(new Date(cycle.span.end))}` : '—'),
-          sourceChips(cycle.sources),
+          sourceChips(cycle.sources, cycle.attribution, open),
         ),
         open ? recipeCard(cycle, model) : null,
       );
@@ -525,34 +542,40 @@ function toolbar(view, ui) {
 
 function setupSection(view, ui) {
   const rows = [
-    ['Local usage',
-      h('span', {}, 'Node 22+ and readable Copilot usage files. Use Connect Copilot Telemetry and choose whether to record the GitHub account.'),
-      h('span', {}, 'VS Code Local: ', h('code', {}, 'github.copilot.chat.otel.captureIdentity'),
-        '. Copilot Agent Host harness: managed ', h('code', {}, 'telemetry.capture.identity'),
-        '. Without a recorded account, usage is estimated from ownership or left unknown; a computer name is not a person.')],
-    ['Work links',
-      h('span', {}, h('code', {}, 'alex/123-feature'), ' → GitHub issue; ', h('code', {}, 'alex/AB123-feature'), ' → Azure Boards.'),
-      h('span', {}, 'Put the work-item number immediately after the last slash. The optional ', h('code', {}, 'hooks/commit-msg'),
-        ' adds a Refs line to commits. Keep existing hooks: copy or run this hook alongside them instead of replacing hooksPath.')],
-    ['GitHub checks',
-      h('span', {}, h('code', {}, 'gh auth login'), '; repository read access, including private repositories and SSO where required.'),
-      'Check delivery reads pull requests, reviews and assignments only. It does not need permission to change them.'],
-    ['Azure Boards',
-      'Set the organization here. Use az login with project access, or AZURE_DEVOPS_EXT_PAT with Work Items (Read).',
-      'We check who was assigned when AI use began. Connect Azure Boards to GitHub if commit mentions should create links automatically.'],
-    ['Billing',
-      'Personal: account holder. Organization: billing/admin access. Enterprise: a billing-authorized role or billing-read GitHub App. Repository read access alone is insufficient.',
-      h('span', {}, 'If an organization pays for the license, use its bill, not the personal account’s bill. Choose a completed UTC day and GitHub username. ',
+    ['workItem', 'Work item & owner',
+      'Create a GitHub issue or Azure Boards story, task or bug, and assign it before AI work begins.',
+      'GitHub issue numbers belong to that repository; Boards IDs belong to the configured organization. Assignment shows ownership, not who used AI.'],
+    ['branch', 'Branch & AI session',
+      h('span', {}, h('code', {}, 'alex/123-feature'), ' → GitHub issue 123; ', h('code', {}, 'alex/AB123-feature'), ' → Azure Boards 123.'),
+      'Put the ID immediately after the last slash. Start the AI session in that repository on that branch; running Git elsewhere does not move the session. Prefer one branch per work item.'],
+    ['commitLinks', 'Commit & PR links',
+      h('span', {}, 'The optional ', h('code', {}, 'commit-msg'), ' hook adds ', h('code', {}, 'Refs: #123'), ' or ', h('code', {}, 'Refs: AB#123'),
+        '. Enable it locally, preserve existing hooks and check the actual commit message.'),
+      h('span', {}, 'Refs links work; it does not close it. For GitHub, put ', h('code', {}, 'Closes #123'),
+        ' in the PR body to close the issue when merged into the default branch. For Boards, configure the GitHub integration for links and verify closure separately.')],
+    ['identity', 'Account links',
+      'Enable GitHub account capture in VS Code when available. The CLI/app store does not record the consumer account.',
+      'A Git author name, branch prefix or assignee is not captured AI identity. Link Azure Boards and GitHub accounts explicitly below; never match them by display name.'],
+    ['delivery', 'Delivery access',
+      h('span', {}, 'Signed-in ', h('code', {}, 'gh'), ' with repository read access, including private repositories and SSO where required. Boards needs the organization and project access, or ',
+        h('code', {}, 'AZURE_DEVOPS_EXT_PAT'), ' with Work Items (Read).'),
+      'Run Check delivery to load PRs, commits, reviews, assignment history, merge and work-item closure. It reads metadata and needs no permission to change work.'],
+    ['billingAccount', 'Who pays?',
+      'Choose Personal for your own paid plan and username; Organization or Enterprise for the actual account paying for your license, not the repository owner.',
+      h('span', {}, 'Do not enter a personal username as an organization. Personal reports exclude organization-managed seats. Billing access must match the paying account: account holder, organization billing/admin access, or a billing-authorized enterprise role. ',
         h('a', { href: 'https://docs.github.com/en/rest/billing/usage', target: '_blank', rel: 'noopener noreferrer' }, 'API permissions'))],
+    ['billingMatch', 'Billing comparison',
+      'Select the GitHub account on the bill and one completed UTC day. Compare the exact model, one local source at a time; repository read access alone does not grant billing access.',
+      'Read billing is separate from Check delivery and does not wait for merge. Compare recorded consumers, not owner estimates. Missing users or models and unexplained charges stay unassigned.'],
   ];
   return disclosure('recipe-setup', 'Setup & permissions',
+    h('p', { class: 'small' }, 'Set up the links before starting work: work item → branch → AI session → commits → PR → review → merge and closure. Compare the bill separately.'),
     h('div', { class: 'matrix-wrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, ...['Step', 'Required', 'Naming rules / assumptions'].map((label) => h('th', {}, label)))),
-      h('tbody', {}, rows.map(([label, required, assumption]) => h('tr', {},
+      h('thead', {}, h('tr', {}, ...['Flow setup', 'What to do', 'Conventions & access'].map((label) => h('th', {}, label)))),
+      h('tbody', {}, rows.map(([id, label, required, assumption]) => h('tr', { 'data-setup-step': id },
         h('th', { scope: 'row' }, label), h('td', {}, required), h('td', {}, assumption)))),
     )),
     h('p', { class: 'small' }, 'Check delivery and Read billing contact the services only when you ask. We do not read prompts, descriptions or commit text. Access tokens and account links are not saved; screenshots use invented data.'),
-    h('p', { class: 'small' }, 'Only you can link accounts across tools. Billing comparisons use recorded users, not guessed owners. Local usage does not prove which account paid.'),
     h('p', { class: 'small' }, 'GitHub does not provide a bill for each pull request or session. Work costs are estimates. Usage and charges we cannot explain stay separate.'),
     identityPanel(view, ui),
   );

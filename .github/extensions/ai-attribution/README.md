@@ -166,12 +166,21 @@ that have the step in any order, and the hatched band is unknown until verified.
 Dotted tails show where cycles left the in-order recipe. Each step's evidence bar
 splits **Verified** (GitHub or Azure Boards API), **Recorded** (an agent-recorded
 reference, not ownership), **Convention** (branch name) and **Observed** (local
-telemetry). Counts appear once in the strip; detailed credits appear once in
-the developer table. Select a cycle to see its step-by-step card. Redundant
-KPI cards, ingredient summaries and the duplicated surface matrix are removed.
+telemetry). Counts appear once in the strip; the developer table summarizes work.
+Each cycle keeps one right-hand **AI credit (AIC)** readout per source, in a rounded
+rectangle. Amounts are rounded to whole credits for display; positive amounts
+below one show **<1**, and missing reports stay unknown. Expand the cycle for
+compact account/owner-estimate details beside those totals, not a duplicate
+credit card in the middle. Underlying balances are unchanged and sources are
+never combined. The **Commit** step has a single label.
+Cloud-review credits are marked **not recorded**: review events and bot names do
+not supply credit amounts here, so a combined local/cloud total is unavailable.
+Redundant KPI cards, ingredient summaries and the duplicated surface matrix are removed.
 The rightmost **Compare usage and bill** checkpoint is connected with a dashed
 line: it follows delivery visually, but runs independently and is not an eighth
 delivery funnel stage or a per-PR invoice.
+
+![Expanded synthetic cycle with rounded right-hand AI-credit totals and compact account details](../../../docs/media/canvas-recipe-credits.png)
 
 Before verification, review, merge and closure are unknown rather than zero:
 
@@ -259,11 +268,19 @@ PR are consumption, not cost.
 
 ### Setup & permissions
 
-The Recipe section is the operational checklist for local stores and identity
-capture, branch conventions, GitHub repository read access, Azure Boards
-Work Items (Read) / project access and the paying account's billing permission.
-It explains missing history, inferred owners, explicit provider identity links,
-network opt-in and how to preserve existing commit hooks.
+The Recipe checklist follows the end-to-end setup: create and assign a work item,
+name its branch, start the AI session in that repository/branch, preserve and
+enable commit hooks, and link the PR to the item. `Refs:` links a commit;
+`Closes #123` in a GitHub PR closes that repository's issue on default-branch merge.
+Boards integration and closure are checked separately.
+
+It covers recorded versus estimated identity, explicit provider account links,
+GitHub read access and Azure Boards Work Items (Read) / project access.
+Billing setup starts with the actual paying account: **Personal** is not an
+organization, and organization-managed seats do not appear on personal reports.
+Billing access is separate from repository access; comparisons need a recorded
+GitHub consumer, completed UTC day, exact model and one local source.
+Runtime versions are technical prerequisites, not part of this flow checklist.
 
 ![Recipe setup and permission checklist with invented accounts only](../../../docs/media/canvas-recipe-setup.png)
 

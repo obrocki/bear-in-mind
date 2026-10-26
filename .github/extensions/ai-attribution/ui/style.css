@@ -1222,6 +1222,31 @@ table.compact td {
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.lane-side .source-chips,
+.lane-side .src {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  min-width: 0;
+}
+.lane-side .src {
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.source-credit-amount {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.source-credit-value {
+  font-size: 20px;
+  line-height: 26px;
+}
+.source-credit-person {
+  overflow-wrap: anywhere;
+}
 .developer-report {
   margin: 12px 0;
 }

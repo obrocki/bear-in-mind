@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Flow-focused setup:** replaced runtime-version advice with work-item ownership,
+  issue-linked branch/session and commit/PR conventions, read permissions, paying
+  account selection and the conditions for comparing billing with recorded usage.
+- **Readable cycle credits:** larger, whole-credit source totals in rounded
+  rectangles on the right, with compact individual/owner-estimate details.
+  Removed the duplicate middle credit panel; underlying usage is unchanged.
+  Missing cloud-review usage stays unknown rather than producing a combined total.
+  Shortened the repeated commit step to **Commit**; accounting is unchanged.
 - **Experimental-use warning:** every canvas tab has the same footer explaining
   that results may be incomplete or inaccurate and are not a sole basis for
   billing, savings claims or individual performance decisions.

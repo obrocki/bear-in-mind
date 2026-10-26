@@ -44,6 +44,7 @@ it('recipe model: steps reference real concepts in phase order', () => {
   const concepts = new Set(model.concepts.map((c) => c.id));
   assert.deepEqual(r.phases.map((p) => p.id), ['ingredients', 'method', 'serve']);
   assert.deepEqual(r.steps.map((s) => s.id), ['workItem', 'branch', 'aiWork', 'commits', 'pullRequest', 'review', 'close']);
+  assert.equal(r.steps.find((s) => s.id === 'commits').name, 'Commit');
   for (const step of r.steps) {
     assert.ok(r.phases.some((p) => p.id === step.phase), step.id);
     for (const c of step.concepts) assert.ok(concepts.has(c), `${step.id}: ${c}`);
