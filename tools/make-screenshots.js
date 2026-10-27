@@ -28,11 +28,12 @@ const SHOTS = [
   { file: 'panel-melted.png', page: 'shot.html', q: 'health=0', w: 330, h: 440, dsf: 2, settle: 6000 },
   { file: 'editor-view.png', page: 'shot.html', q: 'health=0.38&compact=0&chrome=0', w: 900, h: 520, dsf: 2, settle: 8000 },
   { file: 'melt-progression.png', page: 'grid.html', q: '', w: 1160, h: 330, dsf: 2, settle: 11000 },
-  // Same allowance, three model paces: only the weather changes.
-  { file: 'climate-models.png', page: 'climate-grid.html', q: '', w: 1160, h: 380, dsf: 2, settle: 9000 },
+  // Same allowance, three model paces and a local model: only the weather changes.
+  { file: 'climate-models.png', page: 'climate-grid.html', q: '', w: 1520, h: 380, dsf: 2, settle: 9000 },
   { file: 'panel-climate-small.png', page: 'shot.html', q: 'account&climate=small', w: 330, h: 460, dsf: 2, settle: 6500 },
   { file: 'panel-climate-medium.png', page: 'shot.html', q: 'account&climate=medium', w: 330, h: 460, dsf: 2, settle: 6500 },
   { file: 'panel-climate-large.png', page: 'shot.html', q: 'account&climate=large', w: 330, h: 460, dsf: 2, settle: 6500 },
+  { file: 'panel-climate-local.png', page: 'shot.html', q: 'account&climate=local', w: 330, h: 460, dsf: 2, settle: 6500 },
   // The dashboard is static DOM, so it needs only long enough to paint.
   { file: 'dashboard.png', page: 'dashboard.html', q: '', w: 1180, h: 1000, dsf: 2, settle: 1200 },
   { file: 'dashboard-light.png', page: 'dashboard.html', q: 'theme=light', w: 1180, h: 1000, dsf: 2, settle: 1200 },

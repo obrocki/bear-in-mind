@@ -260,7 +260,15 @@
         "iceberg.climate.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Let the habitat weather show the pace of the model in use: its average reported AI credits per call in retained telemetry, plus reasoning effort and prompt limit. Snow for light models, thaw for heavy ones. Never changes the ice level. Without enough reported credits the scene stays neutral. A usage metaphor, not energy or emissions."
+          "markdownDescription": "Let the habitat weather show the pace of the model in use: its average reported AI credits per call in retained telemetry, plus reasoning effort and prompt limit. Snow for light models, thaw for heavy ones. A model on a local endpoint brings a clear aurora night and a happy bear. Never changes the ice level. Without enough reported credits the scene stays neutral. A usage metaphor, not energy or emissions."
+        },
+        "iceberg.climate.localHosts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra model-endpoint host names that count as local for the habitat weather, such as a home-lab model server (`gpu-box.lan`). Loopback endpoints (`localhost`, `127.0.0.1`, `::1`) always count. Exact host names only: no ports, URLs or wildcards."
         }
       }
     }

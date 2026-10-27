@@ -5,6 +5,11 @@
  * The ice (allowance) is unaffected. Weight comes only from reported credits
  * per call; a model without enough reported calls has no climate, which the
  * renderer draws as today's neutral scene rather than as a small model.
+ *
+ * A call whose reported endpoint is on this machine (or a host the user lists
+ * as local) leaves the credit scale: the habitat gets a clear aurora night and
+ * a happy bear. Locality comes only from the reported `server.address`, never
+ * from zero credits, model names or bring-your-own-key status.
  */
 
 import type { CallTally, LatestCall } from './otelSummary';
@@ -26,17 +31,27 @@ export const CREDITS_PER_CALL_HIGH = 25;
 const CONTEXT_LOW = 32_000;
 const CONTEXT_HIGH = 1_000_000;
 
-export type ClimateBand = 'snowy' | 'mild' | 'thawing';
+export type ClimateBand = 'snowy' | 'mild' | 'thawing' | 'aurora';
+
+/** `loopback`: this machine. `configured`: a host listed in `iceberg.climate.localHosts`. */
+export type LocalEndpoint = 'loopback' | 'configured';
 
 export interface Climate {
   model: string;
-  /** Average reported credits per credit-reporting call of this model. */
+  /**
+   * Average reported credits per credit-reporting call of this model. For a
+   * local endpoint with no credit-reporting calls this is 0 with `sampleCalls` 0.
+   */
   creditsPerCall: number;
   /** Calls that reported credits; calls without credits are excluded, not zero. */
   sampleCalls: number;
-  /** 0 (lightest pace) .. 1 (heaviest pace). */
+  /** 0 (lightest pace) .. 1 (heaviest pace); 0 for a local endpoint. */
   weight: number;
   band: ClimateBand;
+  /** Present only when the latest call went to a local endpoint (band `aurora`). */
+  local?: LocalEndpoint;
+  /** That local endpoint's host name; never set for other endpoints. */
+  host?: string;
   effort?: string;
   /** 0..1, absent when the effort is unreported or unrecognised. */
   effortLevel?: number;
@@ -62,7 +77,7 @@ export function creditWeight(creditsPerCall: number): number {
   return Math.log(creditsPerCall / CREDITS_PER_CALL_LOW) / Math.log(CREDITS_PER_CALL_HIGH / CREDITS_PER_CALL_LOW);
 }
 
-export function climateBand(weight: number): ClimateBand {
+export function climateBand(weight: number): Exclude<ClimateBand, 'aurora'> {
   return weight < 1 / 3 ? 'snowy' : weight < 2 / 3 ? 'mild' : 'thawing';
 }
 
@@ -79,17 +94,93 @@ export function contextLevel(limit: number | undefined): number | undefined {
   return Math.min(1, Math.max(0, level));
 }
 
+function normalHost(host: string): string {
+  return host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
+}
+
+/** `::1` in any spelling, such as `0:0:0:0:0:0:0:1` or `0::1`. */
+function isIpv6Loopback(host: string): boolean {
+  if (!host.includes(':') || !/^[0-9a-f:]+$/.test(host)) {
+    return false;
+  }
+  const halves = host.split('::');
+  const groups = (s: string) => (s ? s.split(':') : []);
+  const head = groups(halves[0]);
+  const tail = halves.length === 2 ? groups(halves[1]) : [];
+  if (halves.length > 2 || (halves.length === 2 && head.length + tail.length > 7)) {
+    return false;
+  }
+  const all = halves.length === 2 ? [...head, ...new Array<string>(8 - head.length - tail.length).fill('0'), ...tail] : head;
+  return all.length === 8 && all.every((g, i) => g.length > 0 && g.length <= 4 && parseInt(g, 16) === (i === 7 ? 1 : 0));
+}
+
+/** `localhost`, `*.localhost`, 127.0.0.0/8 (also IPv4-mapped) and `::1`: this machine. */
+export function isLoopbackHost(host: string | undefined): boolean {
+  if (typeof host !== 'string') {
+    return false;
+  }
+  const h = normalHost(host);
+  if (h === 'localhost' || h.endsWith('.localhost')) {
+    return true;
+  }
+  const v4 = /^(?:::ffff:)?127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  return v4 ? v4.slice(1).every((octet) => Number(octet) <= 255) : isIpv6Loopback(h);
+}
+
+/**
+ * Whether a model endpoint is local: a loopback host, or an exact,
+ * case-insensitive match for a host the user listed. No suffix or wildcard
+ * matching, so listing `gpu-box.lan` never makes `a.gpu-box.lan` local.
+ */
+export function localEndpoint(host: string | undefined, localHosts: readonly unknown[] = []): LocalEndpoint | undefined {
+  if (typeof host !== 'string' || host.trim() === '') {
+    return undefined;
+  }
+  if (isLoopbackHost(host)) {
+    return 'loopback';
+  }
+  const h = normalHost(host);
+  return localHosts.some((entry) => typeof entry === 'string' && entry.trim() !== '' && normalHost(entry) === h)
+    ? 'configured' : undefined;
+}
+
 /**
  * The climate for the latest model call, weighted by that model's reported
  * credits across retained calls. Undefined (neutral) when the call is missing,
  * stale or from the future, the model is unknown, or too few calls reported credits.
+ * A call to a local endpoint is the `aurora` band instead and needs no credits.
  */
-export function climateFor(call: LatestCall | undefined, byModel: readonly CallTally[], nowMs: number = Date.now()): Climate | undefined {
+export function climateFor(
+  call: LatestCall | undefined,
+  byModel: readonly CallTally[],
+  nowMs: number = Date.now(),
+  localHosts: readonly unknown[] = []
+): Climate | undefined {
   if (!call || !call.model || !Number.isFinite(call.atMs) || call.atMs > nowMs || nowMs - call.atMs > CLIMATE_STALE_MS) {
     return undefined;
   }
   const tally = byModel.find((row) => row.key === call.model);
-  if (!tally || tally.creditCalls < CLIMATE_MIN_CREDIT_CALLS || !Number.isFinite(tally.credits) || tally.credits < 0) {
+  const reported = !!tally && Number.isFinite(tally.credits) && tally.credits >= 0;
+  const local = localEndpoint(call.host, localHosts);
+  if (local) {
+    const sampleCalls = reported ? tally.creditCalls : 0;
+    return {
+      model: call.model,
+      creditsPerCall: sampleCalls > 0 ? tally!.credits / sampleCalls : 0,
+      sampleCalls,
+      weight: 0,
+      band: 'aurora',
+      local,
+      host: normalHost(call.host!),
+      effort: call.effort,
+      effortLevel: effortLevel(call.effort),
+      contextLimit: call.promptLimit,
+      contextLevel: contextLevel(call.promptLimit),
+      atMs: call.atMs,
+      sessionId: call.sessionId
+    };
+  }
+  if (!reported || tally.creditCalls < CLIMATE_MIN_CREDIT_CALLS) {
     return undefined;
   }
   const creditsPerCall = tally.credits / tally.creditCalls;

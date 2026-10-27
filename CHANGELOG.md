@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Happy bear on local models:** when the latest chat call goes to a model
+  endpoint on this machine (Ollama, Foundry Local, LM Studio or any server on
+  `localhost`, `127.0.0.1` or `::1`), the habitat gets a clear aurora night with
+  a crescent moon, glinting ice, no meltwater and a happy bear (hearts, a
+  wagging tail and rolls in the snow). The ice still shows the plan allowance.
+  Locality comes only from the `server.address` Copilot reports on chat spans,
+  never from zero credits or model names. List other model servers by exact
+  host name in the new `iceberg.climate.localHosts` setting. `getUsage()`
+  climates gain the `aurora` band with `local` and `host`; other endpoints'
+  hosts are never exposed. README adds a local-model screenshot and GIF, and
+  `npm run media:gif` renders it from a fixed seed.
+
 - **Flow-focused setup:** replaced runtime-version advice with work-item ownership,
   issue-linked branch/session and commit/PR conventions, read permissions, paying
   account selection and the conditions for comparing billing with recorded usage.

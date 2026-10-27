@@ -57,6 +57,45 @@ it('weathers the scene by model pace without touching the ice or the neutral HUD
   assert.ok(changed > light.canvas.data.length / 4 * 0.05, 'a light model clouds and snows the sky');
 });
 
+/** Pixels in the sky that read as aurora green. */
+function auroraPixels(scene) {
+  const { width, data } = scene.canvas;
+  const rows = Math.round(scene.canvas.height * 0.6);
+  let n = 0;
+  for (let i = 0; i < width * rows; i++) {
+    if (data[i * 4 + 1] > data[i * 4] + 50 && data[i * 4 + 1] > 70) n++;
+  }
+  return n;
+}
+
+it('brings a clear aurora night and a happy bear for a local model, without touching the ice', () => {
+  const local = climateFor({ model: 'qwen3-coder:30b', host: 'localhost', atMs: Date.now() - 60_000, sessionId: 's' }, []);
+  const neutral = render(undefined, 0.3);
+  const aurora = render(local, 0.3);
+
+  assert.equal(aurora.els.pct.textContent, neutral.els.pct.textContent, 'the local weather never changes the ice');
+  assert.equal(aurora.els.climateRow.hidden, false);
+  assert.equal(aurora.els.climate.textContent, 'aurora weather · qwen3-coder:30b · on this machine');
+  assert.equal(aurora.els.climate.dataset.local, 'true');
+  assert.equal(neutral.els.climate.dataset.local, 'false');
+  assert.match(aurora.els.climate.title, /went to localhost, an endpoint on this machine/);
+  assert.match(aurora.els.climate.title, /Copilot reported no AI credits for qwen3-coder:30b/);
+  assert.match(aurora.els.climate.title, /A local proxy to a cloud service looks the same/);
+  assert.match(aurora.els.climate.title, /not energy or emissions/);
+
+  assert.ok(skyMean(aurora, 0) < skyMean(neutral, 0) - 30, 'low ice does not warm the aurora sky');
+  assert.ok(auroraPixels(aurora) > 1000 && auroraPixels(neutral) === 0, 'the aurora fills the sky');
+
+  const configured = render(climateFor(
+    { model: 'llama3.3:70b', host: 'gpu-box.lan', atMs: Date.now() - 60_000, sessionId: 's' }, [], Date.now(), ['gpu-box.lan']
+  ));
+  assert.equal(configured.els.climate.textContent, 'aurora weather · llama3.3:70b · on gpu-box.lan');
+  assert.match(configured.els.climate.title, /listed in iceberg\.climate\.localHosts/);
+
+  const shrinking = render(local, 0);
+  assert.equal(shrinking.els.pct.textContent, '0%', 'no ice is still no ice');
+});
+
 it('returns to the neutral scene when the climate goes stale, is disabled or the demo runs', () => {
   const m = new TokenMeter({ get: () => undefined, update: async () => {} });
   const scene = createScene(path.resolve(__dirname, '..'), 330, 300);
@@ -80,6 +119,20 @@ it('returns to the neutral scene when the climate goes stale, is disabled or the
     scene.setState(m.snapshot());
     assert.equal(scene.els.climateRow.hidden, true);
     assert.equal(scene.els.climate.textContent, '');
+
+    const local = climateFor({ model: 'qwen3-coder:30b', host: '::1', atMs: Date.now() - 1000, sessionId: 's' }, []);
+    m.setClimate(local);
+    scene.setState(m.snapshot());
+    assert.match(scene.els.climate.textContent, /^aurora weather/);
+    globalThis.__BEAR_SETTINGS__ = { 'iceberg.climate.enabled': false };
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, true, 'the setting also turns the local aurora off');
+    assert.equal(scene.els.climate.dataset.local, 'false');
+    delete globalThis.__BEAR_SETTINGS__;
+    m.toggleDemo();
+    scene.setState(m.snapshot());
+    assert.equal(scene.els.climateRow.hidden, true, 'the demo never shows the local aurora');
+    m.toggleDemo();
   } finally {
     delete globalThis.__BEAR_SETTINGS__;
     m.dispose();

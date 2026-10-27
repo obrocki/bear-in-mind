@@ -335,6 +335,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   span.run('call', at + 10, at + 900, 0, 'chat', 'panel/editAgent', 'chat-1', 'opus', 1000, 20, 750, null);
   attr.run('call', 'copilot_chat.copilot_usage_nano_aiu', '3000000000');
   attr.run('call', 'copilot_chat.request.options', JSON.stringify({ stream: true, reasoning: { effort: 'high' } }));
+  attr.run('call', 'server.address', 'LocalHost');
   span.run('title', at + 20, at + 100, 0, 'chat', 'title', null, 'mini', 50, 5, 0, null);
   attr.run('title', 'copilot_chat.copilot_usage_nano_aiu', ' ');
   attr.run('title', 'copilot_chat.request.options', JSON.stringify({ pad: 'x'.repeat(70000), reasoning: { effort: 'max' } }));
@@ -367,6 +368,7 @@ it('reads work context, callers, reasoning effort and tool status from a current
   assert.deepEqual(digest.byEffort.map((row) => [row.key, row.calls]), [['high', 1], [null, 1]]);
   assert.equal(digest.toolStatusCalls, 2);
   assert.equal(digest.toolFailures, 1);
+  assert.equal(digest.latestCall.host, 'localhost', 'the model endpoint host comes from span_attributes');
 });
 
 it('reads SDK ancestry, analytics identity, cache creation and first-chunk timing from SQLite', (t) => {

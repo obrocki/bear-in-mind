@@ -55,6 +55,8 @@ export interface UsageSpan {
   actorId?: string;
   /** Span status ERROR; undefined when the source reported no status. */
   failed?: boolean;
+  /** `server.address` of a model call, lower-cased: the endpoint's host name, never a URL. */
+  host?: string;
 }
 
 export function nonnegative(value: unknown): number | undefined {
@@ -104,6 +106,26 @@ function text(value: unknown): string | undefined {
 export function identityName(value: unknown): string | undefined {
   const name = typeof value === 'string' ? value.trim() : '';
   return name.length > 0 && name.length <= 128 && !/[\u0000-\u001f\u007f]/.test(name) ? name : undefined;
+}
+
+/**
+ * The host name in `server.address`, lower-cased, with IPv6 brackets and a
+ * trailing root dot removed. A URL is reduced to its host so no path, port or
+ * credentials survive; anything that is not a plain host or IP is dropped.
+ */
+export function hostName(value: unknown): string | undefined {
+  let raw = text(value)?.trim().toLowerCase();
+  if (raw && raw.includes('://')) {
+    try {
+      raw = new URL(raw).hostname;
+    } catch {
+      return undefined;
+    }
+  }
+  let host = raw?.replace(/^\[([^\]]*)\](?::\d+)?$/, '$1').replace(/\.$/, '');
+  // One colon is `host:port`; IPv6 addresses have at least two.
+  if (host && host.split(':').length === 2) host = host.replace(/:\d*$/, '').replace(/\.$/, '');
+  return host && host.length <= 253 && /^[a-z0-9_.:%-]+$/.test(host) ? host : undefined;
 }
 
 /**
@@ -220,7 +242,8 @@ export function usageSpan(
     branch: text(attributes['github.copilot.git.branch']) ?? text(attributes['copilot_chat.repo.head_branch_name']),
     user: identityName(attributes['user.name']),
     actorId: identityName(attributes['enduser.pseudo.id']),
-    failed: spanFailed(status)
+    failed: spanFailed(status),
+    host: operation === 'chat' ? hostName(attributes['server.address']) : undefined
   };
 }
 
@@ -277,7 +300,7 @@ export function mergeUsageSpan(file: UsageSpan | undefined, db: UsageSpan): Usag
     auxiliary: db.auxiliary || file.auxiliary,
     promptLimit: db.promptLimit ?? file.promptLimit, turns: db.turns ?? file.turns,
     model: db.model ?? file.model, agent: db.agent ?? file.agent, tool: db.tool ?? file.tool,
-    failed: db.failed ?? file.failed
+    failed: db.failed ?? file.failed, host: db.host ?? file.host
   };
 }
 
@@ -564,7 +587,7 @@ export function digestSpans(spans: Iterable<UsageSpan>, ancestors: Iterable<Span
     if (span.sessionId) {
       const call = {
         model: span.model, effort: span.effort, promptLimit: span.promptLimit,
-        atMs: span.start, sessionId: span.sessionId
+        atMs: span.start, sessionId: span.sessionId, host: span.host
       };
       if (!digest.latestCall || call.atMs > digest.latestCall.atMs) {
         digest.latestCall = call;

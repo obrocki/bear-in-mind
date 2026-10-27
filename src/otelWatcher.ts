@@ -41,7 +41,9 @@ const TEXT_SPAN_KEYS = [
   'github.copilot.git.repository', 'github.copilot.git.branch',
   'copilot_chat.repo.remote_url', 'copilot_chat.repo.head_branch_name',
   // Agent invocation spans, only when Copilot's identity capture is on.
-  'user.name', 'enduser.pseudo.id', 'gen_ai.request.reasoning.level'
+  'user.name', 'enduser.pseudo.id', 'gen_ai.request.reasoning.level',
+  // Model endpoint host name on chat spans, so calls to a model on this machine can be recognised.
+  'server.address'
 ];
 /** Request-option blobs larger than this are skipped, matching the file-span path. */
 const MAX_REQUEST_OPTIONS_CHARS = 64 * 1024;

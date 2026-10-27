@@ -84,7 +84,11 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
     meter.setSessionSelected(selectedSessionId !== undefined);
     meter.setContext(session?.trace?.context);
     // A pinned chat uses only its own latest call; it never borrows another chat's model.
-    meter.setClimate(climateFor(session ? session.trace?.latestCall : spans.latestCall, spans.byModel));
+    const localHosts = vscode.workspace.getConfiguration('iceberg').get<unknown[]>('climate.localHosts', []);
+    meter.setClimate(climateFor(
+      session ? session.trace?.latestCall : spans.latestCall, spans.byModel, Date.now(),
+      Array.isArray(localHosts) ? localHosts : []
+    ));
     meter.refreshBasis();
   };
   context.subscriptions.push(
@@ -115,6 +119,9 @@ export function activate(context: vscode.ExtensionContext): IcebergApi {
       }
       if (e.affectsConfiguration('iceberg.accountUsage')) {
         account.start();
+      }
+      if (e.affectsConfiguration('iceberg.climate.localHosts')) {
+        updateContext();
       }
     })
   );

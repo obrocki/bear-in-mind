@@ -96,6 +96,11 @@ body {
   color: var(--ice-accent, #9fd8ff);
 }
 
+/* A local model's aurora: the HUD reading takes the aurora's green. */
+.climate[data-local='true'] {
+  color: #8cffc8;
+}
+
 .name {
   font-weight: 700;
   letter-spacing: 0.5px;
