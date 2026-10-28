@@ -8,7 +8,7 @@ const {
   CLIMATE_MIN_CREDIT_CALLS, CLIMATE_STALE_MS, CREDITS_PER_CALL_HIGH, CREDITS_PER_CALL_LOW,
   climateFor, contextLevel, creditWeight, effortLevel, isLoopbackHost, localEndpoint
 } = build('climate.js');
-const { digestSpans, usageSpan } = build('spanUsage.js');
+const { digestSpans, hostName, usageSpan } = build('spanUsage.js');
 const { TokenMeter } = build('tokenMeter.js');
 
 const now = Date.UTC(2026, 9, 20, 12);
@@ -158,6 +158,20 @@ it('recognises loopback endpoints in any spelling and only exactly listed local 
   assert.equal(localEndpoint('a.gpu-box.lan', listed), undefined, 'no suffix matching');
   assert.equal(localEndpoint('10.0.0.5', listed), undefined);
   assert.equal(localEndpoint('localhost', listed), 'loopback', 'loopback wins over the list');
+});
+
+it('recognises IPv4-mapped loopback in the hex form URL parsing produces', () => {
+  for (const host of ['::ffff:7f00:1', '::FFFF:7F01:203', '0:0:0:0:0:ffff:7f00:1', '0:0:0:0:0:ffff:127.0.0.1', '[::ffff:7fff:ffff]']) {
+    assert.equal(isLoopbackHost(host), true, host);
+  }
+  for (const host of ['::ffff:8000:1', '::ffff:c0a8:114', '::fffe:7f00:1', '1::ffff:7f00:1', '::7f00:1',
+    '::ffff:127.0.0.256', '::ffff:7f00:1:2', '::ffff:7f00']) {
+    assert.equal(isLoopbackHost(host), false, host);
+  }
+  const host = hostName('http://[::ffff:127.0.0.1]:11434/v1');
+  assert.equal(host, '::ffff:7f00:1', 'URL parsing serialises the mapped address in hex');
+  assert.equal(localEndpoint(host), 'loopback');
+  assert.equal(climateFor(call('q', { host }), [], now).band, 'aurora');
 });
 
 it('gives a fresh call to a local endpoint the aurora band without needing reported credits', () => {

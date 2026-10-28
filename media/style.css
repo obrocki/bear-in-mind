@@ -101,6 +101,12 @@ body {
   color: #8cffc8;
 }
 
+/* A deep aurora green that keeps 4.5:1 contrast on light sidebars, even at the row's opacity. */
+body.vscode-light .climate[data-local='true'],
+body.vscode-high-contrast-light .climate[data-local='true'] {
+  color: #00301a;
+}
+
 .name {
   font-weight: 700;
   letter-spacing: 0.5px;

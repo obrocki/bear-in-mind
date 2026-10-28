@@ -96,6 +96,32 @@ it('brings a clear aurora night and a happy bear for a local model, without touc
   assert.equal(shrinking.els.pct.textContent, '0%', 'no ice is still no ice');
 });
 
+/** Pixels drawn in the hearts' pink. */
+function heartPixels(scene) {
+  const { data } = scene.canvas;
+  let n = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] > 220 && data[i + 1] < 130 && data[i + 2] > 100 && data[i + 2] < 190) n++;
+  }
+  return n;
+}
+
+it('clears hearts and the roll when the climate stops being local, even with animation off', () => {
+  const local = climateFor({ model: 'qwen3-coder:30b', host: 'localhost', atMs: Date.now() - 60_000, sessionId: 's' }, []);
+  const scene = createScene(path.resolve(__dirname, '..'), 480, 300, { seed: 1 });
+  const state = { health: 1, input: 0, output: 0, total: 0, budget: 0, basis: 'demo', source: 'otel',
+    bearName: 'Nanuq', animate: true, pixelScale: 2 };
+  scene.step(16);
+  scene.setState({ ...state, climate: local });
+  let steps = 0;
+  while (heartPixels(scene) === 0 && steps++ < 300) scene.step(33);
+  assert.ok(heartPixels(scene) > 0, 'a heart is on screen');
+
+  scene.setState({ ...state, animate: false, climate: undefined });
+  for (let i = 0; i < 5; i++) scene.step(33);
+  assert.equal(heartPixels(scene), 0, 'no local-only effect lingers in the neutral scene');
+});
+
 it('returns to the neutral scene when the climate goes stale, is disabled or the demo runs', () => {
   const m = new TokenMeter({ get: () => undefined, update: async () => {} });
   const scene = createScene(path.resolve(__dirname, '..'), 330, 300);

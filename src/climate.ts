@@ -98,20 +98,42 @@ function normalHost(host: string): string {
   return host.trim().toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.$/, '');
 }
 
-/** `::1` in any spelling, such as `0:0:0:0:0:0:0:1` or `0::1`. */
-function isIpv6Loopback(host: string): boolean {
-  if (!host.includes(':') || !/^[0-9a-f:]+$/.test(host)) {
-    return false;
+/** The eight 16-bit groups of an IPv6 address, which may end in dotted IPv4; undefined if malformed. */
+function ipv6Groups(host: string): number[] | undefined {
+  let h = host;
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (dotted) {
+    const o = dotted.slice(2).map(Number);
+    if (o.some((octet) => octet > 255)) {
+      return undefined;
+    }
+    h = `${dotted[1]}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
   }
-  const halves = host.split('::');
+  if (!h.includes(':') || !/^[0-9a-f:]+$/.test(h)) {
+    return undefined;
+  }
+  const halves = h.split('::');
   const groups = (s: string) => (s ? s.split(':') : []);
   const head = groups(halves[0]);
   const tail = halves.length === 2 ? groups(halves[1]) : [];
   if (halves.length > 2 || (halves.length === 2 && head.length + tail.length > 7)) {
-    return false;
+    return undefined;
   }
   const all = halves.length === 2 ? [...head, ...new Array<string>(8 - head.length - tail.length).fill('0'), ...tail] : head;
-  return all.length === 8 && all.every((g, i) => g.length > 0 && g.length <= 4 && parseInt(g, 16) === (i === 7 ? 1 : 0));
+  return all.length === 8 && all.every((g) => g.length > 0 && g.length <= 4) ? all.map((g) => parseInt(g, 16)) : undefined;
+}
+
+/**
+ * `::1`, or 127.0.0.0/8 mapped into IPv6, in any spelling: `0::1`,
+ * `::ffff:127.0.0.1`, or `::ffff:7f00:1` as URL parsing serialises it.
+ */
+function isIpv6Loopback(host: string): boolean {
+  const g = ipv6Groups(host);
+  if (!g) {
+    return false;
+  }
+  const zeros = (n: number) => g.slice(0, n).every((group) => group === 0);
+  return (zeros(7) && g[7] === 1) || (zeros(5) && g[5] === 0xffff && g[6] >> 8 === 0x7f);
 }
 
 /** `localhost`, `*.localhost`, 127.0.0.0/8 (also IPv4-mapped) and `::1`: this machine. */
@@ -123,7 +145,7 @@ export function isLoopbackHost(host: string | undefined): boolean {
   if (h === 'localhost' || h.endsWith('.localhost')) {
     return true;
   }
-  const v4 = /^(?:::ffff:)?127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  const v4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
   return v4 ? v4.slice(1).every((octet) => Number(octet) <= 255) : isIpv6Loopback(h);
 }
 

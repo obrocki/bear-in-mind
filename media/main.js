@@ -144,7 +144,11 @@
     if (same) return;
     const reseed = next.on !== climate.on || next.local !== climate.local;
     Object.assign(climate, next);
-    if (!climate.local && bear.pose === 'roll') bear.pose = 'sit';
+    if (!climate.local) {
+      // Local-only effects never linger in another scene, even with animation off.
+      if (bear.pose === 'roll') bear.pose = 'sit';
+      motes.length = 0;
+    }
     palKey = -1;
     dirty = true;
     if (reseed) seedFlakes();
@@ -1118,7 +1122,7 @@
 
     // Melt water dripping off the flanks.
     const drip = climateDrip();
-    const dripChance = climate.local ? (1 - h) * 0.1 : climate.on ? Math.max(1 - h, 0.15) * drip : 1 - h;
+    const dripChance = climate.local ? 0 : climate.on ? Math.max(1 - h, 0.15) * drip : 1 - h;
     if ((h < 0.92 || drip > 1.2) && Math.random() < dripChance * dt * 26) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const x = view.cx + side * Math.round(bergHalfW * (0.5 + Math.random() * 0.5));
