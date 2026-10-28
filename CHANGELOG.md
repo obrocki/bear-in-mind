@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.2
+
 - **Happy bear on local models:** when the latest chat call goes to a model
   endpoint on this machine (Ollama, Foundry Local, LM Studio or any server on
   `localhost`, `127.0.0.1` or `::1`), the habitat gets a clear aurora night with
