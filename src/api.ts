@@ -2,7 +2,7 @@ import type * as vscode from 'vscode';
 import type { TokenMeter, UsageSnapshot } from './tokenMeter';
 
 export type { UsageSnapshot } from './tokenMeter';
-export type { Climate, ClimateBand } from './climate';
+export type { Climate, ClimateBand, LocalEndpoint } from './climate';
 
 export interface UsageReport {
   input?: number;

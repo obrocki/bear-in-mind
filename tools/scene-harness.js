@@ -107,8 +107,9 @@ class Canvas {
  * @param {string} root repository root
  * @param {number} viewW stage width in CSS pixels
  * @param {number} viewH stage height in CSS pixels
+ * @param {{ seed?: number }} [options] `seed` makes the scene's Math.random reproducible
  */
-function createScene(root, viewW, viewH) {
+function createScene(root, viewW, viewH, options = {}) {
   const listeners = {};
   const els = {};
   const mkEl = (id) => ({
@@ -149,6 +150,15 @@ function createScene(root, viewW, viewH) {
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  if (Number.isInteger(options.seed)) {
+    // mulberry32, installed in the sandbox's own Math so the host's stays untouched.
+    vm.runInContext(
+      `(function () { let s = ${options.seed >>> 0}; Math.random = function () {` +
+        's = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1);' +
+        't ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();',
+      sandbox
+    );
+  }
   vm.runInContext(fs.readFileSync(path.join(root, 'media', 'main.js'), 'utf8'), sandbox, {
     filename: 'main.js'
   });

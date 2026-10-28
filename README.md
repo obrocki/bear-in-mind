@@ -166,14 +166,14 @@ See the [ROI research](docs/research/ai-telemetry-attribution.md) for telemetry 
 
 The weather around the bear shows the **pace of the model in use**, while the
 ice keeps showing how much allowance is left. The same 75% allowance can sit
-under snow or a thaw:
+under snow, a thaw or, for a model running on your machine, an aurora:
 
-![The same 75% plan allowance under a light, a mid and a heavy model](docs/media/climate-models.png)
+![The same 75% plan allowance under a light, a mid, a heavy and a local model](docs/media/climate-models.png)
 
-| Light model · snowy | Mid model · mild | Heavy model · thawing |
-| --- | --- | --- |
-| ![Habitat under clouds and heavy snow with a pinprick sun](docs/media/panel-climate-small.png) | ![Habitat under a clear sky with light snow and a small sun](docs/media/panel-climate-medium.png) | ![Habitat under a big low sun with a warm sky and shimmer](docs/media/panel-climate-large.png) |
-| Slow clouds, heavy snow, fresh snow on the ledges, a pinprick sun | Today's sky, light snow, a small sun | A big, low sun, a warm sky, heat shimmer, meltwater and drips |
+| Light model · snowy | Mid model · mild | Heavy model · thawing | Local model · aurora |
+| --- | --- | --- | --- |
+| ![Habitat under clouds and heavy snow with a pinprick sun](docs/media/panel-climate-small.png) | ![Habitat under a clear sky with light snow and a small sun](docs/media/panel-climate-medium.png) | ![Habitat under a big low sun with a warm sky and shimmer](docs/media/panel-climate-large.png) | ![Habitat under an aurora and a crescent moon with a happy bear](docs/media/panel-climate-local.png) |
+| Slow clouds, heavy snow, fresh snow on the ledges, a pinprick sun | Today's sky, light snow, a small sun | A big, low sun, a warm sky, heat shimmer, meltwater and drips | A clear aurora night, a crescent moon, glinting ice and a happy bear |
 
 - **Model size is measured, not looked up.** It is the model's average reported
   AI credits per call across retained trace-store calls; calls without credits
@@ -187,13 +187,34 @@ under snow or a thaw:
   A pinned chat uses only its own latest call. Title, progress and subagent
   helper calls are ignored.
 - The scene stays **neutral**, exactly as before, without trace-store spans, with
-  fewer than three credit-reporting calls for that model, 30 minutes after the
+  fewer than three credit-reporting calls for a cloud model, 30 minutes after the
   latest call, during the demo, or with `iceberg.climate.enabled` off.
 
 The HUD line names the band, the model and its average; its tooltip adds the
-sample size, effort and prompt limit. The figures in these screenshots are
-illustrative. Like the ice, the weather is a usage metaphor, not energy,
-emissions or a bill.
+sample size, effort and prompt limit. For a local model it says where the model
+runs instead. The figures in these screenshots are illustrative. Like the ice,
+the weather is a usage metaphor, not energy, emissions or a bill.
+
+#### Local models
+
+When the latest chat call goes to a model endpoint on **this machine** (Ollama,
+Foundry Local, LM Studio or any other server on `localhost`, `127.0.0.1` or
+`::1`), the weather leaves the credit scale. The sky clears to an aurora night
+with a crescent moon instead of a sun, the ice glints and stops dripping, and
+the bear is happy: hearts, a wagging tail and rolls in the snow. The ice still
+shows the plan allowance.
+
+![The bear rolling in the snow under an aurora while a local model is in use](docs/media/local-aurora.gif)
+
+- **Locality is reported, not guessed.** It comes only from the `server.address`
+  Copilot records on each chat call, never from zero credits (some cloud models
+  report zero), model names or bring-your-own-key status.
+- A model server elsewhere on your network counts only when you list its exact
+  host name in `iceberg.climate.localHosts`, for example `["gpu-box.lan"]`.
+- No credit-reporting calls are needed. The 30-minute, demo and
+  `iceberg.climate.enabled` rules above still apply.
+- The extension sees only the endpoint, so a local proxy that forwards to a cloud
+  service looks the same. Local compute still uses your machine's power.
 
 ## Connecting the telemetry
 
@@ -341,6 +362,7 @@ Common settings:
 | `iceberg.otel.feedPath` | `""` | Override the feed path; otherwise follow Copilot's configuration. |
 | `iceberg.otel.tracesDbPath` | `""` | Override trace-store discovery. |
 | `iceberg.climate.enabled` | `true` | Let the weather show the pace of the model in use; off keeps the neutral scene. |
+| `iceberg.climate.localHosts` | `[]` | Extra model-server host names that count as local (aurora weather). Loopback always counts. |
 
 Use **Settings → Iceberg** for polling, input/output counting, animation, pixel
 scale, status bar and bear name. Turning telemetry off does not erase counted usage.
@@ -360,6 +382,10 @@ scale, status bar and bear name. Turning telemetry off does not erase counted us
   call in the last 30 minutes, and at least three calls of that model that
   reported credits. Check **Iceberg: Telemetry Diagnostics** for trace-store
   activity and the dashboard's credits by model for reported credits.
+- **No aurora for a local model:** the chat call must report its endpoint in
+  `server.address`, and a non-loopback server must be listed exactly in
+  `iceberg.climate.localHosts`. Models added by other extensions may not report
+  an endpoint, so they stay neutral.
 - **Collector stopped:** clear `github.copilot.chat.otel.outfile` to restore OTLP,
   or run **Iceberg: Restore Defaults and Disconnect…**; use the local trace store
   alongside it.

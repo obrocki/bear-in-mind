@@ -16,6 +16,7 @@
     context        show latest-prompt headroom with separate local totals
     account        show a synthetic Copilot plan allowance and combined usage
     climate=small|medium|large  weather for an illustrative light, mid or heavy model
+    climate=local  aurora night for an illustrative model on a local endpoint
 -->
 <style>
   :root {
@@ -141,7 +142,10 @@
         medium: { model: 'gpt-5.3-codex', creditsPerCall: 0.61, sampleCalls: 12, weight: 0.402, band: 'mild',
           effort: 'medium', effortLevel: 0.5, contextLimit: 272000, contextLevel: 0.622 },
         large: { model: 'claude-opus-5.5', creditsPerCall: 19.2, sampleCalls: 40, weight: 0.958, band: 'thawing',
-          effort: 'high', effortLevel: 0.8, contextLimit: 1000000, contextLevel: 1 }
+          effort: 'high', effortLevel: 0.8, contextLimit: 1000000, contextLevel: 1 },
+        // A model served on this machine: no credits reported, so the climate is src/climate.ts's aurora band.
+        local: { model: 'qwen3-coder:30b', creditsPerCall: 0, sampleCalls: 0, weight: 0, band: 'aurora',
+          local: 'loopback', host: 'localhost' }
       };
       var climate = climates[q.get('climate')];
       if (climate) climate.atMs = Date.now();

@@ -106,31 +106,49 @@
   const ICE_DUSK = ['#f2ecff', '#ded2ff', '#c3b2e6', '#8f7fbe', '#584d86'].map(hexToRgb);
   const ICE_WARM = ['#ffeadb', '#ffd0b4', '#e0a894', '#a97a74', '#6b4a55'].map(hexToRgb);
   const SKY_OVERCAST = ['#1b2230', '#2c3747', '#46546a', '#67778d', '#8d9bb0'].map(hexToRgb);
+  /** A clear aurora night for local models: no sun, so no warmth from the sky. */
+  const AURORA_NIGHT = {
+    sky: ['#010309', '#03112a', '#08284a', '#0f4f6e', '#2a8a9c'].map(hexToRgb),
+    sea: [hexToRgb('#03101f'), hexToRgb('#0a2c40')],
+    moon: hexToRgb('#eef6ff'),
+    snow: hexToRgb('#f4fbff'),
+    foam: hexToRgb('#cfeeff')
+  };
+  const AURORA_COLORS = [[110, 255, 180], [80, 225, 255], [190, 140, 255]];
 
   // --------------------------------------------------------- model climate --
   // The weather follows the pace of the model in use (`state.climate`, from
   // src/climate.ts): weight 0 is light (cloud, snow, a pinprick sun), 0.5 is
-  // today's sky and 1 is heavy (a big sun, light thaw). It never changes the
-  // ice. Without a climate every branch below draws the neutral scene as before.
-  const climate = { on: false, weight: 0.5, effort: 0, context: 0.5, sun: null };
+  // today's sky and 1 is heavy (a big sun, light thaw). A model on a local
+  // endpoint (`climate.local`) leaves that scale for a clear aurora night and a
+  // happy bear. It never changes the ice. Without a climate every branch below
+  // draws the neutral scene as before.
+  const climate = { on: false, local: false, weight: 0.5, effort: 0, context: 0.5, sun: null };
   /** Overcast tint under light-model clouds, and thaw strength for heavy models. */
   const OVERCAST = 0.3;
   const THAW = 0.5;
 
   function setClimate(c) {
-    const on = !!c && typeof c.weight === 'number' && Number.isFinite(c.weight);
+    const local = !!c && !!c.local;
+    const on = !local && !!c && typeof c.weight === 'number' && Number.isFinite(c.weight);
     const level = (v, fallback) => (on && typeof v === 'number' && Number.isFinite(v) ? clamp(v, 0, 1) : fallback);
     const next = {
       on,
+      local,
       weight: level(on && c.weight, 0.5),
       effort: level(on && c.effortLevel, 0),
       context: level(on && c.contextLevel, 0.5)
     };
-    const same = next.on === climate.on && next.weight === climate.weight &&
+    const same = next.on === climate.on && next.local === climate.local && next.weight === climate.weight &&
       next.effort === climate.effort && next.context === climate.context;
     if (same) return;
-    const reseed = next.on !== climate.on;
+    const reseed = next.on !== climate.on || next.local !== climate.local;
     Object.assign(climate, next);
+    if (!climate.local) {
+      // Local-only effects never linger in another scene, even with animation off.
+      if (bear.pose === 'roll') bear.pose = 'sit';
+      motes.length = 0;
+    }
     palKey = -1;
     dirty = true;
     if (reseed) seedFlakes();
@@ -168,6 +186,17 @@
   }
 
   function buildPalette(h) {
+    if (climate.local) {
+      return {
+        warmth: 0,
+        sky: AURORA_NIGHT.sky,
+        sea: AURORA_NIGHT.sea,
+        ice: ICE_COLD,
+        sun: AURORA_NIGHT.moon,
+        snow: AURORA_NIGHT.snow,
+        foam: AURORA_NIGHT.foam
+      };
+    }
     let warmth = Math.pow(clamp(1 - h, 0, 1), 1.7);
     if (climate.on) warmth = clamp(warmth + (climate.weight - 0.5) * 0.6, 0, 1);
     let sky = ramp(SKY_COLD, SKY_DUSK, SKY_WARM, warmth);
@@ -244,8 +273,9 @@
   function drawStars(t, h) {
     let alpha = clamp(h * 1.1 - 0.05, 0, 1);
     if (climate.on) alpha *= (1 - climate.weight * 0.75) * (1 - 0.7 * cloudiness());
+    if (climate.local) alpha = 1;
     if (alpha <= 0.02) return;
-    const count = Math.round(W * 0.22);
+    const count = Math.round(W * (climate.local ? 0.32 : 0.22));
     for (let i = 0; i < count; i++) {
       const sx = Math.floor(hash1(i * 3.3) * W);
       const sy = Math.floor(hash1(i * 7.7 + 1) * view.waterY * 0.46);
@@ -255,6 +285,7 @@
   }
 
   function drawSun(t, h) {
+    if (climate.local) return drawMoon(t);
     if (climate.on) return drawClimateSun(t, h);
     const size = Math.round(lerp(3, 7, 1 - h));
     const sx = Math.round(lerp(W * 0.78, W * 0.2, 1 - h));
@@ -374,6 +405,7 @@
   }
 
   function drawAurora(t, h) {
+    if (climate.local) return drawAuroraCurtains(t);
     let strength = clamp((h - 0.4) / 0.6, 0, 1);
     if (climate.on) strength *= clamp(1.4 - climate.weight * 1.6, 0, 1) * (1 - cloudiness());
     if (strength <= 0.02) return;
@@ -393,6 +425,93 @@
         rect(x, top, 2, height, css(col, a));
         rect(x, top, 2, 1, css(col, a * 1.8));
       }
+    }
+  }
+
+  // ------------------------------------------------- aurora night (local) --
+
+  /** A crescent moon with a soft halo, in place of the sun: nothing is burning. */
+  function drawMoon(t) {
+    const r = Math.max(3, Math.round(W * 0.024));
+    const mx = Math.round(W * 0.82);
+    const my = Math.round(view.waterY * 0.2);
+    const glow = 0.16 + 0.05 * Math.sin(t * 0.9);
+    for (let rr = r + 6; rr > r; rr--) {
+      ctx.fillStyle = css(pal.sun, (glow * (r + 7 - rr)) / 16);
+      circle(mx, my, rr);
+    }
+    const cut = Math.round(r * 0.6);
+    const lit = css(pal.sun);
+    const dim = css(shade(pal.sun, -0.08));
+    for (let y = -r; y <= r; y++) {
+      for (let x = -r; x <= r; x++) {
+        if (x * x + y * y > r * r + r * 0.5) continue;
+        const ox = x - cut;
+        const oy = y + 1;
+        if (ox * ox + oy * oy < r * r * 0.9) continue;
+        px(mx + x, my + y, x < 0 && y < 0 ? lit : dim);
+      }
+    }
+  }
+
+  /** Curtain aurora: a bright lower hem with rays rising and fading above it. */
+  function drawAuroraCurtains(t) {
+    for (let b = 0; b < AURORA_COLORS.length; b++) {
+      const hemY = view.waterY * (0.3 + b * 0.1);
+      const amp = 4 + b * 2;
+      const col = AURORA_COLORS[b];
+      const hem = mixRgb(col, [255, 255, 255], 0.35);
+      const peak = b === 0 ? 0.42 : 0.3;
+      for (let x = 0; x < W; x += 2) {
+        const wave = Math.sin(x * 0.05 + t * 0.5 + b) * amp + Math.sin(x * 0.017 - t * 0.3 + b * 2) * amp * 0.8;
+        const edge = Math.round(hemY + wave);
+        const glow = 0.45 + 0.55 * Math.sin(x * 0.07 + t * 1.1 + b * 1.9);
+        if (glow <= 0.05) continue;
+        const len = 8 + Math.round(18 * (0.5 + 0.5 * Math.sin(x * 0.13 + t * 0.8 + b * 1.3)));
+        for (let k = 1; k < len; k++) {
+          const y = edge - k;
+          if (y < 0) break;
+          const a = peak * glow * Math.pow(1 - k / len, 1.4);
+          if (a > 0.012) rect(x, y, 2, 1, css(col, a));
+        }
+        if (edge >= 0 && edge < view.waterY) {
+          rect(x, edge, 2, 1, css(hem, 0.85 * glow));
+          rect(x, edge + 1, 2, 1, css(col, 0.3 * glow));
+        }
+      }
+    }
+  }
+
+  /** The aurora's colours glinting on the water. */
+  function drawAuroraSea(t) {
+    const depth = H - view.waterY;
+    for (let i = 0; i < 30; i++) {
+      const x = Math.round(hash1(i * 3.7) * W + Math.sin(t * 0.6 + i) * 3);
+      const y = view.waterY + 3 + Math.floor(hash1(i * 5.1) * Math.max(1, depth - 4));
+      const a = 0.09 + 0.07 * Math.sin(t * 1.5 + i * 2);
+      rect(x, y, 2 + (i % 3), 1, css(AURORA_COLORS[i % 3 === 2 ? 2 : 0], a));
+    }
+  }
+
+  /** Brief star-shaped glints on the ice faces: cold, untouched ice. */
+  function drawIceGlints(t) {
+    const x0 = Math.max(0, view.cx - bergHalfW);
+    const x1 = Math.min(W - 1, view.cx + bergHalfW);
+    if (x1 - x0 < 8) return;
+    for (let i = 0; i < 8; i++) {
+      const x = Math.round(x0 + 3 + hash1(i * 7.31 + 4) * (x1 - x0 - 6));
+      const top = surfaceY[x];
+      if (top === 32767) continue;
+      const y = top + 1 + Math.floor(hash1(i * 3.17) * Math.max(1, (view.waterY - top) * 0.55));
+      const ph = (t * 0.8 + hash1(i * 1.3) * 7) % 2.6;
+      if (ph > 0.5) continue;
+      const a = Math.sin((ph / 0.5) * Math.PI);
+      const arm = css([255, 255, 255], a * 0.45);
+      px(x, y, css([255, 255, 255], a));
+      px(x - 1, y, arm);
+      px(x + 1, y, arm);
+      px(x, y - 1, arm);
+      px(x, y + 1, arm);
     }
   }
 
@@ -650,7 +769,8 @@
     phase: 0,
     timer: 1.2,
     blink: 0,
-    hop: 0
+    hop: 0,
+    topY: 0
   };
 
   function bearPalette() {
@@ -693,18 +813,22 @@
       bear.pose = 'shiver';
     } else if (bear.timer <= 0) {
       const r = Math.random();
+      // On a local model the bear is happy: it rolls in the snow instead of idling.
       if (room < 6) {
-        bear.pose = r < 0.7 ? 'sit' : 'idle';
+        bear.pose = climate.local ? (r < 0.5 ? 'roll' : 'sit') : r < 0.7 ? 'sit' : 'idle';
         bear.timer = 2 + Math.random() * 3;
       } else if (bear.pose === 'walk') {
-        bear.pose = r < 0.45 ? 'sniff' : r < 0.8 ? 'idle' : 'sit';
-        bear.timer = 0.8 + Math.random() * 2.2;
+        bear.pose = climate.local
+          ? (r < 0.4 ? 'roll' : r < 0.75 ? 'sit' : 'sniff')
+          : r < 0.45 ? 'sniff' : r < 0.8 ? 'idle' : 'sit';
+        bear.timer = climate.local ? 2.2 + Math.random() * 1.6 : 0.8 + Math.random() * 2.2;
       } else {
         bear.pose = 'walk';
         bear.timer = 1.6 + Math.random() * 3.4;
         if (Math.random() < 0.35) bear.dir *= -1;
       }
     }
+    if (climate.local && h > 0.04) updateMood(dt);
 
     if (bear.pose === 'walk' && room >= 6) {
       const speed = lerp(7, 15, clamp(h, 0, 1));
@@ -717,6 +841,7 @@
         bear.x = lo;
         bear.dir = 1;
       }
+      if (climate.local && bear.hop <= 0 && Math.random() < dt * 0.3) bear.hop = 0.45;
       dropFootprint(bear.x, surfaceAt(bear.x));
     } else {
       bear.phase = 0;
@@ -758,6 +883,12 @@
       px(x, sy + 1, css(shade(pal.ice[3], -0.25), fade));
       px(x, sy + 2, css(shade(pal.ice[3], -0.2), fade * 0.5));
     }
+    bear.topY = bodyY;
+
+    if (bear.pose === 'roll') {
+      drawRoll(t, p, col, footY);
+      return;
+    }
 
     // Legs (far pair first so the near pair overlaps them).
     const legs = [
@@ -790,7 +921,8 @@
     }
 
     // Tail.
-    const wag = bear.pose === 'walk' ? (Math.sin(bear.phase * Math.PI * 2) > 0 ? 0 : 1) : 0;
+    const wag = climate.local && bear.pose !== 'shiver' ? Math.floor(t * 6) % 2
+      : bear.pose === 'walk' ? (Math.sin(bear.phase * Math.PI * 2) > 0 ? 0 : 1) : 0;
     const tx = col(0);
     px(tx, bodyY + 3 + wag, p.W);
     px(tx, bodyY + 4 + wag, p.w);
@@ -818,6 +950,7 @@
     // Blink / squint.
     const blinking = bear.blink > 0 || bear.pose === 'shiver';
     if (blinking) px(col(EYE_COL), bodyY + EYE_ROW, p.W);
+    else if (climate.local) happyFace(col, bodyY, p);
 
     // Sniff puff and shiver marks.
     if (bear.pose === 'sniff' && Math.sin(t * 3) > 0.4) {
@@ -828,6 +961,113 @@
       px(col(-2), bodyY + 1, css(pal.foam, a));
       px(col(BEAR_W + 1), bodyY + 1, css(pal.foam, a));
     }
+  }
+
+  // ------------------------------------------------------------ happy bear --
+  // Shown only on a local model: hearts, a wagging tail, closed happy eyes, a
+  // blush and rolling on its back in the snow.
+
+  const HEART = ['XX.XX', 'XXXXX', '.XXX.', '..X..'];
+  const motes = [];
+  const mood = { heart: 1.2 };
+
+  function updateMood(dt) {
+    mood.heart -= dt;
+    if (mood.heart <= 0) {
+      motes.push({ kind: 'heart', x: Math.round(bear.x) + (bear.dir < 0 ? -6 : 6), y: bear.topY - 6,
+        vx: 0, vy: -7, life: 1.8, max: 1.8, seed: Math.random() * 6 });
+      mood.heart = 2.4 + Math.random() * 2.6;
+    }
+  }
+
+  function spray(x, y) {
+    motes.push({ kind: 'spray', x, y, vx: (Math.random() - 0.5) * 18, vy: -10 - Math.random() * 10,
+      life: 0.5, max: 0.5, seed: 0 });
+  }
+
+  function updateMotes(dt) {
+    for (let i = motes.length - 1; i >= 0; i--) {
+      const m = motes[i];
+      m.life -= dt;
+      if (m.life <= 0) {
+        motes.splice(i, 1);
+        continue;
+      }
+      if (m.kind === 'spray') {
+        m.vy += 50 * dt;
+        m.x += m.vx * dt;
+      } else {
+        m.x += Math.sin(m.life * 4 + m.seed) * 4 * dt;
+      }
+      m.y += m.vy * dt;
+    }
+    if (motes.length > 40) motes.splice(0, motes.length - 40);
+  }
+
+  function drawMotes() {
+    for (const m of motes) {
+      const a = clamp(m.life / m.max, 0, 1);
+      const fade = a > 0.3 ? 1 : a / 0.3;
+      const x0 = Math.round(m.x);
+      const y0 = Math.round(m.y);
+      if (m.kind === 'spray') {
+        px(x0, y0, css(pal.snow, 0.9 * fade));
+        continue;
+      }
+      for (let r = 0; r < HEART.length; r++) {
+        for (let c = 0; c < HEART[r].length; c++) {
+          if (HEART[r][c] === 'X') px(x0 - 2 + c, y0 + r, css(r === 0 && c === 0 ? [255, 214, 226] : [255, 96, 140], fade));
+        }
+      }
+    }
+  }
+
+  /** Closed, upturned eyes and a blush. */
+  function happyFace(col, bodyY, p) {
+    px(col(EYE_COL), bodyY + EYE_ROW, p.W);
+    px(col(EYE_COL - 1), bodyY + EYE_ROW, p.k);
+    px(col(EYE_COL), bodyY + EYE_ROW - 1, p.k);
+    px(col(EYE_COL + 1), bodyY + EYE_ROW, p.k);
+    px(col(EYE_COL - 1), bodyY + EYE_ROW + 1, '#ff9fb8');
+  }
+
+  /** On its back in the snow, paws waving, rocking side to side. */
+  function drawRoll(t, p, col, footY) {
+    const rock = Math.round(Math.sin(t * 4.5));
+    const top = footY - 6;
+    const outline = css(shade(pal.ice[3], -0.32), 0.55);
+    // The sprite's rows 2..7 upside down: belly up, head low at the front.
+    for (let i = 0; i < 6; i++) {
+      const r = 7 - i;
+      for (let c = 0; c < BEAR_W; c++) {
+        if (BEAR_BODY[r][c] === '.') continue;
+        if (i === 0 || BEAR_BODY[r + 1][c] === '.') px(col(c) + rock, top + i - 1, outline);
+      }
+    }
+    const legs = [2, 5, 10, 13];
+    for (let j = 0; j < legs.length; j++) {
+      const len = 2 + (Math.sin(t * 13 + j * 1.7) > 0 ? 1 : 0);
+      for (let d = 0; d < 2; d++) {
+        const x = col(legs[j] + d) + rock;
+        vline(x, top - len, top - 1, j % 2 ? p.g : p.W);
+        px(x, top - len, p.w);
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      const r = 7 - i;
+      for (let c = 0; c < BEAR_W; c++) {
+        const ch = BEAR_BODY[r][c];
+        if (ch === '.') continue;
+        px(col(c) + rock, top + i, ch === 'w' && i === 0 ? p.W : p[ch]);
+      }
+    }
+    // Happy eyes, upside down.
+    px(col(EYE_COL) + rock, top + 4, p.W);
+    px(col(EYE_COL - 1) + rock, top + 4, p.k);
+    px(col(EYE_COL) + rock, top + 5, p.k);
+    px(col(EYE_COL + 1) + rock, top + 4, p.k);
+    if (Math.sin(t * 3) > 0.7 && Math.random() < 0.15) spray(col(Math.random() < 0.5 ? 0 : BEAR_W - 1), footY - 1);
+    bear.topY = top - 4;
   }
 
   // ------------------------------------------------------------- particles --
@@ -867,8 +1107,10 @@
 
     const snowy = climate.on ? clamp((h - 0.1) / 0.5, 0.3, 1) : clamp((h - 0.25) / 0.5, 0, 1);
     const wind = climate.on ? 0.7 * cloudiness() : 0;
+    // A still aurora night: fine snow drifting down slowly at any ice level.
+    const fall = climate.local ? 0.7 : 0.4 + snowy;
     for (const f of flakes) {
-      f.y += f.v * dt * (0.4 + snowy);
+      f.y += f.v * dt * fall;
       f.x += (f.d + Math.sin(t * 0.7 + f.y * 0.05) * 0.5 + wind) * dt * 10;
       if (f.y > view.waterY) {
         f.y = -1;
@@ -880,7 +1122,7 @@
 
     // Melt water dripping off the flanks.
     const drip = climateDrip();
-    const dripChance = climate.on ? Math.max(1 - h, 0.15) * drip : 1 - h;
+    const dripChance = climate.local ? 0 : climate.on ? Math.max(1 - h, 0.15) * drip : 1 - h;
     if ((h < 0.92 || drip > 1.2) && Math.random() < dripChance * dt * 26) {
       const side = Math.random() < 0.5 ? -1 : 1;
       const x = view.cx + side * Math.round(bergHalfW * (0.5 + Math.random() * 0.5));
@@ -939,8 +1181,12 @@
     }
 
     const snowy = climate.on ? clamp((h - 0.1) / 0.5, 0.3, 1) : clamp((h - 0.25) / 0.5, 0, 1);
-    const count = climate.on ? Math.min(flakes.length, climateSnowCount()) : flakes.length;
-    if (snowy > 0.02 && count > 0) {
+    const count = climate.on ? Math.min(flakes.length, climateSnowCount())
+      : climate.local ? Math.min(flakes.length, Math.round(W * 0.22)) : flakes.length;
+    if (climate.local && count > 0) {
+      const col = css(pal.snow, 0.6);
+      for (let i = 0; i < count; i++) px(Math.floor(flakes[i].x), Math.floor(flakes[i].y), col);
+    } else if (snowy > 0.02 && count > 0) {
       const heavy = climate.on && climate.weight < 0.25;
       const col = css(pal.snow, 0.25 + 0.5 * snowy);
       for (let i = 0; i < count; i++) {
@@ -966,8 +1212,8 @@
       rect(Math.round(c.x), bobY + c.h - 1, c.w, 1, css(pal.ice[3]));
     }
 
-    // Heat haze once things get dire.
-    if (h < 0.3) {
+    // Heat haze once things get dire, but never under a local model's aurora.
+    if (h < 0.3 && !climate.local) {
       const a = (0.3 - h) / 0.3;
       for (let i = 0; i < 10; i++) {
         const x = Math.round(view.cx + Math.sin(t * 0.8 + i * 2.1) * bergHalfW * 0.9);
@@ -1014,7 +1260,7 @@
   }
 
   function renderSkyIfNeeded(force) {
-    const key = Math.round(state.health * 40) + (climate.on ? ':' + climate.weight : '');
+    const key = Math.round(state.health * 40) + (climate.on ? ':' + climate.weight : '') + (climate.local ? ':local' : '');
     if (!force && key === palKey && pal) return;
     palKey = key;
     pal = buildPalette(state.health);
@@ -1052,6 +1298,7 @@
     const t = clock;
     updateBear(dt, state.health);
     updateParticles(dt, t, state.health);
+    updateMotes(dt);
 
     ctx.drawImage(skyCanvas, 0, 0);
     const clouds = cloudiness() > 0.02;
@@ -1063,11 +1310,14 @@
     drawDistantBergs(t, state.health);
     if (heat) drawHaze();
     drawSea(t);
+    if (climate.local) drawAuroraSea(t);
     drawBergUnderwater(t, state.health);
     drawReflection(t);
     drawBerg(t, state.health);
+    if (climate.local) drawIceGlints(t);
     drawBear(t);
     drawParticles(t, state.health);
+    drawMotes();
     if (heat) drawShimmer(t);
   }
 
@@ -1086,11 +1336,27 @@
   }
 
   function showClimate(c) {
-    if (el.climateRow) el.climateRow.hidden = !climate.on;
+    const visible = climate.on || climate.local;
+    if (el.climateRow) el.climateRow.hidden = !visible;
     if (!el.climate) return;
-    if (!climate.on) {
+    el.climate.dataset.local = String(climate.local);
+    if (!visible) {
       el.climate.textContent = '';
       el.climate.title = '';
+      return;
+    }
+    if (climate.local) {
+      const configured = c.local === 'configured';
+      el.climate.textContent = 'aurora weather · ' + c.model + ' · ' + (configured ? 'on ' + c.host : 'on this machine');
+      el.climate.title =
+        'The latest call went to ' + c.host + (configured ? ', listed in iceberg.climate.localHosts' : ', an endpoint on this machine') +
+        ', so the weather leaves the credit scale for a clear aurora night and a happy bear. ' +
+        (c.sampleCalls > 0
+          ? c.model + ' averaged ' + fmtCredits(c.creditsPerCall) + ' AI credits per call across ' + c.sampleCalls +
+            ' retained calls that reported credits. '
+          : 'Copilot reported no AI credits for ' + c.model + '. ') +
+        'A local proxy to a cloud service looks the same. Local compute still uses power: ' +
+        'a usage metaphor, not energy or emissions.';
       return;
     }
     const credits = fmtCredits(c.creditsPerCall);

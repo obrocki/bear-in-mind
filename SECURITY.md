@@ -25,7 +25,11 @@ From span metadata the dashboard also shows repository and branch names
 removed and local filesystem remotes dropped), Copilot caller names, tool names
 and span status, and a short
 reasoning-effort word taken from `copilot_chat.request.options`; the rest of that
-options blob is discarded. When Copilot's identity capture
+options blob is discarded. The habitat reads the model endpoint's host name
+(`server.address` on chat spans, never a URL, path or credentials) only to tell
+whether a model runs on this machine or a host listed in
+`iceberg.climate.localHosts`; only those hosts appear in the HUD and `getUsage()`.
+When Copilot's identity capture
 (`github.copilot.chat.otel.captureIdentity`) is on, it also reads `user.name`,
 your GitHub account, from agent spans to group credits by user and label
 sessions. These are held in memory for the retained seven-day window and are

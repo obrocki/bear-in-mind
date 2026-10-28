@@ -10,9 +10,10 @@ research model, regenerate the canvas shots too.
 | --- | --- |
 | `hero.png` | Wide scene at 100% ice, no HUD. README banner. |
 | `melt.gif` | The full melt plus a refreeze, ~106 frames. |
+| `local-aurora.gif` | The same 75% berg under a local model's aurora night: hearts, a walk and a roll in the snow, from a fixed seed. |
 | `melt-progression.png` | Four panels at 100 / 60 / 28 / 0% ice. |
-| `climate-models.png` | The same 75% allowance under an illustrative light, mid and heavy model (`tools/climate-grid.html`). |
-| `panel-climate-small.png`, `panel-climate-medium.png`, `panel-climate-large.png` | Sidebar habitat with each illustrative model climate (`shot.html?account&climate=…`). |
+| `climate-models.png` | The same 75% allowance under an illustrative light, mid, heavy and local model (`tools/climate-grid.html`). |
+| `panel-climate-small.png`, `panel-climate-medium.png`, `panel-climate-large.png`, `panel-climate-local.png` | Sidebar habitat with each illustrative model climate (`shot.html?account&climate=…`). |
 | `panel-full.png`, `panel-mid.png`, `panel-low.png`, `panel-melted.png` | Synthetic demo ice at four levels, without recording usage. |
 | `panel-context.png` | Illustrative reported prompt allowance, separate from cumulative tokens. |
 | `editor-view.png` | The wide editor-tab view. |
@@ -44,11 +45,12 @@ any mock of it:
   sparkline wobble is deterministic, so re-running the tool does not churn the
   PNG. `?empty` renders the not-yet-connected state.
 
-- **`melt.gif`** (`tools/make-gif.js`) runs `media/main.js` inside a Node `vm`
-  against a minimal Canvas2D shim, steps the animation clock by hand, captures
-  the raw pixel buffer each frame, quantises to a 255-colour global palette by
-  median cut, and LZW-encodes a GIF89a with frame differencing and a transparent
-  index for unchanged pixels.
+- **GIFs** (`tools/make-gif.js`: `melt.gif`, `local-aurora.gif`) run
+  `media/main.js` inside a Node `vm` against a minimal Canvas2D shim, step the
+  animation clock by hand, capture the raw pixel buffer each frame, quantise to a
+  255-colour global palette by median cut, and LZW-encode a GIF89a with frame
+  differencing and a transparent index for unchanged pixels. `local-aurora.gif`
+  seeds the scene's `Math.random`, so the bear's choices repeat exactly.
 
 - **AI attribution canvas shots** (`tools/make-canvas-shots.js`) create
   synthetic `session-store.db` and `agent-traces.db` fixtures using the test

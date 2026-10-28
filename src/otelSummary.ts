@@ -160,6 +160,8 @@ export interface LatestCall {
   effort?: string;
   /** `copilot_chat.request.max_prompt_tokens`, when reported. */
   promptLimit?: number;
+  /** The model endpoint's host name (`server.address`), when reported. */
+  host?: string;
   atMs: number;
   sessionId?: string;
 }

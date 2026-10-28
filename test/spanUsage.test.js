@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { describe, it } = require('node:test');
-const { digestSpans, fileUsageSpan, identityName, mergeUsageSpan, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
+const { digestSpans, fileUsageSpan, hostName, identityName, mergeUsageSpan, reasoningEffort, repositoryName, usageSpan } = require(path.join(process.env.BEAR_TEST_BUILD, 'spanUsage.js'));
 const { buildCost, buildQuality, buildSpeed, buildTraceCredits, selectedSession, sessionComparisons } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelSummary.js'));
 const { OtelRollup, classify } = require(path.join(process.env.BEAR_TEST_BUILD, 'otelParse.js'));
 const start = Date.UTC(2026, 8, 24, 12);
@@ -279,6 +279,33 @@ it('keeps only a short reasoning-effort word from request options', () => {
     'copilot_chat.request.options': JSON.stringify({ reasoning: { effort: 'not a word!' } }), 'gen_ai.request.reasoning.level': 'medium'
   }), 'medium');
   assert.equal(span('t', 'execute_tool', { 'copilot_chat.request.options': '{"reasoning_effort":"high"}' }).effort, undefined);
+});
+
+it('keeps only the model endpoint host name from server.address on chat calls', () => {
+  assert.equal(hostName('LocalHost'), 'localhost');
+  assert.equal(hostName('127.0.0.1'), '127.0.0.1');
+  assert.equal(hostName('[::1]'), '::1');
+  assert.equal(hostName('[::1]:11434'), '::1');
+  assert.equal(hostName('::1'), '::1');
+  assert.equal(hostName('localhost:11434'), 'localhost', 'a stray port is dropped');
+  assert.equal(hostName('api.githubcopilot.com.'), 'api.githubcopilot.com');
+  assert.equal(hostName('http://user:secret@gpu-box.lan:8080/v1'), 'gpu-box.lan', 'a URL keeps only its host');
+  for (const bad of ['', '  ', 'two words', 'a/b', 'x'.repeat(254), 42, undefined]) {
+    assert.equal(hostName(bad), undefined, String(bad));
+  }
+  assert.equal(span('c', 'chat', { 'server.address': 'LOCALHOST' }).host, 'localhost');
+  assert.equal(span('t', 'execute_tool', { 'server.address': 'localhost' }).host, undefined, 'only model calls carry an endpoint');
+
+  const digest = digestSpans([span('c', 'chat', { 'server.address': '127.0.0.1' })]);
+  assert.equal(digest.latestCall.host, '127.0.0.1');
+  assert.equal(digest.sessions[0].latestCall.host, '127.0.0.1');
+
+  const record = {
+    spanId: 'shared', startTime: [start / 1000, 0], endTime: [start / 1000 + 1, 0],
+    attributes: { 'gen_ai.operation.name': 'chat', 'server.address': 'localhost' }
+  };
+  const db = usageSpan('shared', { 'gen_ai.operation.name': 'chat' }, start, start + 1000);
+  assert.equal(mergeUsageSpan(fileUsageSpan(record), db).host, 'localhost', 'a file span fills a host the database lacks');
 });
 
 it('counts tool failures from reported span status only, preferring feed metrics', () => {
